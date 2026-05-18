@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.2.2] - Unreleased
+
+### Fixed
+
 ## [3.2.1] - 2026-05-18
 
 ### Fixed
