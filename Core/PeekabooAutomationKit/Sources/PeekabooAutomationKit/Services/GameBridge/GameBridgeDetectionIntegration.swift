@@ -38,7 +38,7 @@ extension GameBridgeDetectionService {
 
         // Convert to Peekaboo DetectedElements
         var buttons: [DetectedElement] = []
-        var textFields: [DetectedElement] = []
+        let textFields: [DetectedElement] = []
         var images: [DetectedElement] = []
         var groups: [DetectedElement] = []
         var other: [DetectedElement] = []
