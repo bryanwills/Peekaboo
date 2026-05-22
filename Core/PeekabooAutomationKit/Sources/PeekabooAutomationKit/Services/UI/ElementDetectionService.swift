@@ -85,15 +85,27 @@ public final class ElementDetectionService {
         let allowWebFocus = windowContext?.shouldFocusWebContent ?? true
         let budget = AXTraversalBudget.normalizedForTraversal(windowContext?.traversalBudget)
         let usesDefaultBudget = budget == AXTraversalBudget()
+        let resolvedWindowBounds = windowContext?.windowBounds ?? windowResolution.window.frame()
         let resolvedWindowContext = WindowContext(
             applicationName: windowContext?.applicationName ?? targetApp.localizedName,
             applicationBundleId: windowContext?.applicationBundleId ?? targetApp.bundleIdentifier,
             applicationProcessId: windowContext?.applicationProcessId ?? targetApp.processIdentifier,
             windowTitle: windowName,
             windowID: resolvedWindowID,
-            windowBounds: windowContext?.windowBounds,
+            windowBounds: resolvedWindowBounds,
             shouldFocusWebContent: windowContext?.shouldFocusWebContent,
             traversalBudget: budget)
+
+        // GameBridge: check if this is a known game-bridge app (SDL/GPU-rendered)
+        // before attempting AX tree traversal, which won't find elements in GPU windows.
+        if let gameBridgeResult = GameBridgeDetectionService.tryDetect(
+            windowContext: resolvedWindowContext,
+            snapshotId: effectiveSnapshotId)
+        {
+            self.logger.info("GameBridge: detected \(gameBridgeResult.elements.all.count) elements from manifest")
+            return gameBridgeResult
+        }
+
         let detectedElements: [DetectedElement]
         let usedCache: Bool
         let truncationInfo: DetectionTruncationInfo?
