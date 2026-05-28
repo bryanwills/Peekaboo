@@ -9,6 +9,7 @@ import path from 'path';
 const docsRoot = path.resolve('docs');
 const failures = [];
 const extraMarkdownFiles = [path.resolve('README.md')];
+const skillMarkdownFiles = [path.resolve('skills/peekaboo/SKILL.md')];
 const staleCliPatterns = [
   [/peekaboo capture --output\b/, 'use `peekaboo image --path` or `peekaboo capture live --path`'],
   [/peekaboo capture --window-focused\b/, 'use `peekaboo image --mode frontmost`'],
@@ -18,6 +19,10 @@ const staleCliPatterns = [
   [/--label\b/, 'use positional query text or `--on`'],
   [/--at\b/, 'use `--coords`'],
   [/--ticks\b/, 'use `--amount`'],
+];
+const staleDocsPatterns = [
+  [/mcp-capture-meta/i, 'remove stale native MCP capture metadata references'],
+  [/capture, shell, agent/i, 'native MCP catalog does not expose capture or shell'],
 ];
 
 async function walk(dir) {
@@ -73,6 +78,14 @@ async function checkFile(file) {
       }
     }
   }
+
+  if (shouldCheckCurrentDocsDrift(file)) {
+    for (const [pattern, replacement] of staleDocsPatterns) {
+      if (pattern.test(text)) {
+        failures.push(`${file}: stale docs ${pattern}; ${replacement}`);
+      }
+    }
+  }
 }
 
 function shouldCheckCurrentCliExamples(file) {
@@ -84,9 +97,48 @@ function shouldCheckCurrentCliExamples(file) {
   return false;
 }
 
+function shouldCheckCurrentDocsDrift(file) {
+  const relative = path.relative(process.cwd(), file);
+  return [
+    'docs/commands/README.md',
+    'docs/manual-testing.md',
+    'docs/testing/tools.md',
+  ].includes(relative);
+}
+
+async function checkSkillFile(file) {
+  const text = await fs.readFile(file, 'utf8');
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith('---')) {
+    failures.push(`${file}: missing front matter start`);
+    return;
+  }
+
+  const end = trimmed.indexOf('\n---', 3);
+  if (end === -1) {
+    failures.push(`${file}: missing front matter end delimiter`);
+    return;
+  }
+
+  const header = trimmed.slice(3, end);
+  const description = header.match(/^description:\s*(.+)$/m);
+  if (!description) {
+    failures.push(`${file}: description missing`);
+    return;
+  }
+
+  const value = description[1].trim();
+  if (!/^(['"]).*\1$/.test(value)) {
+    failures.push(`${file}: description must be quoted YAML`);
+  }
+}
+
 await walk(docsRoot);
 for (const file of extraMarkdownFiles) {
   await checkFile(file);
+}
+for (const file of skillMarkdownFiles) {
+  await checkSkillFile(file);
 }
 
 if (failures.length) {

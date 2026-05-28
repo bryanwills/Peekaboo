@@ -14,7 +14,7 @@ Core automation
 - `window.md` — move/resize/focus windows.
 - `menu.md`, `menubar.md` — drive app menus and status items.
 - `click.md`, `move.md`, `scroll.md`, `swipe.md`, `drag.md`, `press.md`, `type.md`, `set-value.md`, `perform-action.md`, `hotkey.md`, `sleep.md` — input primitives.
-- `see.md`, `image.md`, `capture.md`, `mcp-capture-meta.md` — screenshots, annotated UI maps, capture sessions.
+- `see.md`, `image.md`, `capture.md` — screenshots, annotated UI maps, capture sessions.
 
 System & config
 - `config.md`, `permissions.md`, `bridge.md`, `daemon.md`, `tools.md`, `clean.md`, `run.md`, `learn.md`, `list.md`.

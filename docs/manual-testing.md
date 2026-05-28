@@ -26,7 +26,7 @@ Use this checklist to exercise the Swift MCP server with mcporter. It mirrors th
    ```
    $MCPORTER list --stdio "$PEEKABOO_BIN mcp serve" --name peekaboo-local --schema --timeout 30000
    ```  
-   Expect: tool catalog prints Peekaboo-native tools (image, see, list, permissions, click, type, drag, window, menu, dock, space, swipe, hotkey, clipboard, shell, agent, capture, sleep). Any transport/auth errors here block the rest of the suite.
+   Expect: tool catalog prints Peekaboo-native tools (image, see, list, permissions, click, type, drag, window, menu, dock, space, swipe, hotkey, clipboard, agent, sleep). Any transport/auth errors here block the rest of the suite.
 
 2) **Permissions sanity**  
    ```
