@@ -13,7 +13,7 @@ concurrency:
 jobs:
   peekaboo-core:
     name: PeekabooCore build & tests
-    runs-on: macos-latest
+    runs-on: macos-15
     env:
       PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
       RUN_AUTOMATION_TESTS: "false"
@@ -127,7 +127,7 @@ jobs:
 
   peekaboo-cli:
     name: Peekaboo CLI build & tests
-    runs-on: macos-latest
+    runs-on: macos-15
     needs: peekaboo-core
     env:
       PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
@@ -236,7 +236,7 @@ jobs:
 
   tachikoma:
     name: Tachikoma build & tests
-    runs-on: macos-latest
+    runs-on: macos-15
     needs: peekaboo-cli
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -347,7 +347,7 @@ jobs:
 
   mac-apps:
     name: Build macOS apps (Peekaboo + Inspector)
-    runs-on: macos-latest
+    runs-on: macos-15
     needs: [peekaboo-cli, tachikoma]
     steps:
       - uses: actions/checkout@v6
@@ -407,7 +407,7 @@ jobs:
 
   lint:
     name: SwiftLint (core + CLI)
-    runs-on: macos-latest
+    runs-on: macos-15
     needs: [peekaboo-cli, tachikoma, mac-apps]
     steps:
       - uses: actions/checkout@v6
