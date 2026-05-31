@@ -77,6 +77,31 @@ enum AutomationServiceBridge {
         }.value
     }
 
+    static func typeActions(
+        automation: any UIAutomationServiceProtocol,
+        request: TypeActionsRequest,
+        targetProcessIdentifier: pid_t
+    ) async throws -> TypeResult {
+        try await Task { @MainActor in
+            guard let targetedTypeService = automation as? any TargetedTypeServiceProtocol else {
+                throw PeekabooError.serviceUnavailable(
+                    "Background typing requires an automation service that supports targeted type delivery"
+                )
+            }
+
+            guard targetedTypeService.supportsTargetedTypeActions else {
+                throw self.targetedTypeUnavailableError(service: targetedTypeService)
+            }
+
+            return try await targetedTypeService.typeActions(
+                request.actions,
+                cadence: request.cadence,
+                snapshotId: request.snapshotId,
+                targetProcessIdentifier: targetProcessIdentifier
+            )
+        }.value
+    }
+
     static func scroll(
         automation: any UIAutomationServiceProtocol,
         request: ScrollRequest
@@ -157,6 +182,17 @@ enum AutomationServiceBridge {
         return .serviceUnavailable(
             service.targetedHotkeyUnavailableReason ??
                 "Remote bridge host does not support background hotkeys; use --no-remote or update the host"
+        )
+    }
+
+    private static func targetedTypeUnavailableError(service: any TargetedTypeServiceProtocol) -> PeekabooError {
+        if service.targetedTypeRequiresEventSynthesizingPermission {
+            return .permissionDeniedEventSynthesizing
+        }
+
+        return .serviceUnavailable(
+            service.targetedTypeUnavailableReason ??
+                "Remote bridge host does not support background typing; use --no-remote or update the host"
         )
     }
 

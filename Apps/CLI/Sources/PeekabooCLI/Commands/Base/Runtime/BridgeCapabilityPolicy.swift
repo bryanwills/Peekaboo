@@ -23,6 +23,10 @@ enum BridgeCapabilityPolicy {
         self.targetedHotkeyAvailability(for: handshake).isEnabled
     }
 
+    static func supportsTargetedTypeActions(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        self.targetedTypeAvailability(for: handshake).isEnabled
+    }
+
     static func supportsTargetedClicks(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         self.targetedClickAvailability(for: handshake).isEnabled
     }
@@ -105,6 +109,37 @@ enum BridgeCapabilityPolicy {
         return (
             false,
             "Remote bridge host supports background clicks, but current permissions are missing: " +
+                self.missingPermissionNames(missingPermissions).joined(separator: ", "),
+            missingPermissions
+        )
+    }
+
+    static func targetedTypeAvailability(for handshake: PeekabooBridgeHandshakeResponse)
+    -> (isEnabled: Bool, unavailableReason: String?, missingPermissions: Set<PeekabooBridgePermissionKind>) {
+        guard
+            handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 8),
+            handshake.supportedOperations.contains(.targetedTypeActions)
+        else {
+            return (false, nil, [])
+        }
+
+        let enabledOperations = handshake.enabledOperations ?? handshake.supportedOperations
+        if enabledOperations.contains(.targetedTypeActions) {
+            return (true, nil, [])
+        }
+
+        let missingPermissions = self.missingPermissions(for: .targetedTypeActions, handshake: handshake)
+        guard !missingPermissions.isEmpty else {
+            return (
+                false,
+                "Remote bridge host supports background typing, but it is disabled by current permissions",
+                []
+            )
+        }
+
+        return (
+            false,
+            "Remote bridge host supports background typing, but current permissions are missing: " +
                 self.missingPermissionNames(missingPermissions).joined(separator: ", "),
             missingPermissions
         )

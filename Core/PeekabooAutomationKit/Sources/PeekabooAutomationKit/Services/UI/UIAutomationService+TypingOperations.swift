@@ -104,6 +104,22 @@ extension UIAutomationService {
         return result
     }
 
+    public func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t) async throws -> TypeResult
+    {
+        self.logger.debug("Delegating targeted typeActions to TypeService")
+        let result = try await self.typeService.typeActions(
+            actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: targetProcessIdentifier)
+        await self.visualizeTypeActions(actions, cadence: cadence)
+        return result
+    }
+
     // MARK: - Typing Visualization Helpers
 
     func visualizeTypeActions(_ actions: [TypeAction], cadence: TypingCadence) async {

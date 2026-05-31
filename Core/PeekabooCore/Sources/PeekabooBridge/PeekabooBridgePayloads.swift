@@ -84,6 +84,25 @@ public struct PeekabooBridgeTypeActionsRequest: Codable, Sendable {
     public let snapshotId: String?
 }
 
+public struct PeekabooBridgeTargetedTypeActionsRequest: Codable, Sendable {
+    public let actions: [TypeAction]
+    public let cadence: TypingCadence
+    public let snapshotId: String?
+    public let targetProcessIdentifier: Int32
+
+    public init(
+        actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        targetProcessIdentifier: Int32)
+    {
+        self.actions = actions
+        self.cadence = cadence
+        self.snapshotId = snapshotId
+        self.targetProcessIdentifier = targetProcessIdentifier
+    }
+}
+
 public struct PeekabooBridgeSetValueRequest: Codable, Sendable {
     public let target: String
     public let value: UIElementValue

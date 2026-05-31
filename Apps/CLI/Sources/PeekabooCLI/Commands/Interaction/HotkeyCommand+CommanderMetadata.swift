@@ -27,6 +27,13 @@ extension HotkeyCommand: CommanderSignatureProviding {
                     long: "snapshot"
                 ),
             ],
+            flags: [
+                .commandFlag(
+                    "foreground",
+                    help: "Focus target and send a foreground/global hotkey",
+                    long: "foreground"
+                ),
+            ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
                 FocusCommandOptions.commanderSignature(includeBackgroundDelivery: true),

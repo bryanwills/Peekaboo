@@ -54,6 +54,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case click
     case type
     case typeActions
+    case targetedTypeActions
     case setValue
     case performAction
     case scroll

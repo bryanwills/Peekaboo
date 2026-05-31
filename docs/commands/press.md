@@ -2,12 +2,12 @@
 summary: 'Send special keys or sequences via peekaboo press'
 read_when:
   - 'navigating dialogs with arrow/tab/return patterns'
-  - 'debugging scripted key sequences that need deterministic timing'
+  - 'debugging scripted background key sequences that need deterministic timing'
 ---
 
 # `peekaboo press`
 
-`press` fires individual `SpecialKey` values (Return, Tab, arrows, F-keys, etc.) in sequence through the hotkey service. Focus handling mirrors the other interaction commands.
+`press` fires individual `SpecialKey` values (Return, Tab, arrows, F-keys, etc.) in sequence through the hotkey service. Background process-targeted delivery is the default when Peekaboo can resolve a target process; pass `--foreground` for focused/global key presses.
 
 ## Key options
 | Flag | Description |
@@ -17,14 +17,15 @@ read_when:
 | `--delay <ms>` | Delay between key presses (default `100`). |
 | `--hold <ms>` | Hold duration per key (default `50`). |
 | `--snapshot <id>` | Optional snapshot ID used for validation/focus (no implicit “latest snapshot” lookup). |
-| Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>` — focus a specific app/window before pressing keys. (`--window-title`/`--window-index` require `--app` or `--pid`; `--window-id` does not.) |
-| Focus flags | Same `FocusCommandOptions` bundle as `click`/`type`. |
+| Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>` — send key presses to a specific app/window in the background when possible. (`--window-title`/`--window-index` require `--app` or `--pid`; `--window-id` does not.) |
+| `--foreground` | Focus target and send foreground/global key presses. Focus flags also imply foreground delivery. |
+| Focus flags | Foreground focus controls; same `FocusCommandOptions` bundle as `click`/`type`. |
 
 ## Implementation notes
 - Keys are lowercased and mapped to `SpecialKey`; the command fails fast with a helpful message if a token isn’t recognized.
-- Focus runs when `--snapshot` or the target flags are present; for “blind” global shortcuts you can omit both and let the current frontmost app receive the keys.
+- Without a resolvable snapshot or target process, key presses fall back to foreground/global delivery to the current focus.
 - Repetition multiplies the sequence client-side—e.g., `press tab return --count 3` becomes six actions—so you get predictable ordering.
-- Results include the literal key list, total presses, repeat count, and elapsed time in both text and JSON modes.
+- Results include the literal key list, total presses, repeat count, delivery mode, optional target PID, and elapsed time in both text and JSON modes.
 - The `--hold` flag is passed to the hotkey service for each key press.
 
 ## Examples
@@ -37,10 +38,13 @@ peekaboo press tab tab return
 
 # Walk a dialog down three rows with headroom between repetitions
 peekaboo press down --count 3 --delay 200
+
+# Send Return to TextEdit without bringing it forward
+peekaboo press return --app TextEdit
 ```
 
 ## Troubleshooting
-- Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`).
+- Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`). Background key presses also require Event Synthesizing access for the sending process; request it with `peekaboo permissions request-event-synthesizing`.
 - Confirm your target (app/window/selector) with `peekaboo list`/`peekaboo see` before rerunning.
 - If you see `SNAPSHOT_NOT_FOUND`, regenerate the snapshot with `peekaboo see` (or omit `--snapshot` to use the most recent one).
 - Re-run with `--json` or `--verbose` to surface detailed errors.

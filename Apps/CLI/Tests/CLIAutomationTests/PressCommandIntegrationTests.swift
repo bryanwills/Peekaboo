@@ -1,8 +1,9 @@
 import Foundation
+import PeekabooCore
 import Testing
 @testable import PeekabooCLI
 
-@Suite(.tags(.safe))
+@Suite(.tags(.safe), .serialized)
 struct PressCommandIntegrationTests {
     // MARK: - Command Integration with TypeService
 
@@ -124,6 +125,51 @@ struct PressCommandIntegrationTests {
         #expect(command.jsonOutput == true)
     }
 
+    @Test
+    func `Press with app target defaults to background process delivery`() async throws {
+        let context = await self.makeContext()
+
+        let result = try await self.runPress(
+            arguments: ["return", "--app", "TextEdit", "--json"],
+            context: context
+        )
+
+        #expect(result.exitStatus == 0)
+        let targetedCalls = await self.automationState(context) { $0.targetedHotkeyCalls }
+        #expect(targetedCalls.map(\.keys) == ["return"])
+        #expect(targetedCalls.first?.targetProcessIdentifier == 2468)
+        let foregroundCalls = await self.automationState(context) { $0.hotkeyCalls }
+        #expect(foregroundCalls.isEmpty)
+        let payload = try ExternalCommandRunner.decodeJSONResponse(
+            from: result,
+            as: CodableJSONResponse<PressResult>.self
+        )
+        #expect(payload.data.deliveryMode == "background")
+        #expect(payload.data.targetPID == 2468)
+    }
+
+    @Test
+    func `Press foreground flag opts out of background process delivery`() async throws {
+        let context = await self.makeContext()
+
+        let result = try await self.runPress(
+            arguments: ["return", "--app", "TextEdit", "--foreground", "--json"],
+            context: context
+        )
+
+        #expect(result.exitStatus == 0)
+        let targetedCalls = await self.automationState(context) { $0.targetedHotkeyCalls }
+        #expect(targetedCalls.isEmpty)
+        let foregroundCalls = await self.automationState(context) { $0.hotkeyCalls }
+        #expect(foregroundCalls.map(\.keys) == ["return"])
+        let payload = try ExternalCommandRunner.decodeJSONResponse(
+            from: result,
+            as: CodableJSONResponse<PressResult>.self
+        )
+        #expect(payload.data.deliveryMode == "foreground")
+        #expect(payload.data.targetPID == nil)
+    }
+
     // MARK: - Complex Sequences
 
     @Test
@@ -190,6 +236,35 @@ struct PressCommandIntegrationTests {
                 var command = try PressCommand.parse(arguments)
                 try command.validate()
             }
+        }
+    }
+
+    private func runPress(
+        arguments: [String],
+        context: TestServicesFactory.AutomationTestContext
+    ) async throws -> CommandRunResult {
+        try await InProcessCommandRunner.run(["press"] + arguments, services: context.services)
+    }
+
+    @MainActor
+    private func makeContext() async -> TestServicesFactory.AutomationTestContext {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 2468,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit"
+        )
+        return TestServicesFactory.makeAutomationTestContext(
+            applications: StubApplicationService(applications: [app])
+        )
+    }
+
+    @MainActor
+    private func automationState<T: Sendable>(
+        _ context: TestServicesFactory.AutomationTestContext,
+        _ operation: (StubAutomationService) -> T
+    ) async -> T {
+        await MainActor.run {
+            operation(context.automation)
         }
     }
 }

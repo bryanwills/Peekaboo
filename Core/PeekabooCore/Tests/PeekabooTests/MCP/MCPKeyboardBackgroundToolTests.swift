@@ -1,0 +1,200 @@
+import CoreGraphics
+import PeekabooAutomationKit
+import PeekabooFoundation
+import TachikomaMCP
+import Testing
+import UniformTypeIdentifiers
+@testable import PeekabooAgentRuntime
+@testable import PeekabooCore
+
+@Suite(.serialized)
+struct MCPKeyboardBackgroundToolTests {
+    @Test
+    func `Type tool uses background click and typing when snapshot process is known`() async throws {
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+        await snapshot.setScreenshot(
+            path: "/tmp/screenshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 200, height: 100),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 111,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp")))
+        await snapshot.setUIElements([
+            UIElement(
+                id: "T1",
+                elementId: "T1",
+                role: "textField",
+                title: nil,
+                label: "Name",
+                value: nil,
+                description: nil,
+                help: nil,
+                roleDescription: "text field",
+                identifier: nil,
+                frame: CGRect(x: 10, y: 20, width: 160, height: 30),
+                isActionable: true),
+        ])
+
+        let tool = TypeTool(context: context)
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "on": "T1",
+            "text": "hello",
+            "snapshot": snapshotId,
+        ]))
+
+        #expect(response.isError == false)
+        let targetedClicks = await MainActor.run { automation.targetedClickCalls }
+        #expect(targetedClicks.count == 1)
+        #expect(targetedClicks.first?.targetProcessIdentifier == 111)
+        let targetedTypes = await MainActor.run { automation.targetedTypeActionsCalls }
+        #expect(targetedTypes.count == 1)
+        #expect(targetedTypes.first?.snapshotId == snapshotId)
+        #expect(targetedTypes.first?.targetProcessIdentifier == 111)
+        guard case let .object(meta) = response.meta else {
+            Issue.record("Expected metadata")
+            return
+        }
+        #expect(meta["delivery_mode"] == .string("background"))
+        #expect(meta["target_pid"] == .int(111))
+    }
+
+    @Test
+    func `Hotkey tool uses targeted delivery when pid is supplied`() async throws {
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let tool = HotkeyTool(context: context)
+
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "keys": "cmd,l",
+            "pid": 222,
+        ]))
+
+        #expect(response.isError == false)
+        let calls = await MainActor.run { automation.targetedHotkeyCalls }
+        #expect(calls.count == 1)
+        #expect(calls.first?.keys == "cmd,l")
+        #expect(calls.first?.targetProcessIdentifier == 222)
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
+        guard case let .object(meta) = response.meta else {
+            Issue.record("Expected metadata")
+            return
+        }
+        #expect(meta["delivery_mode"] == .string("background"))
+        #expect(meta["target_pid"] == .int(222))
+    }
+
+    @Test
+    func `Type and hotkey tools use targeted delivery when app process is known`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 333,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run {
+            MockApplicationService(applications: [app])
+        }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications)
+
+        let typeResponse = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "text": "hello",
+        ]))
+        let hotkeyResponse = try await HotkeyTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "keys": "cmd,l",
+        ]))
+
+        #expect(typeResponse.isError == false)
+        #expect(hotkeyResponse.isError == false)
+        let typeCalls = await MainActor.run { automation.targetedTypeActionsCalls }
+        #expect(typeCalls.count == 1)
+        #expect(typeCalls.first?.targetProcessIdentifier == 333)
+        let hotkeyCalls = await MainActor.run { automation.targetedHotkeyCalls }
+        #expect(hotkeyCalls.count == 1)
+        #expect(hotkeyCalls.first?.targetProcessIdentifier == 333)
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
+    }
+
+    @Test
+    func `Paste tool uses targeted delivery when app process is known`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 333,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run {
+            MockApplicationService(applications: [app])
+        }
+        let clipboard = MockClipboardService()
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            clipboard: clipboard)
+        let tool = PasteTool(context: context)
+
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "text": "hello",
+            "restore_delay_ms": 0,
+        ]))
+
+        #expect(response.isError == false)
+        let calls = await MainActor.run { automation.targetedHotkeyCalls }
+        #expect(calls.map(\.keys) == ["cmd,v"])
+        #expect(calls.first?.targetProcessIdentifier == 333)
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
+        guard case let .object(meta) = response.meta else {
+            Issue.record("Expected metadata")
+            return
+        }
+        #expect(meta["delivery_mode"] == .string("background"))
+        #expect(meta["target_pid"] == .int(333))
+    }
+}
+
+private final class MockClipboardService: ClipboardServiceProtocol, @unchecked Sendable {
+    private var current: ClipboardReadResult?
+    private var slots: [String: ClipboardReadResult] = [:]
+
+    func get(prefer _: UTType?) throws -> ClipboardReadResult? {
+        self.current
+    }
+
+    func set(_ request: ClipboardWriteRequest) throws -> ClipboardReadResult {
+        guard let representation = request.representations.first else {
+            throw ClipboardServiceError.writeFailed("No representations provided")
+        }
+        let result = ClipboardReadResult(
+            utiIdentifier: representation.utiIdentifier,
+            data: representation.data,
+            textPreview: request.alsoText)
+        self.current = result
+        return result
+    }
+
+    func clear() {
+        self.current = nil
+    }
+
+    func save(slot: String) throws {
+        guard let current else {
+            throw ClipboardServiceError.empty
+        }
+        self.slots[slot] = current
+    }
+
+    func restore(slot: String) throws -> ClipboardReadResult {
+        guard let saved = self.slots[slot] else {
+            throw ClipboardServiceError.slotNotFound(slot)
+        }
+        self.current = saved
+        return saved
+    }
+}

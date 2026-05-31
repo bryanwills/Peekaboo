@@ -198,16 +198,30 @@ public final class TypeService {
         cadence: TypingCadence,
         snapshotId: String?) async throws -> TypeResult
     {
+        try await self.typeActions(
+            actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: nil)
+    }
+
+    public func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t?) async throws -> TypeResult
+    {
         var result: TypeResult?
         _ = try await UIInputDispatcher.run(
             verb: .type,
-            strategy: self.inputPolicy.strategy(for: .type),
+            strategy: targetProcessIdentifier == nil ? self.inputPolicy.strategy(for: .type) : .synthOnly,
             action: nil,
             synth: {
                 result = try await self.performSyntheticTypeActions(
                     actions,
                     cadence: cadence,
-                    snapshotId: snapshotId)
+                    snapshotId: snapshotId,
+                    targetProcessIdentifier: targetProcessIdentifier)
             })
 
         guard let result else {
@@ -219,7 +233,8 @@ public final class TypeService {
     private func performSyntheticTypeActions(
         _ actions: [TypeAction],
         cadence: TypingCadence,
-        snapshotId _: String?) async throws -> TypeResult
+        snapshotId _: String?,
+        targetProcessIdentifier: pid_t?) async throws -> TypeResult
     {
         var totalChars = 0
         var keyPresses = 0
@@ -232,7 +247,7 @@ public final class TypeService {
             switch action {
             case let .text(text):
                 for character in text {
-                    try await self.typeCharacter(character)
+                    try await self.typeCharacter(character, targetProcessIdentifier: targetProcessIdentifier)
                     totalChars += 1
                     keyPresses += 1
                     try await self.sleepAfterKeystroke(
@@ -243,7 +258,7 @@ public final class TypeService {
                 }
 
             case let .key(key):
-                try self.typeSpecialKey(key)
+                try self.typeSpecialKey(key, targetProcessIdentifier: targetProcessIdentifier)
                 keyPresses += 1
                 try await self.sleepAfterKeystroke(
                     typedCharacter: nil,
@@ -252,7 +267,7 @@ public final class TypeService {
                     humanContext: &humanContext)
 
             case .clear:
-                try await self.clearCurrentField()
+                try await self.clearCurrentField(targetProcessIdentifier: targetProcessIdentifier)
                 keyPresses += 2 // Cmd+A and Delete
                 try await self.sleepAfterKeystroke(
                     typedCharacter: nil,
@@ -303,13 +318,26 @@ public final class TypeService {
 
     // MARK: - Input Helpers
 
-    private func clearCurrentField() async throws {
+    private func clearCurrentField(targetProcessIdentifier: pid_t? = nil) async throws {
         self.logger.debug("Clearing current field")
 
-        try self.syntheticInputDriver.hotkey(keys: ["cmd", "a"], holdDuration: 0.1)
+        if let targetProcessIdentifier {
+            try BackgroundInputDriver.tapKey(
+                keyCode: 0x00,
+                modifiers: .maskCommand,
+                targetProcessIdentifier: targetProcessIdentifier)
+        } else {
+            try self.syntheticInputDriver.hotkey(keys: ["cmd", "a"], holdDuration: 0.1)
+        }
         try await Task.sleep(nanoseconds: 50_000_000) // 50ms
 
-        try self.syntheticInputDriver.tapKey(.delete, modifiers: [])
+        if let targetProcessIdentifier {
+            try BackgroundInputDriver.tapKey(
+                keyCode: TypeServiceSpecialKeyMapping.keyCode(for: .delete),
+                targetProcessIdentifier: targetProcessIdentifier)
+        } else {
+            try self.syntheticInputDriver.tapKey(.delete, modifiers: [])
+        }
         try await Task.sleep(nanoseconds: 50_000_000) // 50ms
     }
 
@@ -323,7 +351,11 @@ public final class TypeService {
         }
     }
 
-    private func typeCharacter(_ char: Character) async throws {
-        try self.syntheticInputDriver.type(String(char), delayPerCharacter: 0)
+    private func typeCharacter(_ char: Character, targetProcessIdentifier: pid_t? = nil) async throws {
+        if let targetProcessIdentifier {
+            try BackgroundInputDriver.typeCharacter(char, targetProcessIdentifier: targetProcessIdentifier)
+        } else {
+            try self.syntheticInputDriver.type(String(char), delayPerCharacter: 0)
+        }
     }
 }

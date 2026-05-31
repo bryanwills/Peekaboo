@@ -23,6 +23,11 @@ extension PasteCommand: CommanderSignatureProviding {
             ],
             flags: [
                 .commandFlag("allowLarge", help: "Allow payloads larger than 10 MB", long: "allow-large"),
+                .commandFlag(
+                    "foreground",
+                    help: "Focus target and send foreground/global Cmd+V",
+                    long: "foreground"
+                ),
             ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
@@ -47,6 +52,7 @@ extension PasteCommand: CommanderBindableCommand {
             self.restoreDelayMs = delay
         }
         self.allowLarge = values.flag("allowLarge")
+        self.foreground = values.flag("foreground")
 
         self.target = try values.makeInteractionTargetOptions()
         self.focusOptions = try values.makeFocusOptions()

@@ -4,7 +4,7 @@ import PeekabooCore
 import Testing
 @testable import PeekabooCLI
 
-@Suite(.tags(.safe)) struct HotkeyCommandTests {
+@Suite(.tags(.safe), .serialized) struct HotkeyCommandTests {
     @Test func `hotkey parsing`() throws {
         // Test comma-separated format
         let command1 = try HotkeyCommand.parse(["--keys", "cmd,c"])
@@ -106,7 +106,7 @@ import Testing
         let context = await self.makeContext()
 
         let result = try await self.runHotkey(
-            arguments: ["cmd,l", "--app", "Safari", "--focus-background"],
+            arguments: ["cmd,l", "--app", "Safari"],
             context: context
         )
 
@@ -124,7 +124,7 @@ import Testing
         let context = await self.makeContext()
 
         let result = try await self.runHotkey(
-            arguments: ["cmd,l", "--app", "Safari", "--focus-background", "--json"],
+            arguments: ["cmd,l", "--app", "Safari", "--json"],
             context: context
         )
 
@@ -136,6 +136,27 @@ import Testing
         #expect(payload.success)
         #expect(payload.data.deliveryMode == "background")
         #expect(payload.data.targetPID == 4321)
+    }
+
+    @Test func `foreground flag opts hotkey out of targeted delivery`() async throws {
+        let context = await self.makeContext()
+
+        let result = try await self.runHotkey(
+            arguments: ["cmd,l", "--app", "Safari", "--foreground", "--json"],
+            context: context
+        )
+
+        #expect(result.exitStatus == 0)
+        let targetedCalls = await self.automationState(context) { $0.targetedHotkeyCalls }
+        #expect(targetedCalls.isEmpty)
+        let foregroundCalls = await self.automationState(context) { $0.hotkeyCalls }
+        #expect(foregroundCalls.map(\.keys) == ["cmd,l"])
+        let payload = try ExternalCommandRunner.decodeJSONResponse(
+            from: result,
+            as: CodableJSONResponse<HotkeyResult>.self
+        )
+        #expect(payload.data.deliveryMode == "foreground")
+        #expect(payload.data.targetPID == nil)
     }
 
     @Test func `background hotkey can target pid`() async throws {
@@ -219,7 +240,7 @@ import Testing
         #expect(payload.error?.code == ErrorCode.PERMISSION_ERROR_EVENT_SYNTHESIZING.rawValue)
     }
 
-    @Test func `background hotkey rejects snapshot before validation lookup`() async throws {
+    @Test func `background hotkey validates explicit snapshot before delivery`() async throws {
         let context = await self.makeContext()
 
         let result = try await self.runHotkey(
@@ -228,7 +249,8 @@ import Testing
         )
 
         #expect(result.exitStatus != 0)
-        #expect(self.output(from: result).contains("--focus-background cannot be combined with --snapshot"))
+        #expect(self.output(from: result).contains("Snapshot not found") ||
+            self.output(from: result).contains("No detection data found"))
 
         let calls = await self.automationState(context) { $0.targetedHotkeyCalls }
         #expect(calls.isEmpty)
@@ -258,7 +280,7 @@ import Testing
         )
 
         #expect(result.exitStatus != 0)
-        #expect(self.output(from: result).contains("--focus-background accepts one target"))
+        #expect(self.output(from: result).contains("Background hotkey accepts one process target"))
 
         let calls = await self.automationState(context) { $0.targetedHotkeyCalls }
         #expect(calls.isEmpty)

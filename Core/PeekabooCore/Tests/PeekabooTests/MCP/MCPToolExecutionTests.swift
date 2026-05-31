@@ -1020,12 +1020,13 @@ private enum MCPResponseMeta {
     }
 }
 
-private enum MCPToolTestHelpers {
+enum MCPToolTestHelpers {
     static func makeContext(
         automation: (any UIAutomationServiceProtocol)? = nil,
         screenCapture: (any ScreenCaptureServiceProtocol)? = nil,
         applications: (any ApplicationServiceProtocol)? = nil,
-        screens: (any ScreenServiceProtocol)? = nil) async -> MCPToolContext
+        screens: (any ScreenServiceProtocol)? = nil,
+        clipboard: (any ClipboardServiceProtocol)? = nil) async -> MCPToolContext
     {
         await MainActor.run {
             let services = PeekabooServices()
@@ -1047,7 +1048,7 @@ private enum MCPToolTestHelpers {
                 screens: resolvedScreens,
                 agent: services.agent,
                 permissions: services.permissions,
-                clipboard: services.clipboard,
+                clipboard: clipboard ?? services.clipboard,
                 browser: services.browser)
         }
     }
@@ -1056,12 +1057,14 @@ private enum MCPToolTestHelpers {
         automation: (any UIAutomationServiceProtocol)? = nil,
         screenCapture: (any ScreenCaptureServiceProtocol)? = nil,
         applications: (any ApplicationServiceProtocol)? = nil,
+        clipboard: (any ClipboardServiceProtocol)? = nil,
         _ operation: () async throws -> T) async rethrows -> T
     {
         let context = await self.makeContext(
             automation: automation,
             screenCapture: screenCapture,
-            applications: applications)
+            applications: applications,
+            clipboard: clipboard)
         return try await MCPToolContext.withContext(context) {
             try await operation()
         }
@@ -1071,7 +1074,8 @@ private enum MCPToolTestHelpers {
 // MARK: - Mock Services
 
 @MainActor
-private class MockAutomationService: TargetedClickServiceProtocol {
+class MockAutomationService: TargetedClickServiceProtocol, TargetedHotkeyServiceProtocol,
+TargetedTypeServiceProtocol {
     struct ClickCall {
         let target: ClickTarget
         let clickType: ClickType
@@ -1085,11 +1089,26 @@ private class MockAutomationService: TargetedClickServiceProtocol {
         let targetProcessIdentifier: pid_t
     }
 
+    struct TargetedHotkeyCall {
+        let keys: String
+        let holdDuration: Int
+        let targetProcessIdentifier: pid_t
+    }
+
+    struct TargetedTypeActionsCall {
+        let actions: [TypeAction]
+        let cadence: TypingCadence
+        let snapshotId: String?
+        let targetProcessIdentifier: pid_t
+    }
+
     private let accessibilityGranted: Bool
     private let detectionResult: ElementDetectionResult?
     private let mockCurrentMouseLocation: CGPoint?
     private(set) var clickCalls: [ClickCall] = []
     private(set) var targetedClickCalls: [TargetedClickCall] = []
+    private(set) var targetedHotkeyCalls: [TargetedHotkeyCall] = []
+    private(set) var targetedTypeActionsCalls: [TargetedTypeActionsCall] = []
     private(set) var scrollRequests: [ScrollRequest] = []
     private(set) var lastTypeActions: [TypeAction]?
     private(set) var lastTypeSnapshotId: String?
@@ -1099,6 +1118,12 @@ private class MockAutomationService: TargetedClickServiceProtocol {
     private(set) var lastMoveTarget: CGPoint?
     private(set) var lastMoveDuration: Int?
     private(set) var lastWindowContext: WindowContext?
+    var supportsTargetedHotkeys = true
+    var targetedHotkeyUnavailableReason: String?
+    var targetedHotkeyRequiresEventSynthesizingPermission = false
+    var supportsTargetedTypeActions = true
+    var targetedTypeUnavailableReason: String?
+    var targetedTypeRequiresEventSynthesizingPermission = false
 
     init(
         accessibilityGranted: Bool,
@@ -1159,6 +1184,20 @@ private class MockAutomationService: TargetedClickServiceProtocol {
         return TypeResult(totalCharacters: 0, keyPresses: 0)
     }
 
+    func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t) async throws -> TypeResult
+    {
+        self.targetedTypeActionsCalls.append(TargetedTypeActionsCall(
+            actions: actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: targetProcessIdentifier))
+        return try await self.typeActions(actions, cadence: cadence, snapshotId: snapshotId)
+    }
+
     func scroll(_ request: ScrollRequest) async throws {
         self.scrollRequests.append(request)
     }
@@ -1166,6 +1205,13 @@ private class MockAutomationService: TargetedClickServiceProtocol {
     func hotkey(keys: String, holdDuration: Int) async throws {
         self.lastHotkeyKeys = keys
         self.lastHotkeyHoldDuration = holdDuration
+    }
+
+    func hotkey(keys: String, holdDuration: Int, targetProcessIdentifier: pid_t) async throws {
+        self.targetedHotkeyCalls.append(TargetedHotkeyCall(
+            keys: keys,
+            holdDuration: holdDuration,
+            targetProcessIdentifier: targetProcessIdentifier))
     }
 
     func swipe(
@@ -1361,7 +1407,7 @@ private final class MockScreenService: ScreenServiceProtocol {
 }
 
 @MainActor
-private final class MockApplicationService: ApplicationServiceProtocol {
+final class MockApplicationService: ApplicationServiceProtocol {
     private(set) var applications: [ServiceApplicationInfo]
     private let windowsByIdentifier: [String: [ServiceWindowInfo]]
 

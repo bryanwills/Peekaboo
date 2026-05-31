@@ -1,11 +1,16 @@
 import CoreGraphics
+import Darwin
 import Foundation
 import PeekabooFoundation
 
 extension TypeService {
-    func typeSpecialKey(_ key: PeekabooFoundation.SpecialKey) throws {
+    func typeSpecialKey(_ key: PeekabooFoundation.SpecialKey, targetProcessIdentifier: pid_t? = nil) throws {
         let keyCode = TypeServiceSpecialKeyMapping.keyCode(for: key)
-        try TypeServiceSpecialKeyMapping.postKey(keyCode)
+        if let targetProcessIdentifier {
+            try BackgroundInputDriver.tapKey(keyCode: keyCode, targetProcessIdentifier: targetProcessIdentifier)
+        } else {
+            try TypeServiceSpecialKeyMapping.postKey(keyCode)
+        }
     }
 }
 

@@ -22,7 +22,7 @@ public struct PasteTool: MCPTool {
         - clipboard restore
 
         Targeting:
-        - Provide app/pid and/or window_id/window_title/window_index to focus before pasting.
+        - Provide app/pid/window to paste in the background by default, or set foreground=true to focus first.
 
         Payload:
         - text OR filePath/imagePath OR dataBase64+uti (optionally alsoText).
@@ -54,6 +54,9 @@ public struct PasteTool: MCPTool {
                     description: "Delay before restoring the previous clipboard (ms). Default: 150.",
                     minimum: 0,
                     default: 150),
+                "foreground": SchemaBuilder.boolean(
+                    description: "Optional. Focus target and send foreground/global Cmd+V.",
+                    default: false),
             ],
             required: [])
     }
@@ -75,7 +78,13 @@ public struct PasteTool: MCPTool {
                 windowIndex: arguments.getInt("window_index"),
                 windowId: arguments.getInt("window_id"))
 
-            _ = try await target.focusIfRequested(windows: self.context.windows)
+            let foreground = arguments.getBool("foreground") ?? false
+            let targetPID = foreground ? nil : try await target.processIdentifier(
+                applications: self.context.applications,
+                windows: self.context.windows)
+            if targetPID == nil {
+                _ = try await target.focusIfRequested(windows: self.context.windows)
+            }
 
             let priorClipboard = try? self.context.clipboard.get(prefer: nil)
             let restoreSlot = "paste-\(UUID().uuidString)"
@@ -99,7 +108,16 @@ public struct PasteTool: MCPTool {
             }
 
             let setResult = try self.context.clipboard.set(request)
-            try await self.context.automation.hotkey(keys: "cmd,v", holdDuration: 50)
+            if let targetPID {
+                guard let automation = self.context.automation as? any TargetedHotkeyServiceProtocol,
+                      automation.supportsTargetedHotkeys
+                else {
+                    throw PasteToolError("This automation host does not support background paste delivery.")
+                }
+                try await automation.hotkey(keys: "cmd,v", holdDuration: 50, targetProcessIdentifier: targetPID)
+            } else {
+                try await self.context.automation.hotkey(keys: "cmd,v", holdDuration: 50)
+            }
 
             let executionTime = Date().timeIntervalSince(startTime)
             let message = "\(AgentDisplayTokens.Status.success) Pasted (Cmd+V) and restored clipboard " +
@@ -124,6 +142,8 @@ public struct PasteTool: MCPTool {
                 "restored": .object(restoredObject),
                 "restore_delay_ms": .int(restoreDelayMs),
                 "execution_time": .double(executionTime),
+                "delivery_mode": .string(targetPID == nil ? "foreground" : "background"),
+                "target_pid": targetPID.map { .int(Int($0)) } ?? .null,
             ])
 
             let resolvedWindowTitle = try await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
@@ -138,6 +158,8 @@ public struct PasteTool: MCPTool {
                 meta: ToolEventSummary.merge(summary: summary, into: meta))
         } catch let error as MCPInteractionTargetError {
             return ToolResponse.error(error.localizedDescription)
+        } catch let error as PasteToolError {
+            return ToolResponse.error(error.message)
         } catch {
             self.logger.error("Paste failed: \(error.localizedDescription)")
             return ToolResponse.error("Paste failed: \(error.localizedDescription)")
@@ -174,5 +196,12 @@ public struct PasteTool: MCPTool {
 
         throw ClipboardServiceError.writeFailed(
             "Provide text, filePath/imagePath, or dataBase64+uti.")
+    }
+}
+
+private struct PasteToolError: Error {
+    let message: String
+    init(_ message: String) {
+        self.message = message
     }
 }

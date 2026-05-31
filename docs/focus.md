@@ -83,7 +83,7 @@ By default, Peekaboo will:
 
 ## Focus Options
 
-Interaction commands that use foreground delivery support these focus-related options. `click` defaults to background delivery; pass `--foreground` when you want focus behavior.
+Interaction commands that use foreground delivery support these focus-related options. `click`, `type`, `hotkey`, `press`, and `paste` default to background delivery when Peekaboo can resolve a target process; pass `--foreground` when you want focus behavior.
 
 ### `--no-auto-focus`
 Disables automatic focus management (not recommended).
@@ -98,21 +98,23 @@ Use cases:
 - Testing or debugging focus issues
 
 ### `--focus-background`
-Uses command-supported background delivery instead of activating the target app. For `click`, this is now the default and the flag is only a legacy alias.
+Uses command-supported background delivery instead of activating the target app. For input commands that can resolve a target process, this is now the default; the flag is a legacy alias where still exposed.
 
 ```bash
-peekaboo hotkey "cmd,l" --app Safari --focus-background
+peekaboo hotkey "cmd,l" --app Safari
 peekaboo click --coords 420,180 --app Safari
+peekaboo type "hello" --app TextEdit
 ```
 
 Use cases:
 - Sending app shortcuts without stealing focus
 - Clicking app-local coordinates without activating the target app
+- Typing or pasting into a targeted app without activating it
 - Keeping a long-running foreground workflow uninterrupted
 
-Currently, `hotkey` exposes this mode via `--focus-background`; `click` uses it by default. `hotkey` requires exactly one process target: `--app` or `--pid`. `click` requires `--app`, `--pid`, `--window-id`, or snapshot process metadata. Use `click --foreground` for focused foreground clicks.
+Currently, `click`, `type`, `hotkey`, `press`, and `paste` use background delivery by default when `--app`, `--pid`, `--window-id`, or snapshot process metadata identifies a live process. Use `--foreground` for focused foreground input.
 
-`--focus-background` is a delivery mode, not a focus mode. It cannot be combined with foreground focus timeout, retry, or Space-switching flags. `hotkey` also rejects `--snapshot` and `--no-auto-focus`; `click` can use snapshot metadata to resolve the target process. It requires Event Synthesizing access for the process that sends the event; `peekaboo permissions request-event-synthesizing` requests it for the selected bridge host by default, or for the local CLI when used with `--no-remote`. macOS does not acknowledge whether the target app handled a process-targeted event; Peekaboo reports that the event was sent to a live process after event-posting permission preflight.
+Background delivery is a delivery mode, not a focus mode. It cannot be combined with foreground focus timeout, retry, or Space-switching flags. It requires Event Synthesizing access for the process that sends the event; `peekaboo permissions request-event-synthesizing` requests it for the selected bridge host by default, or for the local CLI when used with `--no-remote`. macOS does not acknowledge whether the target app handled a process-targeted event; Peekaboo reports that the event was sent to a live process after event-posting permission preflight.
 
 ### `--focus-timeout-seconds <seconds>`
 Sets how long to wait for focus operations (default: 5.0).

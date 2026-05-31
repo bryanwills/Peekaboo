@@ -75,7 +75,7 @@ peekaboo see --app "Google Chrome" --json \
 
 ## Troubleshooting tips
 
-- If the CLI reports **blind typing**, re-run `see` with `--app <Name>` so we can autofocus the app before typing.
+- If the CLI reports **blind typing**, pass an explicit `--app`, `--pid`, `--window-id`, or fresh `--snapshot` so `type` can resolve a background target process, or add `--foreground` when the target app requires focused keyboard input.
 - If JSON/text output reports `AX tree truncated`, rerun with larger `--max-depth`, `--max-elements`, or `--max-children` values. For repeated captures, export the matching `PEEKABOO_AX_MAX_*` environment variable before launching Peekaboo.
 - Missing text fields after the fallback usually means the page is shielding its inputs from AX entirely. For Chrome targets, use the `browser` tool (`status` → `connect` → `snapshot`/`fill`/`click`) after enabling Chrome remote debugging; otherwise rely on image-based hit tests.
 - For repeatable local tests, run `RUN_LOCAL_TESTS=true swift test --filter SeeCommandPlaygroundTests` to exercise the Playground fixtures mentioned in `docs/research/interaction-debugging.md`.

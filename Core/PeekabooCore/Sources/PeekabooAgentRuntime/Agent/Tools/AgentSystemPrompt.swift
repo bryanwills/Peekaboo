@@ -156,7 +156,8 @@ public struct AgentSystemPrompt {
         **Common Patterns**
         - Menus → the `menu` tool with action "click" and the full path.
         - Keyboard shortcuts → `hotkey` with modifiers.
-        - Text entry → click the field with `foreground: true`, then `type`.
+        - Text entry → use `type` with an element/app/PID/window target; add `foreground: true` only when the app
+          ignores background keyboard delivery.
         - Scrolling → `scroll` with direction and amount.
         """
     }

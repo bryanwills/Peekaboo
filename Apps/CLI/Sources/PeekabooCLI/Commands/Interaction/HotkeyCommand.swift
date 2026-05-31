@@ -24,6 +24,9 @@ struct HotkeyCommand: ErrorHandlingCommand, OutputFormattable {
     @Flag(name: .customLong("focus-background"), help: "Send the hotkey to the target process without focusing it")
     var focusBackground = false
 
+    @Flag(help: "Focus target and send a foreground/global hotkey")
+    var foreground = false
+
     @OptionGroup var focusOptions: FocusCommandOptions
     @RuntimeStorage private var runtime: CommandRuntime?
 
@@ -87,24 +90,24 @@ struct HotkeyCommand: ErrorHandlingCommand, OutputFormattable {
                 fallbackToLatest: false,
                 snapshots: self.services.snapshots
             )
+            try await observation.validateIfExplicit(using: self.services.snapshots)
 
             let deliveryMode: String
             let targetPID: pid_t?
 
-            if self.focusOptions.focusBackground {
+            let backgroundPID = try await self.backgroundProcessIdentifier(snapshotId: observation.snapshotId)
+
+            if let backgroundPID {
                 try self.validateBackgroundHotkeyOptions(snapshotId: observation.snapshotId)
-                let resolvedPID = try await self.resolveBackgroundHotkeyProcessIdentifier()
                 try await AutomationServiceBridge.hotkey(
                     automation: self.services.automation,
                     keys: keysCsv,
                     holdDuration: self.holdDuration,
-                    targetProcessIdentifier: resolvedPID
+                    targetProcessIdentifier: backgroundPID
                 )
                 deliveryMode = "background"
-                targetPID = resolvedPID
+                targetPID = backgroundPID
             } else {
-                try await observation.validateIfExplicit(using: self.services.snapshots)
-
                 try await ensureFocused(
                     snapshotId: observation.focusSnapshotId(for: self.target),
                     target: self.target,
@@ -139,7 +142,7 @@ struct HotkeyCommand: ErrorHandlingCommand, OutputFormattable {
             )
 
             output(result) {
-                if self.focusOptions.focusBackground {
+                if targetPID != nil {
                     print("✅ Hotkey sent")
                 } else {
                     print("✅ Hotkey pressed")
@@ -158,17 +161,18 @@ struct HotkeyCommand: ErrorHandlingCommand, OutputFormattable {
     }
 
     private func validateBackgroundHotkeyOptions(snapshotId: String?) throws {
-        if snapshotId != nil {
-            throw ValidationError("--focus-background cannot be combined with --snapshot")
+        if self.foreground, self.focusOptions.backgroundDeliveryExplicitlyRequested {
+            throw ValidationError("--foreground cannot be combined with --focus-background")
         }
 
-        if self.focusOptions.noAutoFocus ||
-            self.focusOptions.focusTimeoutSeconds != nil ||
-            self.focusOptions.focusRetryCount != nil ||
-            self.focusOptions.spaceSwitch ||
-            self.focusOptions.bringToCurrentSpace {
-            throw ValidationError("--focus-background cannot be combined with focus options")
+        if snapshotId != nil {
+            return
         }
+
+        try KeyboardDeliverySupport.validateForegroundFlags(
+            foreground: self.foreground,
+            focusOptions: self.focusOptions
+        )
     }
 
     private static func parseKeyNames(_ keysString: String) -> [String] {
@@ -178,30 +182,26 @@ struct HotkeyCommand: ErrorHandlingCommand, OutputFormattable {
             .filter { !$0.isEmpty }
     }
 
-    private func resolveBackgroundHotkeyProcessIdentifier() async throws -> pid_t {
-        if self.target.windowId != nil || self.target.windowTitle != nil || self.target.windowIndex != nil {
-            throw ValidationError("--focus-background supports --app or --pid")
+    private func backgroundProcessIdentifier(snapshotId: String?) async throws -> pid_t? {
+        guard self.focusOptions.focusBackground ||
+            !KeyboardDeliverySupport.shouldUseForeground(foreground: self.foreground, focusOptions: self.focusOptions)
+        else {
+            return nil
         }
 
         if self.target.app != nil, self.target.pid != nil {
-            throw ValidationError("--focus-background accepts one target: use --app or --pid")
+            throw ValidationError("Background hotkey accepts one process target: use --app or --pid")
         }
 
-        if let pid = self.target.pid {
-            guard pid > 0 else {
-                throw ValidationError("--pid must be greater than 0")
-            }
-            return pid_t(pid)
-        }
-
-        guard let appIdentifier = self.target.app?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !appIdentifier.isEmpty
-        else {
+        let pid = try await KeyboardDeliverySupport.backgroundProcessIdentifier(
+            target: self.target,
+            snapshotId: snapshotId,
+            services: self.services
+        )
+        if self.focusOptions.focusBackground, pid == nil {
             throw ValidationError("--focus-background requires --app or --pid")
         }
-
-        let app = try await self.services.applications.findApplication(identifier: appIdentifier)
-        return pid_t(app.processIdentifier)
+        return pid
     }
 
     // Error handling is provided by ErrorHandlingCommand protocol
@@ -242,7 +242,8 @@ extension HotkeyCommand: ParsableCommand {
                       peekaboo hotkey --keys "cmd a"          # Select all
                       peekaboo hotkey --keys "cmd,shift,t"    # Reopen closed tab
                       peekaboo hotkey --keys "cmd space"      # Spotlight
-                      peekaboo hotkey "cmd,l" --app Safari --focus-background
+                      peekaboo hotkey "cmd,l" --app Safari
+                      peekaboo hotkey "cmd,l" --app Safari --foreground
 
                     KEY NAMES:
                       Modifiers: cmd, shift, alt/option, ctrl, fn
@@ -251,8 +252,9 @@ extension HotkeyCommand: ParsableCommand {
                       Special: space, return, tab, escape, delete, arrow_up, arrow_down, arrow_left, arrow_right
                       Function: f1-f12
 
-                    Background hotkeys accept one non-modifier key plus optional modifiers.
-                    Use --focus-background with --app or --pid to target a process without focusing it.
+                    Background hotkeys are used by default when --app, --pid, --window-id,
+                    or a snapshot with process metadata is available. Use --foreground
+                    when the target must receive a foreground/global hotkey.
                 """,
 
                 showHelpOnEmptyInvocation: true
@@ -276,6 +278,7 @@ extension HotkeyCommand: CommanderBindableCommand {
         }
         self.target = try values.makeInteractionTargetOptions()
         self.snapshot = values.singleOption("snapshot")
+        self.foreground = values.flag("foreground")
         self.focusOptions = try values.makeFocusOptions(includeBackgroundDelivery: true)
         self.focusBackground = self.focusOptions.focusBackground
     }

@@ -80,6 +80,7 @@ enum RuntimeHostResolver {
                 }
 
                 let targetedHotkeyAvailability = BridgeCapabilityPolicy.targetedHotkeyAvailability(for: handshake)
+                let targetedTypeAvailability = BridgeCapabilityPolicy.targetedTypeAvailability(for: handshake)
                 let targetedClickAvailability = BridgeCapabilityPolicy.targetedClickAvailability(for: handshake)
                 let hostDescription = "remote \(handshake.hostKind.rawValue) via \(socketPath)" +
                     (handshake.build.map { " (build \($0))" } ?? "")
@@ -90,6 +91,10 @@ enum RuntimeHostResolver {
                         targetedHotkeyUnavailableReason: targetedHotkeyAvailability.unavailableReason,
                         targetedHotkeyRequiresEventSynthesizingPermission:
                         targetedHotkeyAvailability.missingPermissions.contains(.postEvent),
+                        supportsTargetedTypeActions: targetedTypeAvailability.isEnabled,
+                        targetedTypeUnavailableReason: targetedTypeAvailability.unavailableReason,
+                        targetedTypeRequiresEventSynthesizingPermission:
+                        targetedTypeAvailability.missingPermissions.contains(.postEvent),
                         supportsTargetedClicks: targetedClickAvailability.isEnabled,
                         targetedClickUnavailableReason: targetedClickAvailability.unavailableReason,
                         targetedClickRequiresEventSynthesizingPermission:

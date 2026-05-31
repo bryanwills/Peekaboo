@@ -9,7 +9,7 @@ extension TypeTool {
     {
         let truncatedInput = self.truncatedText(request.text)
         return ToolEventSummary(
-            targetApp: targetContext?.snapshot.applicationName,
+            targetApp: targetContext?.snapshot.applicationName ?? request.target.appIdentifier,
             windowTitle: targetContext?.snapshot.windowTitle,
             elementRole: targetContext?.element.summaryRole,
             elementLabel: targetContext?.element.summaryLabel,

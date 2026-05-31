@@ -7,7 +7,7 @@ extension PeekabooBridgeOperation {
         case .captureScreen, .captureWindow, .captureFrontmost, .captureArea, .detectElements,
              .desktopObservation:
             [.screenRecording]
-        case .targetedHotkey, .targetedClick:
+        case .targetedHotkey, .targetedTypeActions, .targetedClick:
             [.postEvent]
         case .inspectAccessibilityTree,
              .click, .type, .typeActions, .setValue, .performAction, .scroll, .hotkey, .swipe, .drag, .moveMouse,
@@ -73,6 +73,7 @@ extension PeekabooBridgeOperation {
         .scroll,
         .hotkey,
         .targetedHotkey,
+        .targetedTypeActions,
         .targetedClick,
         .swipe,
         .drag,

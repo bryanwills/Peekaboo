@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import PeekabooAutomation
 
@@ -70,6 +71,111 @@ struct MCPInteractionTarget {
         guard let target else { return nil }
         try await windows.focusWindow(target: target)
         return target
+    }
+
+    func processIdentifier(
+        applications: any ApplicationServiceProtocol,
+        windows: any WindowManagementServiceProtocol) async throws -> pid_t?
+    {
+        if let windowId {
+            return Self.processIdentifierForWindow(windowId: CGWindowID(windowId))
+        }
+
+        if self.windowTitle != nil || self.windowIndex != nil {
+            guard let target = try self.toWindowTarget() else { return nil }
+            let matchingWindows = try await windows.listWindows(target: target)
+            guard let windowId = matchingWindows.first?.windowID else { return nil }
+            if let pid = Self.processIdentifierForWindow(windowId: CGWindowID(windowId)) {
+                return pid
+            }
+        }
+
+        if let pid, pid > 0 {
+            return pid_t(pid)
+        }
+
+        if let appIdentifier = self.app?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !appIdentifier.isEmpty
+        {
+            let app = try await applications.findApplication(identifier: appIdentifier)
+            return pid_t(app.processIdentifier)
+        }
+
+        guard let target = try self.toWindowTarget() else { return nil }
+        let matchingWindows = try await windows.listWindows(target: target)
+        guard let windowId = matchingWindows.first?.windowID else { return nil }
+        return Self.processIdentifierForWindow(windowId: CGWindowID(windowId))
+    }
+
+    private static func processIdentifierForWindow(windowId: CGWindowID) -> pid_t? {
+        guard let windowList = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID)
+            as? [[String: Any]]
+        else {
+            return nil
+        }
+
+        return windowList.first { window in
+            self.windowID(from: window[kCGWindowNumber as String]) == windowId
+        }.flatMap { window in
+            self.pid(from: window[kCGWindowOwnerPID as String])
+        }
+    }
+
+    private static func windowID(from value: Any?) -> CGWindowID? {
+        self.intValue(from: value).map(CGWindowID.init)
+    }
+
+    private static func pid(from value: Any?) -> pid_t? {
+        self.intValue(from: value).map(pid_t.init)
+    }
+
+    private static func intValue(from value: Any?) -> Int? {
+        if let number = value as? NSNumber {
+            return number.intValue
+        }
+        if let int = value as? Int {
+            return int
+        }
+        if let int32 = value as? Int32 {
+            return Int(int32)
+        }
+        if let uint32 = value as? UInt32 {
+            return Int(uint32)
+        }
+        return nil
+    }
+
+    var hasTarget: Bool {
+        self.pid != nil ||
+            !(self.app?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) ||
+            self.windowId != nil ||
+            self.windowIndex != nil ||
+            !(self.windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    }
+
+    func focusIfRequested(windows: any WindowManagementServiceProtocol, onlyWhenTargeted: Bool) async throws
+        -> WindowTarget?
+    {
+        guard !onlyWhenTargeted || self.hasTarget else { return nil }
+        return try await self.focusIfRequested(windows: windows)
+    }
+
+    func processIdentifierIfTargeted(
+        applications: any ApplicationServiceProtocol,
+        windows: any WindowManagementServiceProtocol) async throws -> pid_t?
+    {
+        guard self.hasTarget else { return nil }
+        return try await self.processIdentifier(applications: applications, windows: windows)
+    }
+
+    func targetProcessIdentifierValue(
+        applications: any ApplicationServiceProtocol,
+        windows: any WindowManagementServiceProtocol) async throws -> Int?
+    {
+        guard let pid = try await self.processIdentifierIfTargeted(applications: applications, windows: windows) else {
+            return nil
+        }
+        return Int(pid)
     }
 
     func resolveWindowTitleIfNeeded(windows: any WindowManagementServiceProtocol) async throws -> String? {

@@ -40,6 +40,9 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfi
     @Flag(help: "Clear the field before typing (Cmd+A, Delete)")
     var clear = false
 
+    @Flag(help: "Focus target and send foreground keyboard input")
+    var foreground = false
+
     @OptionGroup var target: InteractionTargetOptions
 
     @OptionGroup var focusOptions: FocusCommandOptions
@@ -108,16 +111,23 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfi
             let actions = try self.buildActions()
             let observation = await self.resolveObservationContext()
             try await observation.validateIfExplicit(using: self.services.snapshots)
-            self.warnIfFocusUnknown(snapshotId: observation.snapshotId)
-            try await self.focusIfNeeded(snapshotId: observation.focusSnapshotId(for: self.target))
-            let typeResult = try await self.executeTypeActions(actions: actions, snapshotId: observation.snapshotId)
+            let targetPID = try await self.backgroundProcessIdentifier(snapshotId: observation.snapshotId)
+            if targetPID == nil {
+                self.warnIfFocusUnknown(snapshotId: observation.snapshotId)
+                try await self.focusIfNeeded(snapshotId: observation.focusSnapshotId(for: self.target))
+            }
+            let typeResult = try await self.executeTypeActions(
+                actions: actions,
+                snapshotId: observation.snapshotId,
+                targetProcessIdentifier: targetPID
+            )
             await InteractionObservationInvalidator.invalidateAfterMutation(
                 observation,
                 snapshots: self.services.snapshots,
                 logger: self.logger,
                 reason: "type"
             )
-            self.renderResult(typeResult, actions: actions, startTime: startTime)
+            self.renderResult(typeResult, actions: actions, startTime: startTime, targetProcessIdentifier: targetPID)
         } catch {
             self.handleError(error)
             throw ExitCode.failure
@@ -175,6 +185,10 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfi
 
     mutating func validate() throws {
         try self.target.validate()
+        try KeyboardDeliverySupport.validateForegroundFlags(
+            foreground: self.foreground,
+            focusOptions: self.focusOptions
+        )
         if let option = self.profileOption,
            TypingProfile(rawValue: option.lowercased()) == nil {
             throw ValidationError("--profile must be either 'human' or 'linear'")
@@ -209,12 +223,43 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfi
         )
     }
 
-    private func executeTypeActions(actions: [TypeAction], snapshotId: String?) async throws -> TypeResult {
+    private func executeTypeActions(
+        actions: [TypeAction],
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t?
+    ) async throws -> TypeResult {
         let request = TypeActionsRequest(actions: actions, cadence: self.typingCadence, snapshotId: snapshotId)
+        if let targetProcessIdentifier {
+            return try await AutomationServiceBridge.typeActions(
+                automation: self.services.automation,
+                request: request,
+                targetProcessIdentifier: targetProcessIdentifier
+            )
+        }
         return try await AutomationServiceBridge.typeActions(automation: self.services.automation, request: request)
     }
 
-    private func renderResult(_ typeResult: TypeResult, actions: [TypeAction], startTime: Date) {
+    private func backgroundProcessIdentifier(snapshotId: String?) async throws -> pid_t? {
+        guard !KeyboardDeliverySupport.shouldUseForeground(
+            foreground: self.foreground,
+            focusOptions: self.focusOptions
+        ) else {
+            return nil
+        }
+
+        return try await KeyboardDeliverySupport.backgroundProcessIdentifier(
+            target: self.target,
+            snapshotId: snapshotId,
+            services: self.services
+        )
+    }
+
+    private func renderResult(
+        _ typeResult: TypeResult,
+        actions: [TypeAction],
+        startTime: Date,
+        targetProcessIdentifier: pid_t?
+    ) {
         let specialKeys = max(typeResult.keyPresses - typeResult.totalCharacters, 0)
         let result = TypeCommandResult(
             success: true,
@@ -227,7 +272,10 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfi
             actions: actions.map(Self.actionSummary),
             executionTime: Date().timeIntervalSince(startTime),
             wordsPerMinute: self.resolvedProfile == .human ? self.resolvedWordsPerMinute : nil,
-            profile: self.resolvedProfile.rawValue
+            profile: self.resolvedProfile.rawValue,
+            deliveryMode: targetProcessIdentifier == nil ? KeyboardDeliveryMode.foreground.rawValue :
+                KeyboardDeliveryMode.background.rawValue,
+            targetPID: targetProcessIdentifier.map(Int.init)
         )
 
         output(result) {
@@ -237,6 +285,9 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfi
             }
             if specialKeys > 0 {
                 print("🔑 Special keys: \(specialKeys)")
+            }
+            if let targetProcessIdentifier {
+                print("🎯 Mode: background to PID \(targetProcessIdentifier)")
             }
             print("📊 Total characters: \(typeResult.totalCharacters)")
             switch self.resolvedProfile {
@@ -286,6 +337,7 @@ extension TypeCommand: CommanderBindableCommand {
         self.escape = values.flag("escape")
         self.delete = values.flag("delete")
         self.clear = values.flag("clear")
+        self.foreground = values.flag("foreground")
         self.target = try values.makeInteractionTargetOptions()
         self.focusOptions = try values.makeFocusOptions()
     }
@@ -301,11 +353,12 @@ extension TypeCommand: ParsableCommand {
                 commandName: "type",
                 abstract: "Type text or send keyboard input",
                 discussion: """
-                    The 'type' command sends keyboard input to the focused element.
-                    It can type regular text or send special key combinations.
+                    The 'type' command sends keyboard input to a targeted app/window,
+                    snapshot process, or the current focused element. Background delivery
+                    is used by default when a target process is known.
 
                     EXAMPLES:
-                      peekaboo type "Hello World"           # Type text with human cadence (default: 140 WPM)
+                      peekaboo type "Hello World" --app TextEdit # Background-target TextEdit
                       peekaboo type "user@example.com"      # Type email
                       peekaboo type "text" --delay 0        # Type at maximum speed
                       peekaboo type "text" --delay 50       # Type slower (50ms between keys)
@@ -335,7 +388,8 @@ extension TypeCommand: ParsableCommand {
                       \\\\  - Literal backslash
 
                     FOCUS MANAGEMENT:
-                      Provide --app/--pid/window targeting or a snapshot for focus guarantees.
+                      Provide --app/--pid/window targeting or a snapshot for background delivery.
+                      Use --foreground only when the target requires focused keyboard input.
                       Without a target, keys are injected into the current focused element.
 
                     HUMAN TYPING:

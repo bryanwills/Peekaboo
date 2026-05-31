@@ -36,7 +36,8 @@ import PeekabooFoundation
  * - Since: PeekabooCore 1.0.0
  */
 @MainActor
-public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedClickServiceProtocol {
+public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceProtocol,
+TargetedClickServiceProtocol {
     let logger = Logger(subsystem: "boo.peekaboo.core", category: "UIAutomationService")
     let snapshotManager: any SnapshotManagerProtocol
 

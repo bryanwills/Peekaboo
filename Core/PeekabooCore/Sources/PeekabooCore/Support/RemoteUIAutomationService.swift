@@ -7,11 +7,16 @@ import PeekabooFoundation
 
 @MainActor
 public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, TargetedHotkeyServiceProtocol,
-TargetedClickServiceProtocol {
+    TargetedTypeServiceProtocol,
+    TargetedClickServiceProtocol
+{
     let client: PeekabooBridgeClient
     public let supportsTargetedHotkeys: Bool
     public let targetedHotkeyUnavailableReason: String?
     public let targetedHotkeyRequiresEventSynthesizingPermission: Bool
+    public let supportsTargetedTypeActions: Bool
+    public let targetedTypeUnavailableReason: String?
+    public let targetedTypeRequiresEventSynthesizingPermission: Bool
     public let supportsTargetedClicks: Bool
     public let targetedClickUnavailableReason: String?
     public let targetedClickRequiresEventSynthesizingPermission: Bool
@@ -23,6 +28,9 @@ TargetedClickServiceProtocol {
         supportsTargetedHotkeys: Bool = false,
         targetedHotkeyUnavailableReason: String? = nil,
         targetedHotkeyRequiresEventSynthesizingPermission: Bool = false,
+        supportsTargetedTypeActions: Bool = false,
+        targetedTypeUnavailableReason: String? = nil,
+        targetedTypeRequiresEventSynthesizingPermission: Bool = false,
         supportsTargetedClicks: Bool = false,
         targetedClickUnavailableReason: String? = nil,
         targetedClickRequiresEventSynthesizingPermission: Bool = false,
@@ -33,6 +41,9 @@ TargetedClickServiceProtocol {
         self.supportsTargetedHotkeys = supportsTargetedHotkeys
         self.targetedHotkeyUnavailableReason = targetedHotkeyUnavailableReason
         self.targetedHotkeyRequiresEventSynthesizingPermission = targetedHotkeyRequiresEventSynthesizingPermission
+        self.supportsTargetedTypeActions = supportsTargetedTypeActions
+        self.targetedTypeUnavailableReason = targetedTypeUnavailableReason
+        self.targetedTypeRequiresEventSynthesizingPermission = targetedTypeRequiresEventSynthesizingPermission
         self.supportsTargetedClicks = supportsTargetedClicks
         self.targetedClickUnavailableReason = targetedClickUnavailableReason
         self.targetedClickRequiresEventSynthesizingPermission = targetedClickRequiresEventSynthesizingPermission
@@ -134,6 +145,38 @@ TargetedClickServiceProtocol {
         try await self.client.typeActions(actions, cadence: cadence, snapshotId: snapshotId)
     }
 
+    public func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t) async throws -> TypeResult
+    {
+        guard self.supportsTargetedTypeActions else {
+            throw Self.targetedTypeUnavailableError(
+                reason: self.targetedTypeUnavailableReason,
+                requiresEventSynthesizingPermission: self.targetedTypeRequiresEventSynthesizingPermission)
+        }
+
+        do {
+            return try await self.client.typeActions(
+                actions,
+                cadence: cadence,
+                snapshotId: snapshotId,
+                targetProcessIdentifier: targetProcessIdentifier)
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            switch envelope.code {
+            case .permissionDenied:
+                throw Self.permissionDeniedError(for: envelope)
+            case .invalidRequest:
+                throw PeekabooError.invalidInput(envelope.message)
+            case .operationNotSupported:
+                throw PeekabooError.serviceUnavailable(envelope.message)
+            default:
+                throw envelope
+            }
+        }
+    }
+
     public func scroll(_ request: ScrollRequest) async throws {
         try await self.client.scroll(request)
     }
@@ -178,6 +221,18 @@ TargetedClickServiceProtocol {
 
         return .serviceUnavailable(
             reason ?? "Remote bridge host does not support background hotkeys; use --no-remote or update the host")
+    }
+
+    private static func targetedTypeUnavailableError(
+        reason: String?,
+        requiresEventSynthesizingPermission: Bool) -> PeekabooError
+    {
+        if requiresEventSynthesizingPermission {
+            return .permissionDeniedEventSynthesizing
+        }
+
+        return .serviceUnavailable(
+            reason ?? "Remote bridge host does not support background typing; use --no-remote or update the host")
     }
 
     private static func targetedClickUnavailableError(

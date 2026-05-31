@@ -113,6 +113,49 @@ struct CommandRuntimeInjectionTests {
     }
 
     @Test
+    func `targeted type support requires protocol 1_8 and enabled bridge operation`() {
+        let supported = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 8),
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.captureScreen, .targetedTypeActions],
+            permissions: PermissionsStatus(
+                screenRecording: true,
+                accessibility: true,
+                postEvent: false
+            ),
+            enabledOperations: [.captureScreen],
+            permissionTags: [
+                PeekabooBridgeOperation.targetedTypeActions.rawValue: [.postEvent],
+            ]
+        )
+
+        let enabled = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 8),
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.captureScreen, .targetedTypeActions],
+            enabledOperations: [.captureScreen, .targetedTypeActions]
+        )
+
+        let oldProtocol = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 7),
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.captureScreen, .targetedTypeActions],
+            enabledOperations: [.captureScreen, .targetedTypeActions]
+        )
+
+        #expect(!CommandRuntime.supportsTargetedTypeActions(for: supported))
+        #expect(CommandRuntime.supportsTargetedTypeActions(for: enabled))
+        #expect(!CommandRuntime.supportsTargetedTypeActions(for: oldProtocol))
+
+        let availability = CommandRuntime.targetedTypeAvailability(for: supported)
+        #expect(availability.unavailableReason?.contains("Event Synthesizing") == true)
+        #expect(availability.missingPermissions == [.postEvent])
+    }
+
+    @Test
     func `targeted click support requires enabled bridge operation`() {
         let supported = PeekabooBridgeHandshakeResponse(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 6),

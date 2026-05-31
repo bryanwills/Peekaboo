@@ -80,6 +80,50 @@ struct ServiceBridgeTests {
         }
     }
 
+    @Test func `automation targeted type forwards calls`() async throws {
+        let automation = MockTargetedAutomationService()
+        let request = TypeActionsRequest(
+            actions: [.text("Hello"), .key(.return)],
+            cadence: .fixed(milliseconds: 1),
+            snapshotId: "snapshot-123"
+        )
+
+        let result = try await AutomationServiceBridge.typeActions(
+            automation: automation,
+            request: request,
+            targetProcessIdentifier: 12345
+        )
+
+        #expect(result.totalCharacters == 2)
+        #expect(result.keyPresses == 2)
+        #expect(automation.targetedTypeActionsCalls.count == 1)
+        #expect(automation.targetedTypeActionsCalls.first?.snapshotId == "snapshot-123")
+        #expect(automation.targetedTypeActionsCalls.first?.targetProcessIdentifier == 12345)
+    }
+
+    @Test func `automation targeted type maps missing event synthesizing permission`() async throws {
+        let automation = MockTargetedAutomationService()
+        automation.supportsTargetedTypeActions = false
+        automation.targetedTypeRequiresEventSynthesizingPermission = true
+        automation.targetedTypeUnavailableReason =
+            "Remote bridge host supports background typing, but current permissions are missing: Event Synthesizing"
+
+        do {
+            _ = try await AutomationServiceBridge.typeActions(
+                automation: automation,
+                request: TypeActionsRequest(
+                    actions: [.text("Hello")],
+                    cadence: .fixed(milliseconds: 1),
+                    snapshotId: nil
+                ),
+                targetProcessIdentifier: 12345
+            )
+            Issue.record("Expected Event Synthesizing permission error")
+        } catch PeekabooError.permissionDeniedEventSynthesizing {
+            #expect(automation.targetedTypeActionsCalls.isEmpty)
+        }
+    }
+
     @Test func `automation targeted click forwards calls`() async throws {
         let automation = MockTargetedAutomationService()
 
@@ -246,7 +290,7 @@ class MockAutomationService: UIAutomationServiceProtocol {
 
 @MainActor
 final class MockTargetedAutomationService: MockAutomationService, TargetedHotkeyServiceProtocol,
-TargetedClickServiceProtocol {
+TargetedTypeServiceProtocol, TargetedClickServiceProtocol {
     struct TargetedHotkeyCall {
         let keys: String
         let holdDuration: Int
@@ -260,11 +304,22 @@ TargetedClickServiceProtocol {
         let targetProcessIdentifier: pid_t
     }
 
+    struct TargetedTypeActionsCall {
+        let actions: [TypeAction]
+        let cadence: TypingCadence
+        let snapshotId: String?
+        let targetProcessIdentifier: pid_t
+    }
+
     var targetedHotkeyCalls: [TargetedHotkeyCall] = []
+    var targetedTypeActionsCalls: [TargetedTypeActionsCall] = []
     var targetedClickCalls: [TargetedClickCall] = []
     var supportsTargetedHotkeys = true
     var targetedHotkeyUnavailableReason: String?
     var targetedHotkeyRequiresEventSynthesizingPermission = false
+    var supportsTargetedTypeActions = true
+    var targetedTypeUnavailableReason: String?
+    var targetedTypeRequiresEventSynthesizingPermission = false
     var supportsTargetedClicks = true
     var targetedClickUnavailableReason: String?
     var targetedClickRequiresEventSynthesizingPermission = false
@@ -275,6 +330,21 @@ TargetedClickServiceProtocol {
             holdDuration: holdDuration,
             targetProcessIdentifier: targetProcessIdentifier
         ))
+    }
+
+    func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t
+    ) async throws -> TypeResult {
+        self.targetedTypeActionsCalls.append(.init(
+            actions: actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: targetProcessIdentifier
+        ))
+        return try await self.typeActions(actions, cadence: cadence, snapshotId: snapshotId)
     }
 
     func click(

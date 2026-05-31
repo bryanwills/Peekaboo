@@ -12,6 +12,8 @@ struct TypeCommandResult: Codable {
     let executionTime: TimeInterval
     let wordsPerMinute: Int?
     let profile: String
+    let deliveryMode: String
+    let targetPID: Int?
 }
 
 struct TypeCommandActionSummary: Codable {

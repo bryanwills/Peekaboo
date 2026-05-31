@@ -13,6 +13,8 @@ struct TypeRequest {
     let tabCount: Int?
     let pressEscape: Bool
     let pressDelete: Bool
+    let foreground: Bool
+    let target: MCPInteractionTarget
 
     static let defaultHumanWPM = 140
 

@@ -63,6 +63,11 @@ extension TypeCommand: CommanderSignatureProviding {
                     help: "Clear the field before typing (Cmd+A, Delete)",
                     long: "clear"
                 ),
+                .commandFlag(
+                    "foreground",
+                    help: "Focus target and send foreground keyboard input",
+                    long: "foreground"
+                ),
             ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),

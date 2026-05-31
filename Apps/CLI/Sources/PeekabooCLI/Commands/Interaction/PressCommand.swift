@@ -25,6 +25,9 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     var snapshot: String?
 
     @OptionGroup var focusOptions: FocusCommandOptions
+    @Flag(help: "Focus target and send foreground/global key presses")
+    var foreground = false
+
     @RuntimeStorage private var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
 
@@ -76,23 +79,35 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             )
             try await observation.validateIfExplicit(using: self.services.snapshots)
 
-            try await ensureFocused(
-                snapshotId: observation.focusSnapshotId(for: self.target),
-                target: self.target,
-                options: self.focusOptions,
-                services: self.services
-            )
+            let targetPID = try await self.backgroundProcessIdentifier(snapshotId: observation.snapshotId)
+            if targetPID == nil {
+                try await ensureFocused(
+                    snapshotId: observation.focusSnapshotId(for: self.target),
+                    target: self.target,
+                    options: self.focusOptions,
+                    services: self.services
+                )
+            }
 
             let normalizedKeys = self.keys.map { $0.lowercased() }
             var completedPresses = 0
 
             for repetition in 0..<self.count {
                 for (index, key) in normalizedKeys.indexed() {
-                    try await AutomationServiceBridge.hotkey(
-                        automation: self.services.automation,
-                        keys: key,
-                        holdDuration: self.hold
-                    )
+                    if let targetPID {
+                        try await AutomationServiceBridge.hotkey(
+                            automation: self.services.automation,
+                            keys: key,
+                            holdDuration: self.hold,
+                            targetProcessIdentifier: targetPID
+                        )
+                    } else {
+                        try await AutomationServiceBridge.hotkey(
+                            automation: self.services.automation,
+                            keys: key,
+                            holdDuration: self.hold
+                        )
+                    }
                     completedPresses += 1
 
                     let isLastKey = index == normalizedKeys.count - 1
@@ -116,6 +131,9 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 keys: keys,
                 totalPresses: completedPresses,
                 count: self.count,
+                deliveryMode: targetPID == nil ? KeyboardDeliveryMode.foreground.rawValue :
+                    KeyboardDeliveryMode.background.rawValue,
+                targetPID: targetPID.map(Int.init),
                 executionTime: Date().timeIntervalSince(startTime)
             )
 
@@ -124,6 +142,9 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 print("🔑 Keys: \(self.keys.joined(separator: " → "))")
                 if self.count > 1 {
                     print("🔢 Repeated: \(self.count) times")
+                }
+                if let targetPID {
+                    print("🎯 Mode: background to PID \(targetPID)")
                 }
                 print("📊 Total presses: \(completedPresses)")
                 print("⏱️  Completed in \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s")
@@ -139,6 +160,10 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
 
     mutating func validate() throws {
         try self.target.validate()
+        try KeyboardDeliverySupport.validateForegroundFlags(
+            foreground: self.foreground,
+            focusOptions: self.focusOptions
+        )
         guard self.count >= 1 else {
             throw ValidationError("--count must be greater than 0")
         }
@@ -154,6 +179,21 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             }
         }
     }
+
+    private func backgroundProcessIdentifier(snapshotId: String?) async throws -> pid_t? {
+        guard !KeyboardDeliverySupport.shouldUseForeground(
+            foreground: self.foreground,
+            focusOptions: self.focusOptions
+        ) else {
+            return nil
+        }
+
+        return try await KeyboardDeliverySupport.backgroundProcessIdentifier(
+            target: self.target,
+            snapshotId: snapshotId,
+            services: self.services
+        )
+    }
 }
 
 // MARK: - JSON Output Structure
@@ -163,6 +203,8 @@ struct PressResult: Codable {
     let keys: [String]
     let totalPresses: Int
     let count: Int
+    let deliveryMode: String
+    let targetPID: Int?
     let executionTime: TimeInterval
 }
 
@@ -181,6 +223,7 @@ extension PressCommand: ParsableCommand {
 
                     EXAMPLES:
                       peekaboo press return                # Press Enter/Return
+                      peekaboo press return --app TextEdit # Background-target TextEdit
                       peekaboo press tab --count 3         # Press Tab 3 times
                       peekaboo press escape                # Press Escape
                       peekaboo press delete                # Press Backspace/Delete
@@ -238,6 +281,7 @@ extension PressCommand: CommanderBindableCommand {
             self.hold = hold
         }
         self.snapshot = values.singleOption("snapshot")
+        self.foreground = values.flag("foreground")
         self.focusOptions = try values.makeFocusOptions()
     }
 }

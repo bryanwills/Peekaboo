@@ -285,7 +285,7 @@ The following subsections spell out the concrete steps, required Playground surf
   - `polter peekaboo -- type "Hello Playground" --clear --snapshot 263F8CD6-…` updated the Basic Text Field (log shows “Basic text changed …”).
   - `polter peekaboo -- type --tab 1 --snapshot 263F8CD6-…` advanced focus to the Number field, followed by `polter peekaboo -- type "42" --snapshot 263F8CD6-…`.
   - Validation error confirmed via `polter peekaboo -- type "bad" --profile warp` (proper error message).
-  - Note: targets are determined by current focus; use helper buttons and `click` to focus before typing. Legacy `--on` / `--query` flags no longer exist.
+  - Note: prefer `--app`, `--pid`, `--window-id`, or `--snapshot` so `type` can use background delivery; use helper buttons and `click` to set field focus when a view requires it. Legacy `--on` / `--query` flags no longer exist.
 
 #### `press`
 - **View**: KeyboardView “Key Press Detection” field (Keyboard tab).

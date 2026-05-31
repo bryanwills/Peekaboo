@@ -37,6 +37,8 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
 
     @OptionGroup var target: InteractionTargetOptions
     @OptionGroup var focusOptions: FocusCommandOptions
+    @Flag(help: "Focus target and send foreground/global Cmd+V")
+    var foreground = false
 
     @RuntimeStorage private var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
@@ -78,14 +80,21 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
 
         do {
             try self.target.validate()
+            try KeyboardDeliverySupport.validateForegroundFlags(
+                foreground: self.foreground,
+                focusOptions: self.focusOptions
+            )
             let request = try self.makeWriteRequest()
 
-            try await ensureFocused(
-                snapshotId: nil,
-                target: self.target,
-                options: self.focusOptions,
-                services: self.services
-            )
+            let targetPID = try await self.backgroundProcessIdentifier()
+            if targetPID == nil {
+                try await ensureFocused(
+                    snapshotId: nil,
+                    target: self.target,
+                    options: self.focusOptions,
+                    services: self.services
+                )
+            }
 
             let priorClipboard = try? self.services.clipboard.get(prefer: nil)
             let restoreSlot = "paste-\(UUID().uuidString)"
@@ -108,11 +117,20 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
 
             let setResult = try self.services.clipboard.set(request)
 
-            try await AutomationServiceBridge.hotkey(
-                automation: self.services.automation,
-                keys: "cmd,v",
-                holdDuration: 50
-            )
+            if let targetPID {
+                try await AutomationServiceBridge.hotkey(
+                    automation: self.services.automation,
+                    keys: "cmd,v",
+                    holdDuration: 50,
+                    targetProcessIdentifier: targetPID
+                )
+            } else {
+                try await AutomationServiceBridge.hotkey(
+                    automation: self.services.automation,
+                    keys: "cmd,v",
+                    holdDuration: 50
+                )
+            }
             await InteractionObservationInvalidator.invalidateLatestSnapshot(
                 using: self.services.snapshots,
                 logger: self.logger,
@@ -127,7 +145,10 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 previousClipboardPresent: priorClipboard != nil,
                 restoredUti: restoreResult?.utiIdentifier,
                 restoredSize: restoreResult?.data.count,
-                restoreDelayMs: self.restoreDelayMs
+                restoreDelayMs: self.restoreDelayMs,
+                deliveryMode: targetPID == nil ? KeyboardDeliveryMode.foreground.rawValue :
+                    KeyboardDeliveryMode.background.rawValue,
+                targetPID: targetPID.map(Int.init)
             )
 
             self.output(result) {
@@ -137,6 +158,9 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                     print("♻️  Restored: \(restoreResult?.utiIdentifier ?? "unknown")")
                 } else {
                     print("🧹 Restored: cleared (prior clipboard empty)")
+                }
+                if let targetPID {
+                    print("🎯 Mode: background to PID \(targetPID)")
                 }
             }
         } catch {
@@ -181,6 +205,21 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
 
         throw ValidationError("Provide text, --file-path/--image-path, or --data-base64 with --uti")
     }
+
+    private func backgroundProcessIdentifier() async throws -> pid_t? {
+        guard !KeyboardDeliverySupport.shouldUseForeground(
+            foreground: self.foreground,
+            focusOptions: self.focusOptions
+        ) else {
+            return nil
+        }
+
+        return try await KeyboardDeliverySupport.backgroundProcessIdentifier(
+            target: self.target,
+            snapshotId: nil,
+            services: self.services
+        )
+    }
 }
 
 struct PasteResult: Codable {
@@ -192,6 +231,8 @@ struct PasteResult: Codable {
     let restoredUti: String?
     let restoredSize: Int?
     let restoreDelayMs: Int
+    let deliveryMode: String
+    let targetPID: Int?
 }
 
 @MainActor
@@ -207,9 +248,12 @@ extension PasteCommand: ParsableCommand {
                       2) Cmd+V paste
                       3) clipboard restore
                     into one operation.
+                    Background Cmd+V delivery is used by default when a target process
+                    is known; add --foreground for focused/global paste.
 
                     EXAMPLES:
                       peekaboo paste \"Hello\" --app TextEdit
+                      peekaboo paste \"Hello\" --app TextEdit --foreground
                       peekaboo paste --text \"Hello\" --app TextEdit --window-title \"Untitled\"
                       peekaboo paste --data-base64 \"$BASE64\" --uti public.rtf --also-text \"fallback\" --app TextEdit
                       peekaboo paste --file-path /tmp/snippet.png --app Notes

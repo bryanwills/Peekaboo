@@ -15,6 +15,7 @@ public struct HotkeyTool: MCPTool {
         """
         Presses keyboard shortcuts.
         Simulates one primary key plus optional modifiers, like Cmd+C or Ctrl+Shift+T.
+        If app/pid/window targeting is supplied, sends the hotkey to that process in the background by default.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-7
         """
     }
@@ -33,6 +34,16 @@ public struct HotkeyTool: MCPTool {
                     description: "Optional. Delay between key press and release in milliseconds. Default: 50.",
                     minimum: 0,
                     default: 50),
+                "app": SchemaBuilder.string(description: "Optional. Target app name/bundle ID, or 'PID:<n>'."),
+                "pid": SchemaBuilder.number(
+                    description: "Optional. Target process ID for background hotkeys."),
+                "window_id": SchemaBuilder.number(description: "Optional. Window ID for background hotkeys."),
+                "window_title": SchemaBuilder.string(description: "Optional. Window title (substring match)."),
+                "window_index": SchemaBuilder
+                    .number(description: "Optional. Window index (0-based); requires app/pid."),
+                "foreground": SchemaBuilder.boolean(
+                    description: "Optional. Send foreground/global hotkey even when a target is supplied.",
+                    default: false),
             ],
             required: ["keys"])
     }
@@ -72,7 +83,32 @@ public struct HotkeyTool: MCPTool {
 
             // Execute hotkey using PeekabooServices
             let hotkeyService = self.context.automation
-            try await hotkeyService.hotkey(keys: keys, holdDuration: holdDurationMs)
+            let foreground = arguments.getBool("foreground") == true
+            let target = MCPInteractionTarget(
+                app: arguments.getString("app"),
+                pid: arguments.getInt("pid"),
+                windowTitle: arguments.getString("window_title"),
+                windowIndex: arguments.getInt("window_index"),
+                windowId: arguments.getInt("window_id"))
+            let targetPID = foreground ? nil : try await target.processIdentifierIfTargeted(
+                applications: self.context.applications,
+                windows: self.context.windows)
+            if let targetPID, targetPID > 0 {
+                guard let hotkeyService = hotkeyService as? any TargetedHotkeyServiceProtocol,
+                      hotkeyService.supportsTargetedHotkeys
+                else {
+                    return ToolResponse.error("This automation host does not support background hotkeys.")
+                }
+                try await hotkeyService.hotkey(
+                    keys: keys,
+                    holdDuration: holdDurationMs,
+                    targetProcessIdentifier: pid_t(targetPID))
+            } else {
+                _ = try await target.focusIfRequested(
+                    windows: self.context.windows,
+                    onlyWhenTargeted: true)
+                try await hotkeyService.hotkey(keys: keys, holdDuration: holdDurationMs)
+            }
 
             let executionTime = Date().timeIntervalSince(startTime)
 
@@ -89,9 +125,14 @@ public struct HotkeyTool: MCPTool {
                 "hold_duration": .double(Double(holdDurationMs)),
                 "execution_time": .double(executionTime),
                 "formatted_keys": .string(formattedKeys),
+                "delivery_mode": .string(targetPID == nil ? "foreground" : "background"),
+                "target_pid": targetPID.map { .int(Int($0)) } ?? .null,
             ])
 
+            let resolvedWindowTitle = try await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
             let summary = ToolEventSummary(
+                targetApp: target.appIdentifier,
+                windowTitle: resolvedWindowTitle,
                 actionDescription: "Hotkey",
                 waitDurationMs: Double(holdDurationMs),
                 notes: formattedKeys)
@@ -100,6 +141,8 @@ public struct HotkeyTool: MCPTool {
                 content: [.text(text: message, annotations: nil, _meta: nil)],
                 meta: ToolEventSummary.merge(summary: summary, into: baseMeta))
 
+        } catch let error as MCPInteractionTargetError {
+            return ToolResponse.error(error.localizedDescription)
         } catch {
             self.logger.error("Hotkey execution failed: \(error)")
             return ToolResponse.error("Failed to press hotkey combination '\(keys)': \(error.localizedDescription)")

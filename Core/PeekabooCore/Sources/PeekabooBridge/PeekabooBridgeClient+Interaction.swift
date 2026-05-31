@@ -43,6 +43,30 @@ extension PeekabooBridgeClient {
         }
     }
 
+    public func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t) async throws -> TypeResult
+    {
+        let payload = PeekabooBridgeTargetedTypeActionsRequest(
+            actions: actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: Int32(targetProcessIdentifier))
+        let response = try await self.send(.targetedTypeActions(payload))
+        switch response {
+        case let .typeResult(result):
+            return result
+        case let .error(envelope):
+            throw envelope
+        default:
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Unexpected targetedTypeActions response")
+        }
+    }
+
     public func setValue(
         target: String,
         value: UIElementValue,

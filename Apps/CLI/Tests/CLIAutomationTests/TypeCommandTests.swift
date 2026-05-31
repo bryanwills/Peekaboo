@@ -1,9 +1,10 @@
 import Foundation
+import PeekabooCore
 import PeekabooFoundation
 import Testing
 @testable import PeekabooCLI
 
-@Suite(.tags(.safe))
+@Suite(.tags(.safe), .serialized)
 struct TypeCommandTests {
     @Test
     func `Type command with text argument`() throws {
@@ -172,6 +173,94 @@ struct TypeCommandTests {
     }
 
     @Test
+    func `Type with app target defaults to background process delivery`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 2468,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit"
+        )
+        let applicationService = await MainActor.run {
+            StubApplicationService(applications: [app])
+        }
+        let context = await self.makeContext(applications: applicationService)
+
+        let result = try await self.runType(
+            arguments: ["Hello", "--app", "TextEdit", "--json"],
+            context: context
+        )
+
+        #expect(result.exitStatus == 0)
+        let targetedCall = try #require(await self.automationState(context) { $0.targetedTypeActionsCalls.first })
+        #expect(targetedCall.targetProcessIdentifier == 2468)
+        let payload = try ExternalCommandRunner.decodeJSONResponse(
+            from: result,
+            as: CodableJSONResponse<TypeCommandResult>.self
+        )
+        #expect(payload.data.deliveryMode == "background")
+        #expect(payload.data.targetPID == 2468)
+        let activateCalls = await MainActor.run { applicationService.activateCalls }
+        #expect(activateCalls.isEmpty)
+    }
+
+    @Test
+    func `Type foreground flag opts out of background process delivery`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 2468,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit"
+        )
+        let applicationService = await MainActor.run {
+            StubApplicationService(applications: [app])
+        }
+        let context = await self.makeContext(applications: applicationService)
+
+        let result = try await self.runType(
+            arguments: ["Hello", "--app", "TextEdit", "--foreground", "--json"],
+            context: context
+        )
+
+        #expect(result.exitStatus == 0)
+        let targetedCalls = await self.automationState(context) { $0.targetedTypeActionsCalls }
+        #expect(targetedCalls.isEmpty)
+        let call = try #require(await self.automationState(context) { $0.typeActionsCalls.first })
+        #expect(call.snapshotId == nil)
+        let payload = try ExternalCommandRunner.decodeJSONResponse(
+            from: result,
+            as: CodableJSONResponse<TypeCommandResult>.self
+        )
+        #expect(payload.data.deliveryMode == "foreground")
+        #expect(payload.data.targetPID == nil)
+    }
+
+    @Test
+    func `Type background delivery validates window selectors`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 2468,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit"
+        )
+        let applicationService = await MainActor.run {
+            StubApplicationService(applications: [app])
+        }
+        let windowService = await MainActor.run {
+            StubWindowService(windowsByApp: ["TextEdit": []])
+        }
+        let context = await self.makeContext(applications: applicationService, windows: windowService)
+
+        let result = try await self.runType(
+            arguments: ["Hello", "--app", "TextEdit", "--window-title", "Missing", "--json"],
+            context: context
+        )
+
+        #expect(result.exitStatus == 1)
+        let payload = try ExternalCommandRunner.decodeJSONResponse(from: result, as: JSONResponse.self)
+        #expect(payload.success == false)
+        #expect(payload.error?.code == ErrorCode.WINDOW_NOT_FOUND.rawValue)
+        let targetedCalls = await self.automationState(context) { $0.targetedTypeActionsCalls }
+        #expect(targetedCalls.isEmpty)
+    }
+
+    @Test
     func `Type command argument parsing`() throws {
         let command = try TypeCommand.parse(["Hello World", "--delay", "10", "--return"])
 
@@ -303,10 +392,12 @@ struct TypeCommandTests {
 
     @MainActor
     private func makeContext(
+        applications: any ApplicationServiceProtocol = StubApplicationService(applications: []),
+        windows: any WindowManagementServiceProtocol = StubWindowService(windowsByApp: [:]),
         configure: ((StubAutomationService, StubSnapshotManager) -> Void)? = nil
     ) async -> TestServicesFactory.AutomationTestContext {
         await MainActor.run {
-            let context = TestServicesFactory.makeAutomationTestContext()
+            let context = TestServicesFactory.makeAutomationTestContext(applications: applications, windows: windows)
             configure?(context.automation, context.snapshots)
             return context
         }

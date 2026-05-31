@@ -18,8 +18,9 @@ extension PeekabooBridgeServer {
             try await self.handleCaptureRequest(request)
         case .desktopObservation:
             try await self.handleDesktopObservationRequest(request)
-        case .detectElements, .inspectAccessibilityTree, .click, .type, .typeActions, .setValue, .performAction,
-             .scroll, .hotkey, .targetedHotkey, .targetedClick, .swipe, .drag, .moveMouse, .waitForElement:
+        case .detectElements, .inspectAccessibilityTree, .click, .type, .typeActions, .targetedTypeActions,
+             .setValue, .performAction, .scroll, .hotkey, .targetedHotkey, .targetedClick, .swipe, .drag, .moveMouse,
+             .waitForElement:
             try await self.handleAutomationRequest(request)
         case .listWindows, .focusWindow, .moveWindow, .resizeWindow, .setWindowBounds, .closeWindow,
              .minimizeWindow, .maximizeWindow, .getFocusedWindow:
@@ -189,6 +190,8 @@ extension PeekabooBridgeServer {
                 cadence: payload.cadence,
                 snapshotId: payload.snapshotId)
             return .typeResult(result)
+        case .targetedTypeActions, .targetedHotkey, .targetedClick:
+            return try await self.handleTargetedAutomationRequest(request)
         case let .setValue(payload):
             guard let automation = self.services.automation as? any ElementActionAutomationServiceProtocol else {
                 throw PeekabooBridgeErrorEnvelope(
@@ -217,6 +220,55 @@ extension PeekabooBridgeServer {
         case let .hotkey(payload):
             try await self.services.automation.hotkey(keys: payload.keys, holdDuration: payload.holdDuration)
             return .ok
+        case let .swipe(payload):
+            try await self.services.automation.swipe(
+                from: payload.from,
+                to: payload.to,
+                duration: payload.duration,
+                steps: payload.steps,
+                profile: payload.profile)
+            return .ok
+        case let .drag(payload):
+            try await self.services.automation.drag(payload.automationRequest)
+            return .ok
+        case let .moveMouse(payload):
+            try await self.services.automation.moveMouse(
+                to: payload.to,
+                duration: payload.duration,
+                steps: payload.steps,
+                profile: payload.profile)
+            return .ok
+        case let .waitForElement(payload):
+            let result = try await self.services.automation.waitForElement(
+                target: payload.target,
+                timeout: payload.timeout,
+                snapshotId: payload.snapshotId)
+            return .waitResult(result)
+        default:
+            throw Self.invalidRequest(for: request)
+        }
+    }
+
+    private func handleTargetedAutomationRequest(_ request: PeekabooBridgeRequest) async throws
+        -> PeekabooBridgeResponse
+    {
+        switch request {
+        case let .targetedTypeActions(payload):
+            guard
+                let targetedTypeService = self.services.automation as? any TargetedTypeServiceProtocol,
+                targetedTypeService.supportsTargetedTypeActions
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "Background typing is not supported by this bridge host")
+            }
+
+            let result = try await targetedTypeService.typeActions(
+                payload.actions,
+                cadence: payload.cadence,
+                snapshotId: payload.snapshotId,
+                targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
+            return .typeResult(result)
         case let .targetedHotkey(payload):
             guard
                 let targetedHotkeyService = self.services.automation as? any TargetedHotkeyServiceProtocol,
@@ -248,30 +300,6 @@ extension PeekabooBridgeServer {
                 snapshotId: payload.snapshotId,
                 targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
             return .ok
-        case let .swipe(payload):
-            try await self.services.automation.swipe(
-                from: payload.from,
-                to: payload.to,
-                duration: payload.duration,
-                steps: payload.steps,
-                profile: payload.profile)
-            return .ok
-        case let .drag(payload):
-            try await self.services.automation.drag(payload.automationRequest)
-            return .ok
-        case let .moveMouse(payload):
-            try await self.services.automation.moveMouse(
-                to: payload.to,
-                duration: payload.duration,
-                steps: payload.steps,
-                profile: payload.profile)
-            return .ok
-        case let .waitForElement(payload):
-            let result = try await self.services.automation.waitForElement(
-                target: payload.target,
-                timeout: payload.timeout,
-                snapshotId: payload.snapshotId)
-            return .waitResult(result)
         default:
             throw Self.invalidRequest(for: request)
         }

@@ -12,7 +12,7 @@ read_when:
 - **macOS 15.0+ (Sequoia)** – core automation APIs depend on Sequoia.
 - **Screen Recording (required)** – enables CGWindow capture and multi-app automation.
 - **Accessibility (recommended)** – improves window focus, menu interaction, and dialog control.
-- **Event Synthesizing (optional)** – enables background input delivery such as `hotkey --focus-background` and default `click` delivery to post events to a target process without activating it.
+- **Event Synthesizing (optional)** – enables background input delivery for default process-targeted `click`, `type`, `hotkey`, `press`, and `paste` operations without activating the target app.
 
 For build and runtime version details, see [platform-support.md](platform-support.md).
 
@@ -31,7 +31,7 @@ For build and runtime version details, see [platform-support.md](platform-suppor
    - Run `peekaboo permissions request-event-synthesizing`.
    - By default this requests access for the selected Peekaboo Bridge host, which is the process that sends background input. Add `--no-remote` to request access for the local CLI process instead.
    - If needed, enable Peekaboo in System Settings → Privacy & Security → Accessibility.
-   - Benefit: process-targeted background hotkeys and clicks without focus stealing.
+   - Benefit: process-targeted background clicks, typing, hotkeys, key presses, and paste without focus stealing.
 
 4. **Check Permissions**
    ```bash

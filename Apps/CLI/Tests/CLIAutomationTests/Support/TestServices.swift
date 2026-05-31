@@ -104,7 +104,8 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
 }
 
 @MainActor
-final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedClickServiceProtocol {
+final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceProtocol,
+TargetedClickServiceProtocol {
     struct ClickCall {
         let target: ClickTarget
         let clickType: ClickType
@@ -164,6 +165,13 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedClickS
         let targetProcessIdentifier: pid_t
     }
 
+    struct TargetedTypeActionsCall {
+        let actions: [TypeAction]
+        let cadence: TypingCadence
+        let snapshotId: String?
+        let targetProcessIdentifier: pid_t
+    }
+
     struct TargetedClickCall {
         let target: ClickTarget
         let clickType: ClickType
@@ -192,12 +200,16 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedClickS
     var moveMouseCalls: [MoveMouseCall] = []
     var hotkeyCalls: [HotkeyCall] = []
     var targetedHotkeyCalls: [TargetedHotkeyCall] = []
+    var targetedTypeActionsCalls: [TargetedTypeActionsCall] = []
     var targetedClickCalls: [TargetedClickCall] = []
     var waitForElementCalls: [WaitForElementCall] = []
     var detectElementsCalls: [(imageData: Data, snapshotId: String?, windowContext: WindowContext?)] = []
     var supportsTargetedHotkeys = true
     var targetedHotkeyUnavailableReason: String?
     var targetedHotkeyRequiresEventSynthesizingPermission = false
+    var supportsTargetedTypeActions = true
+    var targetedTypeUnavailableReason: String?
+    var targetedTypeRequiresEventSynthesizingPermission = false
     var supportsTargetedClicks = true
     var targetedClickUnavailableReason: String?
     var targetedClickRequiresEventSynthesizingPermission = false
@@ -298,6 +310,23 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedClickS
         }
 
         return TypeResult(totalCharacters: totals.characters, keyPresses: totals.keyPresses)
+    }
+
+    func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t
+    ) async throws -> TypeResult {
+        self.targetedTypeActionsCalls.append(
+            TargetedTypeActionsCall(
+                actions: actions,
+                cadence: cadence,
+                snapshotId: snapshotId,
+                targetProcessIdentifier: targetProcessIdentifier
+            )
+        )
+        return try await self.typeActions(actions, cadence: cadence, snapshotId: snapshotId)
     }
 
     func scroll(_ request: ScrollRequest) async throws {

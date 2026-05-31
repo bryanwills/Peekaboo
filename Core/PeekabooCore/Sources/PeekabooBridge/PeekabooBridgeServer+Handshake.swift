@@ -117,6 +117,9 @@ extension PeekabooBridgeServer {
         if negotiated < PeekabooBridgeProtocolVersion(major: 1, minor: 7) {
             compatible.remove(.inspectAccessibilityTree)
         }
+        if negotiated < PeekabooBridgeProtocolVersion(major: 1, minor: 8) {
+            compatible.remove(.targetedTypeActions)
+        }
         return compatible
     }
 
@@ -128,6 +131,9 @@ extension PeekabooBridgeServer {
         }
         if (self.services.automation as? any TargetedHotkeyServiceProtocol)?.supportsTargetedHotkeys != true {
             operations.remove(.targetedHotkey)
+        }
+        if (self.services.automation as? any TargetedTypeServiceProtocol)?.supportsTargetedTypeActions != true {
+            operations.remove(.targetedTypeActions)
         }
         if (self.services.automation as? any TargetedClickServiceProtocol)?.supportsTargetedClicks != true {
             operations.remove(.targetedClick)

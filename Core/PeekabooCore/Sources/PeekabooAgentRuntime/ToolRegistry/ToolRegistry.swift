@@ -68,13 +68,14 @@ public enum ToolRegistry {
                 "peekaboo click \"Submit\"",
                 "peekaboo click --foreground --wait-for 2000 --double \"Save\"",
             ],
-            agentGuidance: "Prefer ID-based clicks when possible. Use `--foreground` before typing into a field. " +
-                "If fuzzy text fails, capture again and reference the new element id."),
+            agentGuidance: "Prefer ID-based clicks when possible. Use default background delivery, and add " +
+                "`--foreground` only when the app requires focused input. If fuzzy text fails, capture again and " +
+                "reference the new element id."),
         "type": ToolOverride(
             category: .automation,
             abstract: "Types text or key sequences, including escape characters and modifiers.",
             discussion: """
-            Types raw text into the focused element. Escape sequences are supported:
+            Types raw text into the targeted app or focused element. Escape sequences are supported:
             - Use "\\n" for newline
             - Use "\\t" for tab
             - Use "\\\\" or the word "escape" to send a literal backslash
@@ -84,8 +85,8 @@ public enum ToolRegistry {
             peekaboo type --text \"Press\\tescape\" --delay 50
 
             TROUBLESHOOTING
-            If the text appears in the wrong place, focus the application with
-            `peekaboo window focus` or run a quick `peekaboo click` first.
+            If the text appears in the wrong place, pass `--app`, `--pid`, `--window-id`, or `--snapshot` so
+            Peekaboo can resolve a background target process. Use `--foreground` for apps that require focused input.
             """,
             examples: [
                 "peekaboo type \"Hello\\nWorld\"",

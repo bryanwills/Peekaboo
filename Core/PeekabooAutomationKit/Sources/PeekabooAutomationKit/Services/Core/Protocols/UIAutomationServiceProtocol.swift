@@ -173,6 +173,34 @@ extension TargetedHotkeyServiceProtocol {
     }
 }
 
+/// Optional capability for automation services that can send typing actions to a process without focusing it.
+@MainActor
+public protocol TargetedTypeServiceProtocol: UIAutomationServiceProtocol {
+    var supportsTargetedTypeActions: Bool { get }
+    var targetedTypeUnavailableReason: String? { get }
+    var targetedTypeRequiresEventSynthesizingPermission: Bool { get }
+
+    func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t) async throws -> TypeResult
+}
+
+extension TargetedTypeServiceProtocol {
+    public var supportsTargetedTypeActions: Bool {
+        true
+    }
+
+    public var targetedTypeUnavailableReason: String? {
+        nil
+    }
+
+    public var targetedTypeRequiresEventSynthesizingPermission: Bool {
+        true
+    }
+}
+
 /// Optional capability for automation services that can send mouse clicks to a process without focusing it.
 @MainActor
 public protocol TargetedClickServiceProtocol: UIAutomationServiceProtocol {

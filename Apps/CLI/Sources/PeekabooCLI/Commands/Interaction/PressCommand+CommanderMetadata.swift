@@ -37,6 +37,13 @@ extension PressCommand: CommanderSignatureProviding {
                     long: "snapshot"
                 ),
             ],
+            flags: [
+                .commandFlag(
+                    "foreground",
+                    help: "Focus target and send foreground/global key presses",
+                    long: "foreground"
+                ),
+            ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
                 FocusCommandOptions.commanderSignature(),
