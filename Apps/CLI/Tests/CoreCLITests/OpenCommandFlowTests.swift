@@ -69,6 +69,15 @@ struct OpenCommandFlowTests {
         #expect(call.activates == false)
         #expect(call.target.path.hasSuffix("/Desktop/test.txt"))
     }
+
+    @Test
+    func `Application resolver finds Finder in CoreServices`() throws {
+        let resolver = DefaultApplicationURLResolver()
+
+        let finderURL = try resolver.resolveApplication(appIdentifier: "Finder", bundleId: nil)
+
+        #expect(finderURL.lastPathComponent == "Finder.app")
+    }
 }
 
 @MainActor

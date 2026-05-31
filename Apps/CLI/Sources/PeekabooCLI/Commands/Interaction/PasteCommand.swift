@@ -4,7 +4,7 @@ import PeekabooCore
 import PeekabooFoundation
 import UniformTypeIdentifiers
 
-/// Sets clipboard content, pastes (Cmd+V), then restores the prior clipboard.
+/// Pastes text through background typing when targeted, otherwise uses clipboard + Cmd+V.
 @available(macOS 14.0, *)
 @MainActor
 struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
@@ -87,6 +87,45 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             let request = try self.makeWriteRequest()
 
             let targetPID = try await self.backgroundProcessIdentifier()
+            if let targetPID,
+               let text = self.resolvedText {
+                let setResult = try Self.readResult(for: request)
+                _ = try await AutomationServiceBridge.typeActions(
+                    automation: self.services.automation,
+                    request: TypeActionsRequest(
+                        actions: [.text(text)],
+                        cadence: .fixed(milliseconds: 0),
+                        snapshotId: nil
+                    ),
+                    targetProcessIdentifier: targetPID
+                )
+                await InteractionObservationInvalidator.invalidateLatestSnapshot(
+                    using: self.services.snapshots,
+                    logger: self.logger,
+                    reason: "paste"
+                )
+
+                let result = PasteResult(
+                    success: true,
+                    pastedUti: setResult.utiIdentifier,
+                    pastedSize: setResult.data.count,
+                    pastedTextPreview: setResult.textPreview,
+                    previousClipboardPresent: false,
+                    restoredUti: nil,
+                    restoredSize: nil,
+                    restoreDelayMs: 0,
+                    deliveryMode: KeyboardDeliveryMode.background.rawValue,
+                    targetPID: Int(targetPID)
+                )
+
+                self.output(result) {
+                    print("✅ Pasted text")
+                    print("📋 Pasted: \(setResult.utiIdentifier) (\(setResult.data.count) bytes)")
+                    print("🎯 Mode: background to PID \(targetPID)")
+                }
+                return
+            }
+
             if targetPID == nil {
                 try await ensureFocused(
                     snapshotId: nil,
@@ -117,36 +156,19 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
 
             let setResult = try self.services.clipboard.set(request)
 
-            var usedTargetedTyping = false
-            if let targetPID,
-               let text = self.resolvedText {
-                _ = try await AutomationServiceBridge.typeActions(
+            if let targetPID {
+                try await AutomationServiceBridge.hotkey(
                     automation: self.services.automation,
-                    request: TypeActionsRequest(
-                        actions: [.text(text)],
-                        cadence: .fixed(milliseconds: 0),
-                        snapshotId: nil
-                    ),
+                    keys: "cmd,v",
+                    holdDuration: 50,
                     targetProcessIdentifier: targetPID
                 )
-                usedTargetedTyping = true
-            }
-
-            if !usedTargetedTyping {
-                if let targetPID {
-                    try await AutomationServiceBridge.hotkey(
-                        automation: self.services.automation,
-                        keys: "cmd,v",
-                        holdDuration: 50,
-                        targetProcessIdentifier: targetPID
-                    )
-                } else {
-                    try await AutomationServiceBridge.hotkey(
-                        automation: self.services.automation,
-                        keys: "cmd,v",
-                        holdDuration: 50
-                    )
-                }
+            } else {
+                try await AutomationServiceBridge.hotkey(
+                    automation: self.services.automation,
+                    keys: "cmd,v",
+                    holdDuration: 50
+                )
             }
             await InteractionObservationInvalidator.invalidateLatestSnapshot(
                 using: self.services.snapshots,
@@ -221,6 +243,36 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         }
 
         throw ValidationError("Provide text, --file-path/--image-path, or --data-base64 with --uti")
+    }
+
+    private static func readResult(for request: ClipboardWriteRequest) throws -> ClipboardReadResult {
+        guard let primary = request.representations.first else {
+            throw ClipboardServiceError.writeFailed("No representations provided.")
+        }
+
+        let textPreview: String? = if let text = request.alsoText {
+            Self.makePreview(text)
+        } else if primary.utiIdentifier == UTType.plainText.identifier ||
+            primary.utiIdentifier == UTType.utf8PlainText.identifier,
+            let string = String(data: primary.data, encoding: .utf8) {
+            Self.makePreview(string)
+        } else {
+            nil
+        }
+
+        return ClipboardReadResult(
+            utiIdentifier: primary.utiIdentifier,
+            data: primary.data,
+            textPreview: textPreview
+        )
+    }
+
+    private static func makePreview(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let max = 80
+        guard trimmed.count > max else { return trimmed }
+        let head = trimmed.prefix(max)
+        return "\(head)..."
     }
 
     private func backgroundProcessIdentifier() async throws -> pid_t? {

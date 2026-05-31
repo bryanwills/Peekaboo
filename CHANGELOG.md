@@ -10,6 +10,8 @@
 
 ### Fixed
 - Background text input now prefers AX text editing for typing, paste, clear, and focused-field key presses so targeted apps stay in the background more reliably.
+- Background text paste no longer snapshots or restores the user clipboard, positional `peekaboo paste "text"` works again, and background `cmd+a` selects focused text fields via AX.
+- `peekaboo open --app Finder ...` now resolves Finder from CoreServices, matching the documented examples.
 - Visualizer settings and capture-engine docs now reference `peekaboo capture live` instead of stale top-level `peekaboo watch`/`peekaboo capture` command forms. Thanks @coygeek for #166 and #167.
 
 ## [3.2.3] - 2026-05-24

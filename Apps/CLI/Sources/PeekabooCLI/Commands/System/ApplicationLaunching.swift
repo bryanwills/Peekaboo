@@ -109,6 +109,7 @@ final class DefaultApplicationURLResolver: ApplicationURLResolving {
         let searchPaths = [
             "/Applications",
             "/System/Applications",
+            "/System/Library/CoreServices",
             "~/Applications",
             "/Applications/Utilities"
         ].map { NSString(string: $0).expandingTildeInPath }

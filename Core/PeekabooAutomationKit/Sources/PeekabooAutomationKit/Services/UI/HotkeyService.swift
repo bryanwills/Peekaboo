@@ -109,6 +109,14 @@ public final class HotkeyService {
             synth: {
                 try Self.validateTargetProcess(targetProcessIdentifier)
                 let plan = try self.makeHotkeyPlan(parsedKeys)
+                if try BackgroundInputDriver.performFocusedTextHotkey(
+                    primaryKey: plan.primaryKey,
+                    modifierFlags: plan.modifierFlags,
+                    targetProcessIdentifier: targetProcessIdentifier)
+                {
+                    return
+                }
+
                 let holdNanoseconds = try Self.holdNanoseconds(for: holdDuration)
                 try await self.postHotkey(
                     plan,

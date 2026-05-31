@@ -15,6 +15,11 @@ struct PasteCommandTests {
         )
         let automation = StubAutomationService()
         let clipboard = StubClipboardService()
+        clipboard.current = ClipboardReadResult(
+            utiIdentifier: "public.utf8-plain-text",
+            data: Data("prior".utf8),
+            textPreview: "prior"
+        )
         let applications = StubApplicationService(applications: [app])
         let services = TestServicesFactory.makePeekabooServices(
             applications: applications,
@@ -44,12 +49,48 @@ struct PasteCommandTests {
             Issue.record("Expected background paste text to be delivered through targeted typing")
         }
         #expect(applications.activateCalls.isEmpty)
+        #expect(clipboard.current?.textPreview == "prior")
+        #expect(clipboard.slots.isEmpty)
         let payload = try ExternalCommandRunner.decodeJSONResponse(
             from: result,
             as: CodableJSONResponse<PasteResult>.self
         )
         #expect(payload.data.deliveryMode == "background")
         #expect(payload.data.targetPID == 2468)
+    }
+
+    @Test
+    @MainActor
+    func `Paste positional text uses background process delivery`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 2468,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit"
+        )
+        let automation = StubAutomationService()
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: [app]),
+            automation: automation
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "paste",
+                "positional smoke",
+                "--app", "TextEdit",
+                "--restore-delay-ms", "0",
+                "--json",
+                "--no-remote",
+            ],
+            services: services
+        )
+
+        #expect(result.exitStatus == 0)
+        let typeCall = try #require(automation.targetedTypeActionsCalls.first)
+        if case .text("positional smoke") = typeCall.actions[0] {} else {
+            Issue.record("Expected positional text to be delivered through targeted typing")
+        }
+        #expect(typeCall.targetProcessIdentifier == 2468)
     }
 
     @Test

@@ -208,6 +208,25 @@ enum BackgroundInputDriver {
         }
     }
 
+    @discardableResult
+    static func performFocusedTextHotkey(
+        primaryKey: String,
+        modifierFlags: CGEventFlags,
+        targetProcessIdentifier: pid_t) throws -> Bool
+    {
+        try self.validateLiveTarget(targetProcessIdentifier)
+        guard modifierFlags == .maskCommand,
+              primaryKey == "a",
+              let element = try self.focusedEditableTextElement(targetProcessIdentifier: targetProcessIdentifier),
+              let currentText = try self.textValue(from: element)
+        else {
+            return false
+        }
+
+        self.setSelectedTextRange(CFRange(location: 0, length: currentText.utf16.count), on: element)
+        return true
+    }
+
     private static func post(_ event: CGEvent, to pid: pid_t) {
         if !SkyLightPerPidEventPost.post(event, to: pid) {
             event.postToPid(pid)

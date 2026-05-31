@@ -4,6 +4,13 @@ import Commander
 extension PasteCommand: CommanderSignatureProviding {
     static func commanderSignature() -> CommandSignature {
         CommandSignature(
+            arguments: [
+                .make(
+                    label: "text",
+                    help: "Text to paste",
+                    isOptional: true
+                ),
+            ],
             options: [
                 .commandOption("textOption", help: "Text to paste (alternative to positional argument)", long: "text"),
                 .commandOption("filePath", help: "Path to file to paste", long: "file-path"),
