@@ -21,6 +21,11 @@ read_when:
 | `--foreground` | Focus target and send foreground/global key presses. Focus flags also imply foreground delivery. |
 | Focus flags | Foreground focus controls; same `FocusCommandOptions` bundle as `click`/`type`. |
 
+## Delivery modes
+- **Background** is the default when Peekaboo can resolve a target process from target flags or snapshot metadata. It sends the key sequence to that process without activating the app.
+- **Foreground** (`--foreground`) focuses the target first and sends normal/global key presses. Use it for dialogs, menus, or apps that only respond from the focused key window.
+- If no target process or snapshot can be resolved, `press` falls back to foreground/global delivery to the current focus.
+
 ## Implementation notes
 - Keys are lowercased and mapped to `SpecialKey`; the command fails fast with a helpful message if a token isn’t recognized.
 - Without a resolvable snapshot or target process, key presses fall back to foreground/global delivery to the current focus.

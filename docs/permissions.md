@@ -32,6 +32,7 @@ For build and runtime version details, see [platform-support.md](platform-suppor
    - By default this requests access for the selected Peekaboo Bridge host, which is the process that sends background input. Add `--no-remote` to request access for the local CLI process instead.
    - If needed, enable Peekaboo in System Settings → Privacy & Security → Accessibility.
    - Benefit: process-targeted background clicks, typing, hotkeys, key presses, and paste without focus stealing.
+   - If you prefer focused/global input, pass `--foreground` to the interaction command; foreground mode still benefits from Accessibility for focusing windows.
 
 4. **Check Permissions**
    ```bash

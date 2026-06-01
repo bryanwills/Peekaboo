@@ -21,12 +21,33 @@ Every input command accepts one of three target shapes:
 
 Prefer IDs when you can capture them, labels when you can't, and coordinates only as a last resort. The agent and MCP tooling default to the first two.
 
+## Delivery modes
+
+Peekaboo has two input delivery modes:
+
+- **Background** (default when a target process is known) posts process-targeted input without activating the app. `click`, `type`, `press`, `hotkey`, and `paste` use this mode when you pass `--app`, `--pid`, `--window-id`, or a snapshot with process metadata.
+- **Foreground** focuses the target first, then sends normal/global input to the active key window or mouse focus. Add `--foreground` when an app ignores background input, when a text field only accepts key-window input, or when you want focus/Space switching to be part of the action.
+
+Focus flags such as `--space-switch`, `--bring-to-current-space`, and `--no-auto-focus` belong to foreground delivery; using them implies `--foreground`. Background input requires Event Synthesizing permission for the sender shown by `peekaboo permissions status`. If it is missing, run `peekaboo permissions request-event-synthesizing`.
+
+Examples:
+
+```bash
+# Background: target Safari without activating it
+peekaboo hotkey cmd,l --app Safari
+peekaboo type "github.com/openclaw/Peekaboo" --app Safari --return
+
+# Foreground: activate/focus first for apps that require a key window
+peekaboo hotkey cmd,l --app Safari --foreground --space-switch
+peekaboo type "github.com/openclaw/Peekaboo" --app Safari --return --foreground
+```
+
 ## Input primitives
 
 | Command | Use it for |
 | --- | --- |
 | [click](commands/click.md) | mouse clicks, double/triple, right/middle, hold |
-| [type](commands/type.md) | typing strings into focused fields |
+| [type](commands/type.md) | typing strings into targeted fields |
 | [press](commands/press.md) | individual key presses (return, escape, arrows, etc.) |
 | [hotkey](commands/hotkey.md) | shortcut combos, including background apps |
 | [scroll](commands/scroll.md) | wheel scrolling at a point or on a target |
@@ -80,8 +101,8 @@ Three primitives, four lines. The agent does the same thing under the hood — i
 - Always run [`peekaboo see`](commands/see.md) when an element is unreachable. The AX tree refreshes after focus changes; capture again if a click fails.
 - Use [focus](focus.md) and [application-resolving](application-resolving.md) for tricky cases (multiple windows, helper apps, processes that hide on activation).
 - Wrap risky sequences with `peekaboo sleep 0.2` — humans don't fire ten clicks in a single frame, and neither should you.
-- `peekaboo click`, [`type`](commands/type.md), [`hotkey`](commands/hotkey.md), [`press`](commands/press.md), and [`paste`](commands/paste.md) default to background process-targeted delivery when a target process is known.
-- Add `--foreground` only when an app needs a focused key window or a foreground mouse event.
+- Prefer background delivery for routine app-specific input so automations do not steal focus.
+- Add `--foreground` only when an app needs a focused key window, Space switch, or foreground mouse event.
 
 ## Going further
 

@@ -23,6 +23,11 @@ This reduces drift by collapsing multiple CLI steps into one command. Background
 | `--foreground` | Focus target and send foreground/global Cmd+V. Focus flags also imply foreground delivery. |
 | Focus flags | Foreground focus controls (`--space-switch`, `--no-auto-focus`, etc.). |
 
+## Delivery modes
+- **Background** is the default when Peekaboo can resolve a target process from target flags or snapshot metadata. It sets the clipboard, posts process-targeted Cmd+V, then restores the previous clipboard without activating the app.
+- **Foreground** (`--foreground`) focuses the target first and sends normal/global Cmd+V. Use it for apps that ignore background paste or for flows where focus should visibly move.
+- Background paste still mutates the system clipboard briefly; `paste` restores the previous contents after `--restore-delay-ms`.
+
 ## Examples
 ```bash
 # Paste plain text into TextEdit

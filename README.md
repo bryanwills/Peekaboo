@@ -16,7 +16,7 @@ Peekaboo brings high-fidelity screen capture, AI analysis, and complete GUI auto
 ## What you get
 - Pixel-accurate captures (windows, screens, menu bar) with optional Retina 2x scaling.
 - Natural-language agent that chains Peekaboo tools (see, click, type, scroll, hotkey, menu, window, app, dock, space).
-- Action-first UI automation for routine clicks/scrolls, with synthetic input fallback for apps that need it.
+- Action-first UI automation for routine clicks/scrolls, with background process-targeted input by default when a target is known.
 - Direct accessibility tools for settable values and named actions (`set-value`, `perform-action`).
 - Menu and menubar discovery with structured JSON; no clicks required.
 - Multi-provider AI through Tachikoma, including hosted, local, and OpenAI-/Anthropic-compatible providers.
@@ -87,15 +87,32 @@ peekaboo completions fish | source
 For persistent setup and troubleshooting, see
 [docs/commands/completions.md](docs/commands/completions.md).
 
+## Background vs foreground input
+
+`click`, `type`, `press`, `hotkey`, and `paste` default to **background** delivery when Peekaboo can resolve a target process from `--app`, `--pid`, `--window-id`, or snapshot metadata. Background delivery posts process-targeted input without making the target app frontmost, so scripts can interact with Safari, Notes, Terminal, etc. without stealing focus.
+
+Use `--foreground` when the app only accepts input in its focused key window, when you need a real foreground mouse event, or when you are intentionally driving the current focus. Focus flags such as `--space-switch` and `--bring-to-current-space` also imply foreground delivery. Background input requires Event Synthesizing permission for the process that sends the event; run `peekaboo permissions request-event-synthesizing` if `permissions status` reports it missing.
+
+```bash
+# Background: target Safari without activating it
+peekaboo click "Address and search bar" --app Safari
+peekaboo type "github.com/openclaw/Peekaboo" --app Safari --return
+
+# Foreground: focus Safari first for apps/fields that reject background input
+peekaboo click "Address and search bar" --app Safari --foreground
+peekaboo type "github.com/openclaw/Peekaboo" --app Safari --return --foreground
+```
+
 | Command | Key flags / subcommands | What it does |
 | --- | --- | --- |
 | [see](docs/commands/see.md) | `--app`, `--mode screen/window`, `--retina`, `--json` | Capture and annotate UI, return snapshot + element IDs |
-| [click](docs/commands/click.md) | `--on <id/query>`, `--snapshot`, `--wait-for`, `--coords` | Click by element ID, label, or coordinates |
-| [type](docs/commands/type.md) | `--text`, `--clear`, `--profile`, `--delay` | Enter text with pacing options |
+| [click](docs/commands/click.md) | `--on <id/query>`, `--snapshot`, `--wait-for`, `--coords`, `--foreground` | Click by element ID, label, or coordinates |
+| [type](docs/commands/type.md) | `--text`, `--clear`, `--profile`, `--delay`, `--foreground` | Enter text with pacing options |
 | [set-value](docs/commands/set-value.md) | `--on <id/query>`, `--value`, `--snapshot` | Directly set a settable accessibility value |
 | [perform-action](docs/commands/perform-action.md) | `--on <id/query>`, `--action`, `--snapshot` | Invoke a named accessibility action |
-| [press](docs/commands/press.md) | key names, `--count`, `--delay`, `--hold` | Special keys and sequences |
-| [hotkey](docs/commands/hotkey.md) | combos like `cmd,shift,t` | Modifier combos (cmd/ctrl/alt/shift) |
+| [press](docs/commands/press.md) | key names, `--count`, `--delay`, `--hold`, `--foreground` | Special keys and sequences |
+| [hotkey](docs/commands/hotkey.md) | combos like `cmd,shift,t`, `--foreground` | Modifier combos (cmd/ctrl/alt/shift) |
+| [paste](docs/commands/paste.md) | text/file/image payloads, `--restore-delay-ms`, `--foreground` | Paste with clipboard restore |
 | [scroll](docs/commands/scroll.md) | `--on <id>`, `--direction up/down`, `--amount` | Scroll views or elements |
 | [swipe](docs/commands/swipe.md) | `--from/--to`, `--duration`, `--steps` | Smooth gesture-style drags |
 | [drag](docs/commands/drag.md) | `--from/--to`, modifiers, Dock/Trash targets | Drag-and-drop between elements/coords |
@@ -112,7 +129,7 @@ For persistent setup and troubleshooting, see
 | [tools](docs/commands/tools.md) | `--verbose`, `--json`, `--no-sort` | Inspect native Peekaboo tools |
 | [completions](docs/commands/completions.md) | `[shell]` | Generate zsh/bash/fish completion scripts from Commander metadata |
 | [config](docs/commands/config.md) | `init`, `show`, `add`, `login`, `models` | Manage credentials/providers/settings |
-| [permissions](docs/commands/permissions.md) | `status`, `grant` | Check/grant required macOS permissions |
+| [permissions](docs/commands/permissions.md) | `status`, `grant`, `request-event-synthesizing` | Check/grant required macOS permissions |
 | [run](docs/commands/run.md) | `.peekaboo.json`, `--output`, `--no-fail-fast` | Execute `.peekaboo.json` automation scripts |
 | [sleep](docs/commands/sleep.md) | `--duration` (ms) | Millisecond delays between steps |
 | [clean](docs/commands/clean.md) | `--all-snapshots`, `--older-than`, `--snapshot` | Prune snapshots and caches |

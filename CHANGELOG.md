@@ -2,6 +2,9 @@
 
 ## [3.3.1] - Unreleased
 
+### Changed
+- Documented background vs. foreground input delivery across the README, automation guide, quickstart, permissions, and interaction command docs.
+
 ## [3.3.0] - 2026-06-01
 
 ### Added

@@ -7,7 +7,7 @@ read_when:
 
 # `peekaboo type`
 
-`type` sends text, special keys, or a mix of both through the automation service. It reuses the latest snapshot (or the one you pass) to figure out which app/window should receive input, then pushes a `TypeActionsRequest` that mirrors what the agent runtime does. Background process-targeted delivery is the default when Peekaboo can resolve a target process; pass `--foreground` for old focused/global keyboard input.
+`type` sends text, special keys, or a mix of both through the automation service. It reuses the latest snapshot (or the one you pass) to figure out which app/window should receive input, then pushes a `TypeActionsRequest` that mirrors what the agent runtime does. Background process-targeted delivery is the default when Peekaboo can resolve a target process; pass `--foreground` for focused/global keyboard input.
 
 ## Key options
 | Flag | Description |
@@ -22,6 +22,11 @@ read_when:
 | Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>` — send background input to a specific app/window when possible. (`--window-title`/`--window-index` require `--app` or `--pid`; `--window-id` does not.) |
 | `--foreground` | Focus target and send foreground/global keyboard input. Focus flags also imply foreground delivery. |
 | Focus flags | Foreground focus controls (`--no-auto-focus`, `--space-switch`, etc.). |
+
+## Delivery modes
+- **Background** is the default when Peekaboo can resolve a target process from target flags or snapshot metadata. It sends process-targeted keyboard events without activating the target app.
+- **Foreground** (`--foreground`) focuses the target first and sends normal/global keyboard input. Use it for apps or fields that only accept text in the focused key window, or when focus changes are desired.
+- If no target process or snapshot can be resolved, `type` falls back to foreground/global delivery and warns that typing is blind.
 
 ## Implementation notes
 - You can omit the text entirely and rely on the key flags (e.g., just `--tab 2 --return`). Validation only requires *some* action to be specified.

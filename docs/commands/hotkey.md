@@ -20,6 +20,11 @@ read_when:
 | `--focus-background` | Legacy alias for the default background delivery. |
 | Focus flags | `FocusCommandOptions` flags apply in foreground mode. |
 
+## Delivery modes
+- **Background** is the default when Peekaboo can resolve a target process from target flags or snapshot metadata. It posts the shortcut to that process without activating the app.
+- **Foreground** (`--foreground`) focuses the target first and sends the shortcut as focused/global input. Use it when the app only handles shortcuts for its key window.
+- If you omit target flags and `--snapshot`, `hotkey` sends a foreground/global shortcut to the current focus, which is useful for OS-level shortcuts.
+
 ## Implementation notes
 - The command errors if no keys are provided (either positionally or via `--keys`).
 - When both forms are present, the positional value is used.

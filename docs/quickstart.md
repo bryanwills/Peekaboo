@@ -18,7 +18,7 @@ peekaboo permissions status
 peekaboo permissions grant
 ```
 
-`grant` opens System Settings to the right pane. You need **Screen Recording** (required) and **Accessibility** (recommended). Re-run `permissions status` until both are green. Background hotkeys also need **Event Synthesizing** — see [permissions.md](permissions.md).
+`grant` opens System Settings to the right pane. You need **Screen Recording** (required) and **Accessibility** (recommended). Re-run `permissions status` until both are green. Background input for `click`, `type`, `hotkey`, `press`, and `paste` also needs **Event Synthesizing** — see [permissions.md](permissions.md).
 
 ## 2. Take a screenshot
 
@@ -59,6 +59,8 @@ peekaboo type "github.com/openclaw/Peekaboo" --app Safari --return
 ```
 
 Coordinates also work: `peekaboo click --coords 480,120 --app Safari`. With app/window target flags, click coordinates are target-window-relative; add `--global-coords` for screen coordinates. Add `--foreground` only when the target app requires focused input. See [automation.md](automation.md) for the full input vocabulary.
+
+By default these targeted commands use background delivery: Safari can receive the click and text without becoming frontmost. If the target field ignores background input, rerun the same command with `--foreground` to focus the target first.
 
 ## 5. Run an agent
 
