@@ -5,6 +5,9 @@
 ### Changed
 - Documented background vs. foreground input delivery across the README, automation guide, quickstart, permissions, and interaction command docs.
 
+### Fixed
+- Action-only scroll now reports an empty target as unsupported, and generic process scripts preserve menu, modifier, drag, and type flag aliases. Thanks @coygeek for #178 and #179.
+
 ## [3.3.0] - 2026-06-01
 
 ### Added
