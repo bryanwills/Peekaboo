@@ -1,6 +1,6 @@
 # Changelog
 
-## [3.3.1] - Unreleased
+## [3.4.0] - 2026-06-07
 
 ### Added
 - MCP now exposes the bounded `capture` tool for live/video frame capture, contact sheets, metadata, and optional MP4 output. Thanks @coygeek for #169.
