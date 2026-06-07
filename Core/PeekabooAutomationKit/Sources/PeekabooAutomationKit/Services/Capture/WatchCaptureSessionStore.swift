@@ -15,8 +15,9 @@ struct WatchCaptureSessionStore {
 
     func performAutoclean() -> WatchWarning? {
         guard self.managedAutoclean else { return nil }
+        guard self.autocleanMinutes > 0 else { return nil }
         let root = self.outputRoot.deletingLastPathComponent()
-        guard root.lastPathComponent == "watch-sessions" else { return nil }
+        guard Self.autocleanRootNames.contains(root.lastPathComponent) else { return nil }
         guard let contents = try? self.fileManager.contentsOfDirectory(
             at: root,
             includingPropertiesForKeys: [.contentModificationDateKey],
@@ -26,6 +27,7 @@ struct WatchCaptureSessionStore {
         let deadline = Date().addingTimeInterval(TimeInterval(-self.autocleanMinutes) * 60)
         var removed = 0
         for url in contents {
+            guard url.standardizedFileURL != self.outputRoot.standardizedFileURL else { continue }
             guard let attrs = try? url.resourceValues(forKeys: [.contentModificationDateKey]),
                   let modified = attrs.contentModificationDate else { continue }
             if modified < deadline {
@@ -38,7 +40,7 @@ struct WatchCaptureSessionStore {
         guard removed > 0 else { return nil }
         return WatchWarning(
             code: .autoclean,
-            message: "Autoclean removed \(removed) old watch sessions",
+            message: "Autoclean removed \(removed) old capture sessions",
             details: ["session": self.sessionId])
     }
 
@@ -46,4 +48,6 @@ struct WatchCaptureSessionStore {
         let data = try JSONEncoder().encode(value)
         try data.write(to: url, options: .atomic)
     }
+
+    private static let autocleanRootNames: Set<String> = ["watch-sessions", "capture-sessions"]
 }

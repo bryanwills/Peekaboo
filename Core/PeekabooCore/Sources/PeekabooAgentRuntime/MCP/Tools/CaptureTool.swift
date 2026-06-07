@@ -104,19 +104,28 @@ public struct CaptureTool: MCPTool {
             configuration: configuration)
         let result = try await session.run()
 
-        let summary = """
-        capture kept \(result.stats.framesKept) frames (dropped \(result.stats.framesDropped)),
-        contact sheet \(result.contactSheet.path)
-        """
+        var summaryLines = [
+            "capture kept \(result.stats.framesKept) frames (dropped \(result.stats.framesDropped))",
+            "contact: \(result.contactSheet.path)",
+            "metadata: \(result.metadataFile)",
+            "frames: \(result.frames.count) files",
+        ]
+        if let videoOut = result.videoOut {
+            summaryLines.insert("video: \(videoOut)", at: 3)
+        }
+        if !result.warnings.isEmpty {
+            let warnings = result.warnings.map(\.message).joined(separator: "; ")
+            summaryLines.append("warnings: \(warnings)")
+        }
+        let summary = summaryLines.joined(separator: "\n")
         let meta = ToolEventSummary(
             actionDescription: "Capture",
             notes: summary)
 
-        let metaSummary = CaptureMetaSummary.make(from: result)
         return ToolResponse.text(
             summary,
             meta: ToolEventSummary.merge(
                 summary: meta,
-                into: CaptureMetaBuilder.buildMeta(from: metaSummary)))
+                into: CaptureMetaBuilder.buildMeta(from: result)))
     }
 }

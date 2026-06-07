@@ -25,6 +25,7 @@ public enum MCPToolCatalog {
         [
             // Core tools
             ImageTool(context: context),
+            CaptureTool(context: context),
             AnalyzeTool(),
             BrowserTool(context: context),
             ListTool(context: context),

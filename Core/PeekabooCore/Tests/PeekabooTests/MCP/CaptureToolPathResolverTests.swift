@@ -2,6 +2,7 @@ import Foundation
 import PeekabooAutomation
 import PeekabooAutomationKit
 import PeekabooFoundation
+import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
 
@@ -68,6 +69,53 @@ struct CaptureToolPathResolverTests {
         #expect(throws: PeekabooError.self) {
             _ = try CaptureToolArgumentResolver.captureFocus(from: "middle")
         }
+    }
+
+    @Test
+    func `request decodes snake case MCP capture options`() async throws {
+        let windows = CaptureWindowResolverWindowService(windows: [])
+
+        let request = try await CaptureRequest(arguments: ToolArguments(raw: [
+            "source": "live",
+            "mode": "area",
+            "region": "1,2,30,40",
+            "duration_seconds": 2.5,
+            "idle_fps": 0.5,
+            "active_fps": 3.0,
+            "threshold_percent": 0.25,
+            "heartbeat_sec": 0,
+            "quiet_ms": 250,
+            "capture_focus": "background",
+            "highlight_changes": true,
+            "max_frames": 3,
+            "max_mb": 1,
+            "resolution_cap": 320,
+            "diff_strategy": "quality",
+            "diff_budget_ms": 12,
+            "output_dir": "~/Desktop/mcp-capture",
+            "autoclean_minutes": 5,
+            "video_out": "~/Desktop/mcp-capture.mp4",
+        ]), windows: windows)
+
+        #expect(request.source == .live)
+        #expect(request.scope.kind == .region)
+        #expect(request.scope.region == CGRect(x: 1, y: 2, width: 30, height: 40))
+        #expect(request.options.duration == 2.5)
+        #expect(request.options.idleFps == 0.5)
+        #expect(request.options.activeFps == 3.0)
+        #expect(request.options.changeThresholdPercent == 0.25)
+        #expect(request.options.heartbeatSeconds == 0)
+        #expect(request.options.quietMsToIdle == 250)
+        #expect(request.options.captureFocus == .background)
+        #expect(request.options.highlightChanges)
+        #expect(request.options.maxFrames == 3)
+        #expect(request.options.maxMegabytes == 1)
+        #expect(request.options.resolutionCap == 320)
+        #expect(request.options.diffStrategy == .quality)
+        #expect(request.options.diffBudgetMs == 12)
+        #expect(request.outputDirectory.path == NSString(string: "~/Desktop/mcp-capture").expandingTildeInPath)
+        #expect(request.autocleanMinutes == 5)
+        #expect(request.videoOut == NSString(string: "~/Desktop/mcp-capture.mp4").expandingTildeInPath)
     }
 
     @Test

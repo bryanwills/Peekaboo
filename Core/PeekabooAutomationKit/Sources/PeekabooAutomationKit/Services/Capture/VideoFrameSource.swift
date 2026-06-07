@@ -6,8 +6,7 @@ import PeekabooFoundation
 /// Frame source that samples frames from a video asset.
 public final class VideoFrameSource: CaptureFrameSource {
     private let generator: AVAssetImageGenerator
-    private let times: [CMTime]
-    private var index: Int = 0
+    private var timeline: VideoFrameTimeline
     private let mode: CaptureMode = .screen
     public let effectiveFPS: Double
 
@@ -40,22 +39,16 @@ public final class VideoFrameSource: CaptureFrameSource {
             interval = CMTime(milliseconds: everyMs)
             self.effectiveFPS = everyMs > 0 ? min(240, max(0.1, 1000.0 / Double(everyMs))) : 2.0
         } else {
-            let fps = sampleFps ?? 2.0
+            let fps = min(240, max(sampleFps ?? 2.0, 0.1))
             interval = CMTime(seconds: 1.0 / max(fps, 0.1), preferredTimescale: 1_000_000)
             self.effectiveFPS = fps
         }
 
-        var cursor = start
-        var requested: [CMTime] = []
-        while cursor <= end {
-            requested.append(cursor)
-            cursor = CMTimeAdd(cursor, interval)
-        }
-        if requested.count < 2 {
-            requested.append(end)
-        }
+        self.timeline = VideoFrameTimeline(
+            start: start,
+            end: end,
+            interval: interval)
 
-        self.times = requested
         self.generator = AVAssetImageGenerator(asset: asset)
         self.generator.appliesPreferredTrackTransform = true
         self.generator.requestedTimeToleranceBefore = .zero
@@ -67,9 +60,7 @@ public final class VideoFrameSource: CaptureFrameSource {
 
     @MainActor
     public func nextFrame() async throws -> (cgImage: CGImage?, metadata: CaptureMetadata)? {
-        guard self.index < self.times.count else { return nil }
-        let time = self.times[self.index]
-        self.index += 1
+        guard let time = self.timeline.next() else { return nil }
 
         var actual = CMTime.zero
         do {
@@ -105,6 +96,37 @@ public final class VideoFrameSource: CaptureFrameSource {
         let resolved = hasActual ? time : fallback
         guard resolved.isNumeric else { return nil }
         return Int((resolved.seconds * 1000).rounded())
+    }
+}
+
+struct VideoFrameTimeline {
+    private var nextTime: CMTime
+    private let end: CMTime
+    private let interval: CMTime
+    private var exhausted = false
+
+    init(start: CMTime, end: CMTime, interval: CMTime) {
+        self.nextTime = start
+        self.end = end
+        self.interval = interval
+    }
+
+    mutating func next() -> CMTime? {
+        guard !self.exhausted else { return nil }
+        let current = self.nextTime
+        if current >= self.end {
+            self.exhausted = true
+            return current
+        }
+
+        let next = CMTimeAdd(current, self.interval)
+        guard next.isNumeric, next > current else {
+            self.exhausted = true
+            return current
+        }
+
+        self.nextTime = next >= self.end ? self.end : next
+        return current
     }
 }
 

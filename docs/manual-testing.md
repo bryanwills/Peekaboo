@@ -26,7 +26,7 @@ Use this checklist to exercise the Swift MCP server with mcporter. It mirrors th
    ```
    $MCPORTER list --stdio "$PEEKABOO_BIN mcp serve" --name peekaboo-local --schema --timeout 30000
    ```  
-   Expect: tool catalog prints Peekaboo-native tools (image, see, list, permissions, click, type, drag, window, menu, dock, space, swipe, hotkey, clipboard, agent, sleep). Any transport/auth errors here block the rest of the suite.
+   Expect: tool catalog prints Peekaboo-native tools (image, capture, see, list, permissions, click, type, drag, window, menu, dock, space, swipe, hotkey, clipboard, agent, sleep). Any transport/auth errors here block the rest of the suite.
 
 2) **Permissions sanity**  
    ```
@@ -57,7 +57,17 @@ Use this checklist to exercise the Swift MCP server with mcporter. It mirrors th
    ```  
    Expect `📸 Captured …` text plus a saved file path. Open the PNG to confirm the active window is captured without the shadow frame.
 
-6) **Image + analysis (optional, needs AI keys)**  
+6) **Bounded live capture smoke**
+   ```
+   $MCPORTER call --stdio "$PEEKABOO_BIN mcp serve" --name peekaboo-local \
+     capture source:live mode:area region:100,100,640,360 \
+     duration_seconds:2 active_fps:4 threshold_percent:0 \
+     output_dir:/tmp/peekaboo-mcp/live video_out:/tmp/peekaboo-mcp/live.mp4 \
+     --timeout 45000
+   ```
+   Expect kept-frame text plus `contact.png`, `metadata.json`, one or more frame PNGs, and a non-empty MP4 when `video_out` is set.
+
+7) **Image + analysis (optional, needs AI keys)**
    ```
    $MCPORTER call --stdio "$PEEKABOO_BIN mcp serve" --name peekaboo-local \
      image path:/tmp/peekaboo-mcp/frontmost-analysis.png format:png \
@@ -67,7 +77,7 @@ Use this checklist to exercise the Swift MCP server with mcporter. It mirrors th
    Expect an analysis paragraph plus `savedFiles` metadata; failures here usually mean provider config or permissions issues.
    Note: OpenAI Responses (GPT‑5.x) requires `image_url` to be a string (URL or data URL). Peekaboo normalizes legacy `{ url, detail }` objects internally, but upstream tools should prefer the string form to avoid 400s.
 
-7) **List cached tools after reuse (daemon/keep-alive sanity)**  
+8) **List cached tools after reuse (daemon/keep-alive sanity)**
    ```
    $MCPORTER list --stdio "$PEEKABOO_BIN mcp serve" --name peekaboo-local --timeout 15000
    ```  

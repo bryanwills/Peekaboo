@@ -18,11 +18,11 @@ struct CaptureRequest {
     let videoOut: String?
 
     init(arguments: ToolArguments, windows: any WindowManagementServiceProtocol) async throws {
-        let input = try arguments.decode(CaptureInput.self)
+        let input = try CaptureInput(arguments: arguments)
         self.source = try CaptureToolArgumentResolver.source(from: input.source)
 
         let constraints = try CaptureRequest.constraints(from: input)
-        let outputDir = if let dir = input.output_dir {
+        let outputDir = if let dir = input.outputDir {
             CaptureToolPathResolver.outputDirectory(from: dir)
         } else {
             URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
@@ -30,7 +30,7 @@ struct CaptureRequest {
         }
         self.outputDirectory = outputDir
         self.autocleanMinutes = input.autocleanMinutes ?? 120
-        self.usesDefaultOutput = input.output_dir == nil
+        self.usesDefaultOutput = input.outputDir == nil
         self.videoOut = CaptureToolPathResolver.filePath(from: input.videoOut)
 
         switch self.source {
@@ -82,11 +82,11 @@ private struct CaptureInput: Codable {
     let mode: String?
     let app: String?
     let pid: Int?
-    let window_title: String?
-    let window_index: Int?
-    let screen_index: Int?
+    let windowTitle: String?
+    let windowIndex: Int?
+    let screenIndex: Int?
     let region: String?
-    let capture_focus: String?
+    let captureFocus: String?
 
     let durationSeconds: Double?
     let idleFps: Double?
@@ -108,9 +108,16 @@ private struct CaptureInput: Codable {
     let resolutionCap: Double?
     let diffStrategy: String?
     let diffBudgetMs: Int?
-    let output_dir: String?
+    let outputDir: String?
     let autocleanMinutes: Int?
     let videoOut: String?
+
+    init(arguments: ToolArguments) throws {
+        let data = try JSONEncoder().encode(arguments.rawValue)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        self = try decoder.decode(Self.self, from: data)
+    }
 }
 
 extension CaptureRequest {
@@ -131,8 +138,8 @@ extension CaptureRequest {
     {
         let modeStr = input.mode
         let explicitApp = input.app
-        let windowTitle = input.window_title
-        let windowIndex = input.window_index
+        let windowTitle = input.windowTitle
+        let windowIndex = input.windowIndex
 
         let mode = try CaptureToolArgumentResolver.mode(
             from: modeStr,
@@ -141,7 +148,7 @@ extension CaptureRequest {
 
         switch mode {
         case .screen:
-            let screenIndex = input.screen_index
+            let screenIndex = input.screenIndex
             return CaptureScope(
                 kind: .screen,
                 screenIndex: screenIndex,
@@ -190,7 +197,7 @@ extension CaptureRequest {
         let quiet = max(Int(input.quietMs ?? 1000), 0)
         let maxFrames = max(constraints.maxFrames, 1)
         let maxMbAdjusted = constraints.maxMb.flatMap { $0 > 0 ? $0 : nil }
-        let focus = try CaptureToolArgumentResolver.captureFocus(from: input.capture_focus)
+        let focus = try CaptureToolArgumentResolver.captureFocus(from: input.captureFocus)
 
         return CaptureOptions(
             duration: duration,

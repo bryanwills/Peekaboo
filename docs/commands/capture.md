@@ -12,6 +12,8 @@ read_when:
 - `capture live` — adaptive PNG burst capture of screens/windows/regions with idle/active FPS, diff-based frame keeping, contact sheet, and metadata.
 - `capture video` — ingest an existing video, sample frames (by FPS or interval), optionally skip diff filtering, and emit the same outputs.
 
+The MCP server exposes the same primitive as the `capture` tool. MCP arguments use snake_case names such as `duration_seconds`, `active_fps`, `threshold_percent`, `output_dir`, and `video_out`.
+
 A hidden alias `capture watch` maps to `capture live` for backwards compatibility. The old standalone `watch` command/tool is removed.
 
 ## Common Outputs

@@ -118,10 +118,10 @@ struct CLIRuntimeSmokeTests {
         #expect(tools?.isEmpty == false)
         #expect((dataPayload?["count"] as? Int ?? 0) > 0)
         #expect(names.contains("clipboard"))
+        #expect(names.contains("capture"))
         #expect(names.contains("paste"))
         #expect(names.contains("set_value"))
         #expect(names.contains("perform_action"))
-        #expect(!names.contains("capture"))
     }
 
     @Test

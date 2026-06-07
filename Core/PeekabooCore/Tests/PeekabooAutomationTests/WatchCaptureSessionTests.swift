@@ -1,3 +1,4 @@
+@preconcurrency import AVFoundation
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -96,6 +97,65 @@ struct WatchCaptureSessionTests {
         #expect(union.width == 800)
         #expect(union.height == 800)
         #expect(result.boundingBoxes.count <= 5)
+    }
+
+    @Test
+    func `Video frame timeline samples lazily without precomputed frame cap`() {
+        var timeline = VideoFrameTimeline(
+            start: .zero,
+            end: CMTime(seconds: 60, preferredTimescale: 1000),
+            interval: CMTime(value: 1, timescale: 1000))
+
+        #expect(timeline.next() == .zero)
+        #expect(timeline.next() == CMTime(value: 1, timescale: 1000))
+        #expect(timeline.next() == CMTime(value: 2, timescale: 1000))
+    }
+
+    @Test
+    func `Autoclean removes old default capture sessions`() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("peekaboo-autoclean-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("capture-sessions", isDirectory: true)
+        let oldSession = root.appendingPathComponent("capture-old", isDirectory: true)
+        let currentSession = root.appendingPathComponent("capture-current", isDirectory: true)
+        try FileManager.default.createDirectory(at: oldSession, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: currentSession, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-3600)],
+            ofItemAtPath: oldSession.path)
+
+        let store = WatchCaptureSessionStore(
+            outputRoot: currentSession,
+            autocleanMinutes: 1,
+            managedAutoclean: true,
+            sessionId: "capture-current")
+        let warning = store.performAutoclean()
+
+        #expect(warning?.code == .autoclean)
+        #expect(!FileManager.default.fileExists(atPath: oldSession.path))
+        #expect(FileManager.default.fileExists(atPath: currentSession.path))
+    }
+
+    @Test
+    func `Autoclean ignores non-positive retention and keeps current session`() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("peekaboo-autoclean-current-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("capture-sessions", isDirectory: true)
+        let currentSession = root.appendingPathComponent("capture-current", isDirectory: true)
+        try FileManager.default.createDirectory(at: currentSession, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-3600)],
+            ofItemAtPath: currentSession.path)
+
+        let store = WatchCaptureSessionStore(
+            outputRoot: currentSession,
+            autocleanMinutes: 0,
+            managedAutoclean: true,
+            sessionId: "capture-current")
+        let warning = store.performAutoclean()
+
+        #expect(warning == nil)
+        #expect(FileManager.default.fileExists(atPath: currentSession.path))
     }
 
     @Test

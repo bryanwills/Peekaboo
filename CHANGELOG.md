@@ -2,6 +2,9 @@
 
 ## [3.3.1] - Unreleased
 
+### Added
+- MCP now exposes the bounded `capture` tool for live/video frame capture, contact sheets, metadata, and optional MP4 output. Thanks @coygeek for #169.
+
 ### Changed
 - Documented background vs. foreground input delivery across the README, automation guide, quickstart, permissions, and interaction command docs.
 - Clarified that `peekaboo tools` lists the MCP/agent tool catalog rather than top-level CLI commands. Thanks @lonexreb for #174.
