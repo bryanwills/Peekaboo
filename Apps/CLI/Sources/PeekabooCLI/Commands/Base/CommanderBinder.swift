@@ -90,6 +90,12 @@ enum CommanderCLIBinder {
         if commandType == SetValueCommand.self || commandType == PerformActionCommand.self {
             options.requiresElementActions = true
         }
+        if commandType == InspectUICommand.self {
+            options.requiresInspectAccessibilityTree = true
+        }
+        if commandType == BrowserCommand.self {
+            options.requiresBrowserMCP = true
+        }
         return options
     }
 

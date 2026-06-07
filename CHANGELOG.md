@@ -4,6 +4,8 @@
 
 ### Added
 - MCP now exposes the bounded `capture` tool for live/video frame capture, contact sheets, metadata, and optional MP4 output. Thanks @coygeek for #169.
+- Added dedicated CLI wrappers for MCP-only browser/page and accessibility-tree inspection via `peekaboo browser` and `peekaboo inspect-ui`. Thanks @coygeek for #173.
+- Added `peekaboo capture action`, which records adaptive live capture around a child command with pre-roll, post-roll, timeout, artifact validation, and optional MP4 output. Thanks @coygeek for #171.
 
 ### Changed
 - Documented background vs. foreground input delivery across the README, automation guide, quickstart, permissions, and interaction command docs.

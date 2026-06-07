@@ -46,7 +46,8 @@ struct FocusErrorMappingTests {
         let envelope = PeekabooBridgeErrorEnvelope(
             code: .permissionDenied,
             message: "Operation captureScreen is not allowed with current permissions",
-            permission: .screenRecording)
+            permission: .screenRecording
+        )
 
         #expect(errorCode(for: envelope) == .PERMISSION_ERROR_SCREEN_RECORDING)
     }
@@ -56,7 +57,8 @@ struct FocusErrorMappingTests {
         let envelope = PeekabooBridgeErrorEnvelope(
             code: .permissionDenied,
             message: "Operation captureArea is not allowed with current permissions",
-            permission: .screenRecording)
+            permission: .screenRecording
+        )
 
         #expect(errorMessage(for: envelope) == "Operation captureArea is not allowed with current permissions")
         #expect(!errorMessage(for: envelope).contains("PeekabooBridgeErrorEnvelope error"))
@@ -68,7 +70,8 @@ struct FocusErrorMappingTests {
             code: .internalError,
             message: "Bridge operation failed",
             details: "Screen capture service rejected the request",
-            permission: .screenRecording)
+            permission: .screenRecording
+        )
 
         let details = errorDetails(for: envelope)
         #expect(details?.contains("Screen capture service rejected the request") == true)

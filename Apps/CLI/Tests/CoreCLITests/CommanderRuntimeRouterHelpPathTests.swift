@@ -19,4 +19,14 @@ struct CommanderRuntimeRouterHelpPathTests {
         }
         #expect(exitCode == .success)
     }
+
+    @Test
+    func `help tokens after double dash stay in capture action command tail`() throws {
+        let resolved = try CommanderRuntimeRouter.resolve(
+            argv: ["peekaboo", "capture", "action", "--", "/bin/echo", "--help"]
+        )
+
+        #expect(ObjectIdentifier(resolved.type) == ObjectIdentifier(CaptureActionCommand.self))
+        #expect(resolved.parsedValues.options["command"] == ["/bin/echo", "--help"])
+    }
 }

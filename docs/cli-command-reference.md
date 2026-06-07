@@ -7,7 +7,7 @@ read_when:
 
 # CLI Command Reference
 
-Peekaboo’s CLI covers most of what agents can do; a few capabilities (notably `browser` and `inspect_ui`) are currently exposed only as MCP/agent tools via `peekaboo mcp` and have no top-level CLI command. Run `peekaboo tools` to see the MCP/agent catalog and `peekaboo --help` for the CLI command list. Commands share the same snapshot cache and most support `--json` (alias: `--json-output`) for scripting. Run `peekaboo` with no arguments to print the root help menu, and `peekaboo --version` at any time to see the embedded build/commit metadata that Poltergeist stamped into the binary.
+Peekaboo’s CLI covers most of what agents can do, and selected MCP/agent tools also have dedicated per-tool CLI wrappers such as `browser` and `inspect-ui`. Run `peekaboo tools` to see the MCP/agent catalog and `peekaboo --help` for the CLI command list. Commands share the same snapshot cache and most support `--json` (alias: `--json-output`) for scripting. Run `peekaboo` with no arguments to print the root help menu, and `peekaboo --version` at any time to see the embedded build/commit metadata that Poltergeist stamped into the binary.
 
 Use `peekaboo <command> --help` for inline flag descriptions; this page links to the authoritative docs in `docs/commands/`.
 
@@ -15,9 +15,9 @@ Use `peekaboo <command> --help` for inline flag descriptions; this page links to
 
 - [`see`](commands/see.md) – Capture annotated UI maps, produce snapshot IDs, and optionally run AI analysis.
 - [`image`](commands/image.md) – Save raw PNG/JPG captures of screens, windows, or menu bar regions; supports `--analyze` prompts.
-- `capture` – Long-running capture. `capture live` (adaptive PNG frames) replaces watch; `capture video` ingests a video and samples frames. Outputs frames, contact sheet, metadata, optional MP4.
+- `capture` – Long-running capture. `capture live` (adaptive PNG frames) replaces watch; `capture action` records around a child command; `capture video` ingests a video and samples frames. Outputs frames, contact sheet, metadata, optional MP4.
 - [`list`](commands/list.md) – Subcommands: `apps`, `windows`, `screens`, `menubar`, `permissions`.
-- [`tools`](commands/tools.md) – List the MCP/agent tool catalog (not CLI commands); supports `--verbose` and `--json`.
+- [`tools`](commands/tools.md) – List the MCP/agent tool catalog; supports `--verbose` and `--json`.
 - [`completions`](commands/completions.md) – Generate shell-native completions for zsh, bash, and fish from Commander metadata.
 - [`run`](commands/run.md) – Execute `.peekaboo.json` scripts (`--output`, `--no-fail-fast`).
 - [`sleep`](commands/sleep.md) – Millisecond pauses between steps.
@@ -54,6 +54,8 @@ Use `peekaboo <command> --help` for inline flag descriptions; this page links to
 ## Automation & Integrations
 
 - [`agent`](commands/agent.md) – Natural-language automation with dry-run planning, resume, audio modes, and model overrides.
+- [`browser`](browser-mcp.md) – Dedicated CLI wrapper for the browser MCP tool: Chrome page status/connect/navigation/snapshot/click/fill/type/console/network/screenshot/trace.
+- `inspect-ui` – Dedicated CLI wrapper for the `inspect_ui` MCP tool, useful for accessibility-tree text/control inspection without screenshots.
 - [`mcp`](commands/mcp.md) – `serve`, `list`, `add`, `remove`, `enable`, `disable`, `info`, `test`, `call`, `inspect` (stub) for Model Context Protocol workflows.
 
 Need structured payloads? Pass `--json` (or `--json-output`) where supported, or orchestrate multiple commands inside `.peekaboo.json` scripts executed via [`peekaboo run`](commands/run.md).

@@ -268,6 +268,58 @@ struct CommandRuntimeInjectionTests {
     }
 
     @Test
+    func `remote requirements reject inspect UI when required capability is unavailable`() {
+        var options = CommandRuntimeOptions()
+        options.requiresInspectAccessibilityTree = true
+        let supported = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 7),
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.captureScreen, .inspectAccessibilityTree]
+        )
+        let unsupported = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 6),
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.captureScreen, .inspectAccessibilityTree]
+        )
+
+        #expect(CommandRuntime.supportsRemoteRequirements(for: supported, options: options))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: unsupported, options: options))
+    }
+
+    @Test
+    func `remote requirements reject browser MCP when required capability is unavailable`() {
+        var options = CommandRuntimeOptions()
+        options.requiresBrowserMCP = true
+        let supported = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 4),
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.captureScreen, .browserStatus, .browserConnect, .browserDisconnect, .browserExecute]
+        )
+        let older = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 3),
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.captureScreen, .browserStatus, .browserConnect, .browserDisconnect, .browserExecute]
+        )
+        let missingExecute = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 4),
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.captureScreen, .browserStatus, .browserConnect, .browserDisconnect]
+        )
+
+        #expect(CommandRuntime.supportsBrowserMCP(for: supported))
+        #expect(!CommandRuntime.supportsBrowserMCP(for: older))
+        #expect(!CommandRuntime.supportsBrowserMCP(for: missingExecute))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: supported, options: options))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: older, options: options))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: missingExecute, options: options))
+    }
+
+    @Test
     func `environment bridge socket disables daemon auto start`() {
         let options = CommandRuntimeOptions()
         let environment = ["PEEKABOO_BRIDGE_SOCKET": "/tmp/explicit.sock"]

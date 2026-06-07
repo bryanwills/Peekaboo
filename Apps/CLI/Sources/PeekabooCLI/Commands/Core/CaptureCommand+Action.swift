@@ -1,0 +1,640 @@
+import Commander
+import CoreGraphics
+import Foundation
+import PeekabooCore
+import PeekabooFoundation
+
+@MainActor
+struct CaptureActionCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFormattable,
+RuntimeOptionsConfigurable {
+    var app: String?
+    var pid: Int32?
+    var mode: String?
+    var windowTitle: String?
+    var windowIndex: Int?
+    var screenIndex: Int?
+    var region: String?
+    var captureFocus: LiveCaptureFocus = .auto
+    var captureEngine: String?
+
+    var durationLimit: Double?
+    var preRollMs: Int?
+    var postRollMs: Int?
+    var actionTimeout: Double?
+    var idleFps: Double?
+    var activeFps: Double?
+    var threshold: Double?
+    var heartbeatSec: Double?
+    var quietMs: Int?
+    var highlightChanges = false
+    var maxFrames: Int?
+    var maxMb: Int?
+    var resolutionCap: Double?
+    var diffStrategy: String?
+    var diffBudgetMs: Int?
+
+    var path: String?
+    var autocleanMinutes: Int?
+    var videoOut: String?
+    var command: [String] = []
+
+    @RuntimeStorage private var runtime: CommandRuntime?
+    var runtimeOptions = CommandRuntimeOptions()
+
+    nonisolated(unsafe) static var commandDescription: CommandDescription {
+        MainActorCommandDescription.describe {
+            CommandDescription(
+                commandName: "action",
+                abstract: "Capture around a child command with pre/post-roll",
+                discussion: """
+                Starts adaptive live capture, runs a child command, keeps post-roll, then
+                stops capture and verifies the resulting artifacts.
+
+                Examples:
+                  peekaboo capture action --duration-limit 10 -- echo smoke
+                  peekaboo capture action --mode area --region 0,0,640,360 -- ./test-flow.sh
+                """,
+                version: "1.0.0"
+            )
+        }
+    }
+
+    private var resolvedRuntime: CommandRuntime {
+        guard let runtime else {
+            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
+        }
+        return runtime
+    }
+
+    private var logger: Logger {
+        self.resolvedRuntime.logger
+    }
+
+    var services: any PeekabooServiceProviding {
+        self.resolvedRuntime.services
+    }
+
+    var jsonOutput: Bool {
+        self.resolvedRuntime.configuration.jsonOutput
+    }
+
+    var outputLogger: Logger {
+        self.logger
+    }
+
+    mutating func run(using runtime: CommandRuntime) async throws {
+        self.runtime = runtime
+        self.logger.setJsonOutputMode(self.jsonOutput)
+        self.logger.operationStart("capture_action", metadata: ["mode": self.mode ?? "auto"])
+
+        do {
+            guard !self.command.isEmpty else {
+                throw ValidationError("Pass the action command after --")
+            }
+
+            let scope = try await self.resolveScope()
+            let options = try self.buildOptions()
+            let timing = try self.resolveActionTiming(durationLimit: options.duration)
+            if scope.kind == .window, let identifier = scope.applicationIdentifier {
+                try await self.focusIfNeeded(appIdentifier: identifier)
+            }
+
+            let outputDir = try self.resolveOutputDirectory()
+            let deps = WatchCaptureDependencies(
+                screenCapture: self.services.screenCapture,
+                screenService: self.services.screens,
+                frameSource: nil
+            )
+            let config = WatchCaptureConfiguration(
+                scope: scope,
+                options: options,
+                outputRoot: outputDir,
+                autoclean: WatchAutocleanConfig(minutes: self.autocleanMinutes ?? 120, managed: self.path == nil),
+                sourceKind: .live,
+                videoIn: nil,
+                videoOut: CaptureCommandPathResolver.filePath(from: self.videoOut),
+                keepAllFrames: false
+            )
+            let session = WatchCaptureSession(dependencies: deps, configuration: config)
+            let captureTask = self.startCaptureTask(session: session, scope: scope)
+
+            do {
+                if try await Self.waitForPreRollOrCaptureEnd(
+                    milliseconds: timing.startupGateMs,
+                    captureTask: captureTask
+                ) != nil {
+                    throw ValidationError("Capture ended before action started")
+                }
+                let action = try await CaptureActionProcessRunner.run(
+                    command: self.command,
+                    timeoutSeconds: timing.actionTimeout
+                )
+                try await Self.sleep(milliseconds: timing.postRollMs)
+                session.requestStop()
+
+                let capture = try await captureTask.value
+                let validation = self.validateArtifacts(capture)
+                let result = CaptureActionCommandResult(
+                    success: action.succeeded && validation.ok,
+                    action: action,
+                    capture: capture,
+                    validation: validation
+                )
+                self.output(result)
+                self.logger.operationComplete(
+                    "capture_action",
+                    success: result.success,
+                    metadata: ["frames_kept": capture.stats.framesKept]
+                )
+                if !result.success {
+                    throw ExitCode(1)
+                }
+            } catch {
+                session.requestStop()
+                captureTask.cancel()
+                _ = try? await captureTask.value
+                throw error
+            }
+        } catch let exit as ExitCode {
+            throw exit
+        } catch {
+            self.handleError(error)
+            self.logger.operationComplete(
+                "capture_action",
+                success: false,
+                metadata: ["error": error.localizedDescription]
+            )
+            throw ExitCode(1)
+        }
+    }
+
+    private func startCaptureTask(
+        session: WatchCaptureSession,
+        scope: CaptureScope
+    ) -> Task<CaptureSessionResult, any Error> {
+        let runSession: @MainActor @Sendable () async throws -> CaptureSessionResult = {
+            try await session.run()
+        }
+        let enginePreference = self.liveCaptureEnginePreference(for: scope)
+        return Task { @MainActor in
+            if let engineAware = self.services.screenCapture as? any EngineAwareScreenCaptureServiceProtocol {
+                try await engineAware.withCaptureEngine(enginePreference, operation: runSession)
+            } else {
+                try await runSession()
+            }
+        }
+    }
+
+    private func output(_ result: CaptureActionCommandResult) {
+        if self.jsonOutput {
+            let error = result.success
+                ? nil
+                : ErrorInfo(message: result.failureMessage, code: .VALIDATION_ERROR)
+            let envelope = CaptureActionJSONEnvelope(
+                success: result.success,
+                data: result,
+                messages: nil,
+                debug_logs: self.outputLogger.getDebugLogs(),
+                error: error
+            )
+            outputJSONCodable(envelope, logger: self.outputLogger)
+            return
+        }
+
+        print(
+            "capture(action) kept \(result.capture.stats.framesKept) frames " +
+                "(dropped \(result.capture.stats.framesDropped))"
+        )
+        print("contact sheet: \(result.capture.contactSheet.path)")
+        print("metadata: \(result.capture.metadataFile)")
+        if let videoOut = result.capture.videoOut {
+            print("video: \(videoOut)")
+        }
+        print("action exit: \(result.action.exitCode)")
+        if result.action.timedOut {
+            print("action timed out after \(String(format: "%.2f", result.action.timeoutSeconds))s")
+        }
+        if !result.validation.ok {
+            print("artifact validation failed: \(result.validation.missing.joined(separator: ", "))")
+        }
+    }
+
+    private func buildOptions() throws -> CaptureOptions {
+        let duration = max(1, min(self.durationLimit ?? 60, 180))
+        let idle = min(max(self.idleFps ?? 2, 0.1), 5)
+        let active = min(max(self.activeFps ?? 8, 0.5), 15)
+        let threshold = min(max(self.threshold ?? 2.5, 0), 100)
+        let heartbeat = max(self.heartbeatSec ?? 5, 0)
+        let quiet = max(self.quietMs ?? 1000, 0)
+        let maxFrames = max(self.maxFrames ?? 800, 1)
+        let resolutionCap = self.resolutionCap ?? 1440
+        let diffStrategy = try CaptureCommandOptionParser.diffStrategy(self.diffStrategy)
+        let diffBudgetMs = self.diffBudgetMs ?? (diffStrategy == .quality ? 30 : nil)
+        let maxMb = self.maxMb.flatMap { $0 > 0 ? $0 : nil }
+
+        return CaptureOptions(
+            duration: duration,
+            idleFps: idle,
+            activeFps: active,
+            changeThresholdPercent: threshold,
+            heartbeatSeconds: heartbeat,
+            quietMsToIdle: quiet,
+            maxFrames: maxFrames,
+            maxMegabytes: maxMb,
+            highlightChanges: self.highlightChanges,
+            captureFocus: self.captureFocus,
+            resolutionCap: resolutionCap,
+            diffStrategy: diffStrategy,
+            diffBudgetMs: diffBudgetMs
+        )
+    }
+
+    private func resolveActionTiming(durationLimit: TimeInterval) throws -> CaptureActionTiming {
+        let preRoll = max(self.preRollMs ?? 250, 0)
+        let postRoll = max(self.postRollMs ?? 500, 0)
+        let rollSeconds = Double(preRoll + postRoll) / 1000.0
+        guard rollSeconds < durationLimit else {
+            throw ValidationError("--pre-roll-ms + --post-roll-ms must be less than --duration-limit")
+        }
+        let defaultActionTimeout = max(0.1, durationLimit - rollSeconds)
+        let actionTimeout = max(0.1, min(self.actionTimeout ?? defaultActionTimeout, durationLimit - rollSeconds))
+        return CaptureActionTiming(
+            preRollMs: preRoll,
+            postRollMs: postRoll,
+            startupGateMs: max(preRoll, 100),
+            actionTimeout: actionTimeout
+        )
+    }
+
+    private func resolveOutputDirectory() throws -> URL {
+        CaptureCommandPathResolver.outputDirectory(from: self.path)
+    }
+
+    private static func sleep(milliseconds: Int) async throws {
+        guard milliseconds > 0 else { return }
+        try await Task.sleep(nanoseconds: UInt64(milliseconds) * 1_000_000)
+    }
+
+    private static func waitForPreRollOrCaptureEnd(
+        milliseconds: Int,
+        captureTask: Task<CaptureSessionResult, any Error>
+    ) async throws -> CaptureSessionResult? {
+        try await withThrowingTaskGroup(of: CaptureActionStartupGate.self) { group in
+            group.addTask {
+                if milliseconds > 0 {
+                    try await Task.sleep(nanoseconds: UInt64(milliseconds) * 1_000_000)
+                }
+                return .preRollElapsed
+            }
+            group.addTask {
+                try await .captureEnded(captureTask.value)
+            }
+
+            guard let first = try await group.next() else {
+                return nil
+            }
+            group.cancelAll()
+
+            switch first {
+            case .preRollElapsed:
+                return nil
+            case let .captureEnded(result):
+                return result
+            }
+        }
+    }
+}
+
+private struct CaptureActionTiming {
+    let preRollMs: Int
+    let postRollMs: Int
+    let startupGateMs: Int
+    let actionTimeout: TimeInterval
+}
+
+private enum CaptureActionStartupGate {
+    case preRollElapsed
+    case captureEnded(CaptureSessionResult)
+}
+
+struct CaptureActionCommandResult: Codable {
+    let success: Bool
+    let action: CaptureActionProcessResult
+    let capture: CaptureSessionResult
+    let validation: CaptureActionArtifactValidation
+
+    var failureMessage: String {
+        if self.action.timedOut {
+            return "Action timed out after \(self.action.timeoutSeconds)s"
+        }
+        if !self.action.succeeded {
+            return "Action exited with status \(self.action.exitCode)"
+        }
+        return "Capture artifact validation failed"
+    }
+}
+
+struct CaptureActionJSONEnvelope: Codable {
+    let success: Bool
+    let data: CaptureActionCommandResult
+    let messages: [String]?
+    let debug_logs: [String]
+    let error: ErrorInfo?
+}
+
+struct CaptureActionArtifactValidation: Codable {
+    let ok: Bool
+    let checked: [String]
+    let missing: [String]
+}
+
+struct CaptureActionProcessResult: Codable {
+    let command: [String]
+    let exitCode: Int32
+    let timedOut: Bool
+    let timeoutSeconds: TimeInterval
+    let durationMs: Int
+    let stdout: String
+    let stderr: String
+    let stdoutTruncated: Bool
+    let stderrTruncated: Bool
+
+    var succeeded: Bool {
+        !self.timedOut && self.exitCode == 0
+    }
+}
+
+@MainActor
+extension CaptureActionCommand {
+    private func validateArtifacts(_ result: CaptureSessionResult) -> CaptureActionArtifactValidation {
+        var checked = [result.metadataFile, result.contactSheet.path]
+        checked.append(contentsOf: result.frames.map(\.path))
+        if let videoOut = result.videoOut {
+            checked.append(videoOut)
+        } else if let expectedVideoOut = CaptureCommandPathResolver.filePath(from: self.videoOut) {
+            checked.append(expectedVideoOut)
+        }
+
+        var missing: [String] = []
+        if result.frames.isEmpty {
+            missing.append("frame files")
+        }
+        for path in checked where !Self.fileExistsAndIsNonEmpty(path) {
+            missing.append(path)
+        }
+        return CaptureActionArtifactValidation(ok: missing.isEmpty, checked: checked, missing: missing)
+    }
+
+    private static func fileExistsAndIsNonEmpty(_ path: String) -> Bool {
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: path),
+              let attributes = try? manager.attributesOfItem(atPath: path),
+              let size = attributes[.size] as? NSNumber
+        else {
+            return false
+        }
+        return size.intValue > 0
+    }
+}
+
+@MainActor
+extension CaptureActionCommand {
+    func resolveScope() async throws -> CaptureScope {
+        let mode = try self.resolveMode()
+        switch mode {
+        case .screen:
+            let displayInfo = try await self.displayInfo(for: self.screenIndex)
+            return CaptureScope(
+                kind: .screen,
+                screenIndex: displayInfo?.index,
+                displayUUID: displayInfo?.uuid,
+                windowId: nil,
+                applicationIdentifier: nil,
+                windowIndex: nil,
+                region: nil
+            )
+        case .frontmost:
+            return CaptureScope(kind: .frontmost)
+        case .window:
+            let identifier = try self.resolveApplicationIdentifier()
+            let windowReference = try await self.resolveWindowReference(for: identifier)
+            return CaptureScope(
+                kind: .window,
+                screenIndex: nil,
+                displayUUID: nil,
+                windowId: windowReference.windowID,
+                applicationIdentifier: identifier,
+                windowIndex: windowReference.windowIndex,
+                region: nil
+            )
+        case .area:
+            let rect = try self.parseRegion()
+            return CaptureScope(kind: .region, region: rect)
+        case .multi:
+            throw ValidationError("capture action does not support multi-mode captures")
+        }
+    }
+
+    func resolveMode() throws -> LiveCaptureMode {
+        if let explicit = self.mode {
+            let normalized = explicit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if normalized == "region" { return .area }
+            guard let mode = LiveCaptureMode(rawValue: normalized) else {
+                throw ValidationError(
+                    "Unsupported capture action mode '\(explicit)'. Use screen, window, frontmost, or area."
+                )
+            }
+            return mode
+        }
+        if self.region != nil { return .area }
+        if self.app != nil || self.pid != nil || self.windowTitle != nil || self.windowIndex != nil { return .window }
+        return .frontmost
+    }
+
+    func parseRegion() throws -> CGRect {
+        guard let region = self.region?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !region.isEmpty
+        else {
+            throw PeekabooError.invalidInput("Region must be provided when --mode area is set")
+        }
+        let parts = region
+            .split(separator: ",", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard parts.count == 4,
+              let x = Double(parts[0]),
+              let y = Double(parts[1]),
+              let width = Double(parts[2]),
+              let height = Double(parts[3])
+        else {
+            throw PeekabooError.invalidInput("Region must be x,y,width,height")
+        }
+        guard width > 0, height > 0 else {
+            throw PeekabooError.invalidInput("Region width and height must be greater than zero")
+        }
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    func focusIfNeeded(appIdentifier: String) async throws {
+        switch self.captureFocus {
+        case .background:
+            return
+        case .auto:
+            let options = FocusOptions(
+                autoFocus: true,
+                focusTimeout: nil,
+                focusRetryCount: nil,
+                spaceSwitch: false,
+                bringToCurrentSpace: false
+            )
+            try await ensureFocused(
+                applicationName: appIdentifier,
+                windowTitle: self.windowTitle,
+                options: options,
+                services: self.services
+            )
+        case .foreground:
+            let options = FocusOptions(
+                autoFocus: true,
+                focusTimeout: nil,
+                focusRetryCount: nil,
+                spaceSwitch: true,
+                bringToCurrentSpace: true
+            )
+            try await ensureFocused(
+                applicationName: appIdentifier,
+                windowTitle: self.windowTitle,
+                options: options,
+                services: self.services
+            )
+        }
+    }
+
+    private func liveCaptureEnginePreference(for scope: CaptureScope) -> CaptureEnginePreference {
+        let value = (self.captureEngine ?? self.resolvedRuntime.configuration.captureEnginePreference)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        switch value {
+        case "modern", "modern-only", "sckit", "sc", "screen-capture-kit", "sck":
+            return .modern
+        case "classic", "cg", "legacy", "legacy-only", "false", "0", "no":
+            return .legacy
+        default:
+            return scope.kind == .region ? .legacy : .auto
+        }
+    }
+
+    private func displayInfo(for index: Int?) async throws -> (index: Int, uuid: String)? {
+        guard let index else { return nil }
+        let screens = self.services.screens.listScreens()
+        guard let match = screens.first(where: { $0.index == index }) else {
+            throw PeekabooError.invalidInput("Screen index \(index) not found")
+        }
+        return (index, "\(match.displayID)")
+    }
+
+    private func resolveWindowReference(for identifier: String) async throws -> (windowID: UInt32?, windowIndex: Int?) {
+        guard self.windowTitle != nil || self.windowIndex != nil else {
+            return (nil, nil)
+        }
+
+        let windows = try await WindowServiceBridge.listWindows(
+            windows: self.services.windows,
+            target: .application(identifier)
+        )
+        let renderable = ObservationTargetResolver.captureCandidates(from: windows)
+
+        let selectedWindow: ServiceWindowInfo? = if let title = self.windowTitle?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !title.isEmpty {
+            renderable.first { $0.title.localizedCaseInsensitiveContains(title) }
+        } else if let explicitIndex = self.windowIndex {
+            renderable.first { $0.index == explicitIndex }
+        } else {
+            nil
+        }
+
+        guard let selectedWindow else {
+            let criteria = self.windowTitle.map { "window title '\($0)' for \(identifier)" }
+                ?? self.windowIndex.map { "window index \($0) for \(identifier)" }
+                ?? "window for \(identifier)"
+            throw PeekabooError.windowNotFound(criteria: criteria)
+        }
+
+        return (
+            windowID: UInt32(exactly: selectedWindow.windowID),
+            windowIndex: selectedWindow.index
+        )
+    }
+}
+
+extension CaptureActionCommand: ParsableCommand {}
+extension CaptureActionCommand: AsyncRuntimeCommand {}
+
+extension CaptureActionCommand: CommanderSignatureProviding {
+    static func commanderSignature() -> CommandSignature {
+        let live = CaptureLiveCommand.commanderSignature()
+        let options = live.options.filter { $0.label != "duration" } + [
+            .commandOption(
+                "durationLimit",
+                help: "Hard capture limit seconds (default 60, max 180)",
+                long: "duration-limit"
+            ),
+            .commandOption("preRollMs", help: "Milliseconds to capture before running the action", long: "pre-roll-ms"),
+            .commandOption("postRollMs", help: "Milliseconds to capture after the action exits", long: "post-roll-ms"),
+            .commandOption(
+                "actionTimeout",
+                help: "Action timeout seconds (defaults to remaining duration)",
+                long: "action-timeout"
+            ),
+            .commandOption(
+                "command",
+                help: "Command to run; usually pass after --",
+                long: "command",
+                parsing: .remaining
+            ),
+        ]
+        return CommandSignature(
+            arguments: live.arguments,
+            options: options,
+            flags: live.flags,
+            optionGroups: live.optionGroups
+        )
+    }
+}
+
+@MainActor
+extension CaptureActionCommand: CommanderBindableCommand {
+    mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
+        self.app = values.singleOption("app")
+        self.pid = try values.decodeOption("pid", as: Int32.self)
+        self.mode = values.singleOption("mode")
+        self.windowTitle = values.singleOption("windowTitle")
+        self.windowIndex = try values.decodeOption("windowIndex", as: Int.self)
+        self.screenIndex = try values.decodeOption("screenIndex", as: Int.self)
+        self.region = values.singleOption("region")
+        if let parsedFocus: LiveCaptureFocus = try values.decodeOptionEnum("captureFocus") {
+            self.captureFocus = parsedFocus
+        }
+        self.captureEngine = values.singleOption("captureEngine")
+        self.durationLimit = try values.decodeOption("durationLimit", as: Double.self)
+        self.preRollMs = try values.decodeOption("preRollMs", as: Int.self)
+        self.postRollMs = try values.decodeOption("postRollMs", as: Int.self)
+        self.actionTimeout = try values.decodeOption("actionTimeout", as: Double.self)
+        self.idleFps = try values.decodeOption("idleFps", as: Double.self)
+        self.activeFps = try values.decodeOption("activeFps", as: Double.self)
+        self.threshold = try values.decodeOption("threshold", as: Double.self)
+        self.heartbeatSec = try values.decodeOption("heartbeatSec", as: Double.self)
+        self.quietMs = try values.decodeOption("quietMs", as: Int.self)
+        self.maxFrames = try values.decodeOption("maxFrames", as: Int.self)
+        self.maxMb = try values.decodeOption("maxMb", as: Int.self)
+        self.resolutionCap = try values.decodeOption("resolutionCap", as: Double.self)
+        self.diffStrategy = values.singleOption("diffStrategy")
+        self.diffBudgetMs = try values.decodeOption("diffBudgetMs", as: Int.self)
+        if values.flag("highlightChanges") { self.highlightChanges = true }
+        self.path = values.singleOption("path")
+        self.autocleanMinutes = try values.decodeOption("autocleanMinutes", as: Int.self)
+        self.videoOut = values.singleOption("videoOut")
+        self.command = values.optionValues("command")
+    }
+}

@@ -64,6 +64,65 @@ struct CommanderBinderProgramResolutionTests {
 
     @Test
     @MainActor
+    func `Commander program resolves browser command`() throws {
+        let descriptors = CommanderRegistryBuilder.buildDescriptors()
+        let program = Program(descriptors: descriptors.map(\.metadata))
+        let invocation = try program.resolve(argv: [
+            "peekaboo",
+            "browser",
+            "navigate",
+            "--url", "https://example.com",
+            "--timeout", "5000",
+            "--json",
+        ])
+        let values = invocation.parsedValues
+        #expect(invocation.path == ["browser"])
+        #expect(values.positional == ["navigate"])
+        #expect(values.options["url"] == ["https://example.com"])
+        #expect(values.options["timeout"] == ["5000"])
+        #expect(values.flags.contains("jsonOutput"))
+    }
+
+    @Test
+    @MainActor
+    func `Commander program resolves inspect UI command`() throws {
+        let descriptors = CommanderRegistryBuilder.buildDescriptors()
+        let program = Program(descriptors: descriptors.map(\.metadata))
+        let invocation = try program.resolve(argv: [
+            "peekaboo",
+            "inspect-ui",
+            "--app-target", "TextEdit",
+            "--max-elements", "200",
+        ])
+        let values = invocation.parsedValues
+        #expect(invocation.path == ["inspect-ui"])
+        #expect(values.options["appTarget"] == ["TextEdit"])
+        #expect(values.options["maxElements"] == ["200"])
+    }
+
+    @Test
+    @MainActor
+    func `Commander program resolves capture action command tail`() throws {
+        let descriptors = CommanderRegistryBuilder.buildDescriptors()
+        let program = Program(descriptors: descriptors.map(\.metadata))
+        let invocation = try program.resolve(argv: [
+            "peekaboo",
+            "capture",
+            "action",
+            "--duration-limit", "3",
+            "--",
+            "echo",
+            "hello",
+            "--flag",
+        ])
+        let values = invocation.parsedValues
+        #expect(invocation.path == ["capture", "action"])
+        #expect(values.options["durationLimit"] == ["3"])
+        #expect(values.options["command"] == ["echo", "hello", "--flag"])
+    }
+
+    @Test
+    @MainActor
     func `Commander router resolves agent permission alias before task argument`() throws {
         let invocation = try CommanderRuntimeRouter.resolve(argv: [
             "peekaboo",

@@ -23,7 +23,12 @@ struct CaptureCommand: ParsableCommand {
             CommandDescription(
                 commandName: "capture",
                 abstract: "Capture live screens/windows or ingest a video and extract frames",
-                subcommands: [CaptureLiveCommand.self, CaptureVideoCommand.self, CaptureWatchAlias.self],
+                subcommands: [
+                    CaptureLiveCommand.self,
+                    CaptureActionCommand.self,
+                    CaptureVideoCommand.self,
+                    CaptureWatchAlias.self,
+                ],
                 showHelpOnEmptyInvocation: true
             )
         }

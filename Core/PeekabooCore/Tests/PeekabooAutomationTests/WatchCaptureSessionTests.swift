@@ -255,6 +255,98 @@ struct WatchCaptureSessionTests {
 
     @Test
     @MainActor
+    func `Stop request wakes cadence sleep`() async throws {
+        let png = Self.makePNG(size: CGSize(width: 20, height: 20))
+        let capture = StubScreenCaptureService(result: png, size: CGSize(width: 20, height: 20))
+        let screens = StubScreenService()
+        let output = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("watch-stop-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: output) }
+
+        let options = WatchCaptureOptions(
+            duration: 30,
+            idleFps: 0.1,
+            activeFps: 1,
+            changeThresholdPercent: 100,
+            heartbeatSeconds: 0,
+            quietMsToIdle: 0,
+            maxFrames: 10,
+            maxMegabytes: nil,
+            highlightChanges: false,
+            captureFocus: .auto,
+            resolutionCap: nil,
+            diffStrategy: .fast,
+            diffBudgetMs: nil)
+        let session = WatchCaptureSession(
+            dependencies: WatchCaptureDependencies(screenCapture: capture, screenService: screens),
+            configuration: WatchCaptureConfiguration(
+                scope: WatchScope(kind: .frontmost),
+                options: options,
+                outputRoot: output,
+                autoclean: WatchAutocleanConfig(minutes: 1, managed: false)))
+
+        let task = Task { @MainActor in
+            try await session.run()
+        }
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        let stopStarted = Date()
+        session.requestStop()
+        let result = try await task.value
+
+        #expect(result.frames.count >= 1)
+        #expect(Date().timeIntervalSince(stopStarted) < 1)
+    }
+
+    @Test
+    @MainActor
+    func `Task cancellation wakes cadence sleep`() async throws {
+        let png = Self.makePNG(size: CGSize(width: 20, height: 20))
+        let capture = StubScreenCaptureService(result: png, size: CGSize(width: 20, height: 20))
+        let screens = StubScreenService()
+        let output = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("watch-cancel-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: output) }
+
+        let options = WatchCaptureOptions(
+            duration: 30,
+            idleFps: 0.1,
+            activeFps: 1,
+            changeThresholdPercent: 100,
+            heartbeatSeconds: 0,
+            quietMsToIdle: 0,
+            maxFrames: 10,
+            maxMegabytes: nil,
+            highlightChanges: false,
+            captureFocus: .auto,
+            resolutionCap: nil,
+            diffStrategy: .fast,
+            diffBudgetMs: nil)
+        let session = WatchCaptureSession(
+            dependencies: WatchCaptureDependencies(screenCapture: capture, screenService: screens),
+            configuration: WatchCaptureConfiguration(
+                scope: WatchScope(kind: .frontmost),
+                options: options,
+                outputRoot: output,
+                autoclean: WatchAutocleanConfig(minutes: 1, managed: false)))
+
+        let task = Task { @MainActor in
+            try await session.run()
+        }
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        let cancelStarted = Date()
+        task.cancel()
+        do {
+            _ = try await task.value
+            Issue.record("Expected cancellation to propagate")
+        } catch is CancellationError {
+            #expect(Date().timeIntervalSince(cancelStarted) < 1)
+        }
+    }
+
+    @Test
+    @MainActor
     func `Frame provider prefers stable window id when present`() async throws {
         let png = Self.makePNG(size: CGSize(width: 20, height: 20))
         let capture = StubScreenCaptureService(result: png, size: CGSize(width: 20, height: 20))

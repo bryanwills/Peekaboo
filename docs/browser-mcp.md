@@ -8,7 +8,7 @@ read_when:
 
 # Browser Tool (Chrome DevTools MCP)
 
-Peekaboo exposes a native `browser` tool that brokers Chrome DevTools MCP. Use it for Chrome page content:
+Peekaboo exposes a native `browser` tool that brokers Chrome DevTools MCP. Agents call it through MCP, and scripts can use the dedicated `peekaboo browser` CLI wrapper. Use it for Chrome page content:
 
 - DOM/accessibility snapshots
 - page-level click/fill/type/navigation
@@ -88,6 +88,18 @@ Advanced escape hatch:
 - `call` with `mcp_tool` and `mcp_args_json` forwards a raw Chrome DevTools MCP call.
 
 ## Examples
+
+CLI:
+
+```bash
+peekaboo browser status --json
+peekaboo browser connect --channel chrome
+peekaboo browser navigate --url https://example.com
+peekaboo browser snapshot --path /tmp/page.txt
+peekaboo browser network --resource-type xhr --page-size 20 --json
+```
+
+MCP JSON:
 
 ```json
 { "action": "status" }

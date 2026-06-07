@@ -16,6 +16,14 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
+        if options.requiresInspectAccessibilityTree && !self.supportsInspectAccessibilityTree(for: handshake) {
+            return false
+        }
+
+        if options.requiresBrowserMCP && !self.supportsBrowserMCP(for: handshake) {
+            return false
+        }
+
         return true
     }
 
@@ -45,6 +53,14 @@ enum BridgeCapabilityPolicy {
     static func supportsInspectAccessibilityTree(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 7) &&
             handshake.supportedOperations.contains(.inspectAccessibilityTree)
+    }
+
+    static func supportsBrowserMCP(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 4) &&
+            handshake.supportedOperations.contains(.browserStatus) &&
+            handshake.supportedOperations.contains(.browserConnect) &&
+            handshake.supportedOperations.contains(.browserDisconnect) &&
+            handshake.supportedOperations.contains(.browserExecute)
     }
 
     static func supportsPostEventPermissionRequest(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

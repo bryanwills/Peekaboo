@@ -171,7 +171,7 @@ extension WatchCaptureSession {
     }
 
     func shouldEndSession(elapsedNs: UInt64, durationNs: UInt64) -> Bool {
-        elapsedNs >= durationNs
+        self.hasStopRequest() || elapsedNs >= durationNs
     }
 
     func hitFrameCap() -> Bool {
@@ -269,9 +269,22 @@ extension WatchCaptureSession {
     func sleep(ns: UInt64, since start: Date) async throws {
         // Video input already has intrinsic cadence; do not add wall-clock throttling.
         if self.frameSource != nil { return }
+        if self.hasStopRequest() { return }
         let elapsed = UInt64(Date().timeIntervalSince(start) * 1_000_000_000)
-        if ns > elapsed {
-            try await Task.sleep(nanoseconds: ns - elapsed)
+        guard ns > elapsed else { return }
+
+        try Task.checkCancellation()
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await Task.sleep(nanoseconds: ns - elapsed)
+            }
+            group.addTask { [weak self] in
+                await self?.waitForStopRequest()
+            }
+
+            _ = try await group.next()
+            group.cancelAll()
+            try Task.checkCancellation()
         }
     }
 }

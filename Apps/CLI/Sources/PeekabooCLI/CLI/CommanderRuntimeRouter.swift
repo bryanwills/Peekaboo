@@ -80,8 +80,9 @@ enum CommanderRuntimeRouter {
             return true
         }
 
-        if let index = arguments.firstIndex(where: { self.isHelpToken($0) }) {
-            let tokens = Array(arguments.prefix(index))
+        let helpSearchArguments = Array(arguments.prefix { $0 != "--" })
+        if let index = helpSearchArguments.firstIndex(where: { self.isHelpToken($0) }) {
+            let tokens = Array(helpSearchArguments.prefix(index))
             if self.handleAgentPermissionHelp(tokens: tokens) {
                 return true
             }

@@ -62,6 +62,66 @@ public struct WatchCaptureConfiguration {
     }
 }
 
+private final class WatchCaptureStopSignal: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requested = false
+    private var continuations: [UUID: CheckedContinuation<Void, Never>] = [:]
+
+    func request() {
+        self.lock.lock()
+        guard !self.requested else {
+            self.lock.unlock()
+            return
+        }
+        self.requested = true
+        let continuations = self.continuations.values
+        self.continuations.removeAll()
+        self.lock.unlock()
+
+        for continuation in continuations {
+            continuation.resume()
+        }
+    }
+
+    func isRequested() -> Bool {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.requested
+    }
+
+    func wait() async {
+        if self.isRequested() { return }
+
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let shouldResume: Bool
+                self.lock.lock()
+                if self.requested || Task.isCancelled {
+                    shouldResume = true
+                } else {
+                    shouldResume = false
+                    self.continuations[id] = continuation
+                }
+                self.lock.unlock()
+
+                if shouldResume {
+                    continuation.resume()
+                }
+            }
+        } onCancel: {
+            self.cancelWait(id)
+        }
+    }
+
+    private func cancelWait(_ id: UUID) {
+        self.lock.lock()
+        let continuation = self.continuations.removeValue(forKey: id)
+        self.lock.unlock()
+        continuation?.resume()
+    }
+}
+
 /// Adaptive PNG capture session for agents.
 @MainActor
 public final class WatchCaptureSession {
@@ -91,6 +151,7 @@ public final class WatchCaptureSession {
     var warnings: [CaptureWarning] = []
     var framesDropped: Int = 0
     var totalBytes: Int = 0
+    private let stopSignal = WatchCaptureStopSignal()
 
     public init(dependencies: WatchCaptureDependencies, configuration: WatchCaptureConfiguration) {
         let regionValidator = WatchCaptureRegionValidator(screenService: dependencies.screenService)
@@ -162,5 +223,17 @@ public final class WatchCaptureSession {
 
         try self.store.writeJSON(metadata, to: metadataURL)
         return metadata
+    }
+
+    public func requestStop() {
+        self.stopSignal.request()
+    }
+
+    func hasStopRequest() -> Bool {
+        self.stopSignal.isRequested()
+    }
+
+    func waitForStopRequest() async {
+        await self.stopSignal.wait()
     }
 }

@@ -6,7 +6,7 @@ import TachikomaMCP
 
 @MainActor
 struct ToolsCommand: OutputFormattable, RuntimeOptionsConfigurable {
-    private static let abstractText = "List the MCP/agent tool catalog (not CLI commands)"
+    private static let abstractText = "List the MCP/agent tool catalog"
     private static let descriptionText = "Tools command for listing the MCP/agent tool catalog"
 
     static let commandDescription = CommandDescription(
@@ -14,9 +14,9 @@ struct ToolsCommand: OutputFormattable, RuntimeOptionsConfigurable {
         abstract: Self.abstractText,
         discussion: """
         Display the Peekaboo MCP/agent tool catalog. These tools are exposed to agents
-        and `peekaboo mcp` clients (e.g. Codex, Claude Code, Cursor); they are not
-        runnable as top-level CLI subcommands. Run `peekaboo --help` for the CLI
-        command list.
+        and `peekaboo mcp` clients (e.g. Codex, Claude Code, Cursor). Some tools also
+        have dedicated CLI wrappers, such as `peekaboo browser` and `peekaboo inspect-ui`.
+        Run `peekaboo --help` for the CLI command list.
 
         Examples:
           peekaboo tools                    # Show all tools

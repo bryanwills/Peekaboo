@@ -26,7 +26,8 @@ extension ErrorHandlingCommand {
                 message: errorMessage(for: error),
                 code: errorCode,
                 details: errorDetails(for: error),
-                logger: logger)
+                logger: logger
+            )
         } else {
             let errorMessage: String = if let peekabooError = error as? PeekabooError {
                 peekabooError.errorDescription ?? String(describing: error)

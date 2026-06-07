@@ -23,6 +23,8 @@ struct CommandRuntimeOptions {
     var autoStartDaemon = true
     var bridgeSocketPath: String?
     var requiresElementActions = false
+    var requiresInspectAccessibilityTree = false
+    var requiresBrowserMCP = false
 
     func makeConfiguration() -> CommandRuntime.Configuration {
         CommandRuntime.Configuration(
@@ -249,6 +251,10 @@ extension CommandRuntime {
 
     static func supportsInspectAccessibilityTree(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         BridgeCapabilityPolicy.supportsInspectAccessibilityTree(for: handshake)
+    }
+
+    static func supportsBrowserMCP(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        BridgeCapabilityPolicy.supportsBrowserMCP(for: handshake)
     }
 
     static func supportsPostEventPermissionRequest(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

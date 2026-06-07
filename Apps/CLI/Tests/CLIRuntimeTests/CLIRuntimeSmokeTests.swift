@@ -145,6 +145,26 @@ struct CLIRuntimeSmokeTests {
     }
 
     @Test
+    func `peekaboo browser status emits standard JSON envelope`() async throws {
+        guard Self.ensureLocalRuntimeAvailable() else { return }
+        let result = try await TestChildProcess.runPeekaboo(["browser", "status", "--json", "--no-remote"])
+        #expect(result.status == .exited(0))
+
+        let data = Data(result.standardOutput.utf8)
+        let object = try JSONSerialization.jsonObject(with: data)
+        guard let json = object as? [String: Any],
+              let payload = json["data"] as? [String: Any] else {
+            Issue.record("Expected JSON object output from browser status.")
+            return
+        }
+
+        #expect(json["success"] as? Bool == true)
+        #expect(payload["tool"] as? String == "browser")
+        #expect(payload["isError"] as? Bool == false)
+        #expect((payload["text"] as? String)?.contains("Chrome DevTools MCP Status") == true)
+    }
+
+    @Test
     func `peekaboo commander emits diagnostics JSON`() async throws {
         guard Self.ensureLocalRuntimeAvailable() else { return }
         let result = try await TestChildProcess.runPeekaboo(["commander", "--json", "--no-remote"])

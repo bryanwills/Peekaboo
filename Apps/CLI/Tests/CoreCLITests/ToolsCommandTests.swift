@@ -10,7 +10,7 @@ struct ToolsCommandTests {
         let config = ToolsCommand.commandDescription
 
         #expect(config.commandName == "tools")
-        #expect(config.abstract == "List the MCP/agent tool catalog (not CLI commands)")
+        #expect(config.abstract == "List the MCP/agent tool catalog")
         #expect(config.discussion != nil)
         let discussion = config.discussion ?? ""
         #expect(discussion.contains("Examples:"))

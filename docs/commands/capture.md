@@ -7,9 +7,10 @@ read_when:
 
 # `peekaboo capture`
 
-`capture` replaces `watch` as the unified long-running capture tool. It has two subcommands:
+`capture` replaces `watch` as the unified long-running capture tool. It has three subcommands:
 
 - `capture live` — adaptive PNG burst capture of screens/windows/regions with idle/active FPS, diff-based frame keeping, contact sheet, and metadata.
+- `capture action` — start adaptive live capture, run a child command, keep post-roll, stop early, and validate output artifacts.
 - `capture video` — ingest an existing video, sample frames (by FPS or interval), optionally skip diff filtering, and emit the same outputs.
 
 The MCP server exposes the same primitive as the `capture` tool. MCP arguments use snake_case names such as `duration_seconds`, `active_fps`, `threshold_percent`, `output_dir`, and `video_out`.
@@ -32,6 +33,13 @@ For `capture video`, `metadata.json` and JSON stdout include `options.video` wit
 - Diff/output: `--highlight-changes`, `--resolution-cap` (default 1440), `--diff-strategy fast|quality`, `--diff-budget-ms`, `--video-out <path>`
 - Paths: `--path <dir>` (default temp `capture-sessions/capture-<uuid>`), `--autoclean-minutes` (default 120)
 
+## `capture action` flags
+- Targeting/focus/cadence/caps/output: same as `capture live`, except `--duration` is replaced by `--duration-limit` (default 60, max 180).
+- Action timing: `--pre-roll-ms` (default 250), `--post-roll-ms` (default 500), `--action-timeout` (defaults to the remaining duration after roll time).
+- Command: pass the child command after `--`, e.g. `peekaboo capture action -- echo smoke`. Commander also accepts `--command -- echo smoke`, but the `--` form is clearer for commands with their own flags.
+
+The command exits non-zero if the child command exits non-zero, times out, or required capture artifacts are missing/empty. JSON output includes the child command exit code/stdout/stderr, the normal `CaptureResult`, and artifact validation details.
+
 ## `capture video` flags
 - Required: `--input <video>` (positional `input` argument)
 - Sampling: `--sample-fps <fps>` (default 2) XOR `--every-ms <ms>`
@@ -53,6 +61,9 @@ peekaboo capture live --mode screen --screen-index 1 --video-out /tmp/capture.mp
 # Live, record an explicit desktop region; --region also infers area mode
 peekaboo capture live --region 100,120,640,360 --duration 10
 
+# Capture a command-driven flow with pre/post-roll and JSON proof
+peekaboo capture action --duration-limit 10 --json -- ./test-flow.sh --smoke
+
 # Video ingest, sample 2 fps, trim first 5s
 peekaboo capture video /path/to/demo.mov --sample-fps 2 --start-ms 5000 --video-out /tmp/demo.mp4
 
@@ -63,6 +74,7 @@ peekaboo capture video /path/to/demo.mov --every-ms 500 --no-diff
 ## Design notes
 - Hidden alias: `capture watch` maps to `capture live`; the old standalone `watch` tool was removed.
 - Live defaults: max duration 180s, `--max-frames` 800, resolution cap 1440, diff strategy `fast` unless `--diff-strategy quality` is set.
+- Action capture uses the same live sampler and can stop it early once the child command and post-roll complete.
 - Video ingest uses the same diff/keep logic as live; `--no-diff` keeps every sampled frame. When no motion is detected, you may end up with a single kept frame plus a `noMotion` warning.
 - Core types: `CaptureScope/Options/Result` with a pluggable `CaptureFrameSource` (ScreenCapture for live, AVAssetReader for video). Optional MP4 is written by `VideoWriter` when `--video-out` is set.
 - Quick smokes:  
