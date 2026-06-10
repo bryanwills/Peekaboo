@@ -273,7 +273,7 @@ struct PeekabooSettingsConfigHydrationTests {
             #expect(settings.selectedModel == "gemini-3-flash")
 
             let persistedData = try Data(contentsOf: configPath)
-            let persistedConfig = String(decoding: persistedData, as: UTF8.self)
+            let persistedConfig = try #require(String(bytes: persistedData, encoding: .utf8))
             #expect(persistedConfig == configJSON)
         }
     }
@@ -1020,7 +1020,8 @@ struct PeekabooSettingsConfigHydrationTests {
             #expect(settings.selectedModel == "grok-4")
 
             let persistedData = try Data(contentsOf: configPath)
-            #expect(String(decoding: persistedData, as: UTF8.self) == configJSON)
+            let persistedConfig = try #require(String(bytes: persistedData, encoding: .utf8))
+            #expect(persistedConfig == configJSON)
         }
     }
 }

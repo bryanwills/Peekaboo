@@ -873,7 +873,9 @@ struct PeekabooAgentServiceTests {
 
         try body()
     }
+}
 
+extension PeekabooAgentServiceTests {
     @Test
     @MainActor
     func `Model parameter precedence in executeTask`() async throws {

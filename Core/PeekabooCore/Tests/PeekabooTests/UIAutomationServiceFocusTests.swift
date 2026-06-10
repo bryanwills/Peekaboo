@@ -9,12 +9,12 @@ import Testing
 struct UIAutomationServiceFocusTests {
     @Test
     @MainActor
-    func `getFocusedElement returns nil when no element focused`() async {
+    func `getFocusedElement returns nil when no element focused`() {
         let service = UIAutomationService()
 
         // Note: This test may be environment-dependent
         // In a real test environment with no focused elements, this should return nil
-        let result = await service.getFocusedElement()
+        let result = service.getFocusedElement()
 
         // We can't guarantee no focus in all test environments,
         // but we can at least verify the method doesn't crash
@@ -26,11 +26,11 @@ struct UIAutomationServiceFocusTests {
 
     @Test
     @MainActor
-    func `getFocusedElement structure validation`() async {
+    func `getFocusedElement structure validation`() {
         let service = UIAutomationService()
 
         // This test validates that if we get a result, it has the expected structure
-        let result = await service.getFocusedElement()
+        let result = service.getFocusedElement()
 
         if let focusInfo = result {
             // Validate app information
@@ -51,10 +51,10 @@ struct UIAutomationServiceFocusTests {
 
     @Test
     @MainActor
-    func `Focus info dictionary format validation`() async {
+    func `Focus info dictionary format validation`() {
         let service = UIAutomationService()
 
-        let result = await service.getFocusedElement()
+        let result = service.getFocusedElement()
 
         if let focusInfo = result {
             // Validate UIFocusInfo structure directly

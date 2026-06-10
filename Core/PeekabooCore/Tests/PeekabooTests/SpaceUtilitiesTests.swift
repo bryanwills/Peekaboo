@@ -166,9 +166,8 @@ struct SpaceUtilitiesTests {
         ]
 
         for error in errors {
-            let description = error.errorDescription
-            #expect(description != nil)
-            #expect(try !#require(description?.isEmpty))
+            let description = try #require(error.errorDescription)
+            #expect(!description.isEmpty)
         }
     }
 

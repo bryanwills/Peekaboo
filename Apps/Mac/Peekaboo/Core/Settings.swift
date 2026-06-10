@@ -773,34 +773,7 @@ extension PeekabooSettings {
                     config.aiProviders = Configuration.AIProviderConfig()
                 }
 
-                // Build providers string based on selected provider and model
-                let providerString = switch self.selectedProvider {
-                case "openai":
-                    "openai/\(self.selectedModel)"
-                case "anthropic":
-                    "anthropic/\(self.selectedModel)"
-                case "grok":
-                    "grok/\(self.selectedModel)"
-                case "google":
-                    "google/\(self.selectedModel)"
-                case "minimax":
-                    "minimax/\(self.selectedModel)"
-                case "minimax-cn", "minimax_cn", "minimaxi":
-                    "minimax-cn/\(self.selectedModel)"
-                case "ollama":
-                    "ollama/\(self.selectedModel)"
-                case "lmstudio", "lm-studio":
-                    "lmstudio/\(self.selectedModel)"
-                case "openrouter":
-                    "openrouter/\(self.selectedModel)"
-                default:
-                    // Check if it's a custom provider
-                    if self.customProviders[self.selectedProvider] != nil {
-                        "\(self.selectedProvider)/\(self.selectedModel)"
-                    } else {
-                        "anthropic/claude-opus-4-8"
-                    }
-                }
+                let providerString = self.selectedProviderString()
 
                 // Update providers string
                 if let currentProviders = config.aiProviders?.providers {
@@ -841,6 +814,35 @@ extension PeekabooSettings {
             }
         } catch {
             print("Failed to update config.json: \(error)")
+        }
+    }
+
+    private func selectedProviderString() -> String {
+        switch self.selectedProvider {
+        case "openai":
+            "openai/\(self.selectedModel)"
+        case "anthropic":
+            "anthropic/\(self.selectedModel)"
+        case "grok":
+            "grok/\(self.selectedModel)"
+        case "google":
+            "google/\(self.selectedModel)"
+        case "minimax":
+            "minimax/\(self.selectedModel)"
+        case "minimax-cn", "minimax_cn", "minimaxi":
+            "minimax-cn/\(self.selectedModel)"
+        case "ollama":
+            "ollama/\(self.selectedModel)"
+        case "lmstudio", "lm-studio":
+            "lmstudio/\(self.selectedModel)"
+        case "openrouter":
+            "openrouter/\(self.selectedModel)"
+        default:
+            if self.customProviders[self.selectedProvider] != nil {
+                "\(self.selectedProvider)/\(self.selectedModel)"
+            } else {
+                "anthropic/claude-opus-4-8"
+            }
         }
     }
 
