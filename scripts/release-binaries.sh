@@ -524,9 +524,9 @@ if [ "$PUBLISH_NPM" = true ]; then
     
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         if [ -n "$NPM_TAG" ]; then
-            pnpm publish "$NPM_PACKAGE_PATH" --tag "$NPM_TAG"
+            pnpm publish "$NPM_PACKAGE_PATH" --tag "$NPM_TAG" --no-git-checks
         else
-            pnpm publish "$NPM_PACKAGE_PATH"
+            pnpm publish "$NPM_PACKAGE_PATH" --no-git-checks
         fi
         echo -e "${GREEN}✅ Published to npm!${NC}"
     else
