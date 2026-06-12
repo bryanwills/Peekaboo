@@ -21,7 +21,10 @@ Peekaboo resolves settings in this order (highest → lowest):
 
 | Setting | Config File | Environment Variable | Description |
 |---------|-------------|---------------------|-------------|
-| AI Providers | `aiProviders.providers` | `PEEKABOO_AI_PROVIDERS` | Comma-separated list (`openai/gpt-4.1,anthropic/claude,grok/grok-4,ollama/llava:latest`). First healthy provider wins. |
+| AI Providers | `aiProviders.providers` | `PEEKABOO_AI_PROVIDERS` | Comma-separated list (`openai/gpt-5.5,anthropic/claude-opus-4-8,grok/grok-4.3,ollama/llava:latest`). First healthy provider wins. |
+| Agent Model | `agent.defaultModel` | `PEEKABOO_AGENT_MODEL` | Default model for `peekaboo agent`; CLI `--model` wins. |
+| Agent Temperature | `agent.temperature` | - | Sampling temperature shared by the app and CLI (default `0.7`); clamped or omitted for models that restrict it. |
+| Agent Max Tokens | `agent.maxTokens` | - | Requested output-token budget shared by the app and CLI (default `16384`, accepted range `1...128000`); clamped to provider capability. |
 | OpenAI API Key | credentials file | `OPENAI_API_KEY` | Required for OpenAI models. |
 | Anthropic API Key | credentials file | `ANTHROPIC_API_KEY` | Required for Claude models (API-key path). |
 | Anthropic OAuth | credentials file | `ANTHROPIC_REFRESH_TOKEN`, `ANTHROPIC_ACCESS_TOKEN`, `ANTHROPIC_ACCESS_EXPIRES` | Created by `config login anthropic`; no API key stored. |
@@ -48,7 +51,7 @@ Peekaboo resolves settings in this order (highest → lowest):
 
 ## Provider Variables
 
-- `PEEKABOO_AI_PROVIDERS`: `provider/model` CSV. Example: `openai/gpt-4.1,anthropic/claude-opus-4,grok/grok-4,ollama/llava:latest`.
+- `PEEKABOO_AI_PROVIDERS`: `provider/model` CSV. Example: `openai/gpt-5.5,anthropic/claude-opus-4-8,grok/grok-4.3,ollama/llava:latest`.
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GROK_API_KEY` | `X_AI_API_KEY` | `XAI_API_KEY`, `GEMINI_API_KEY`: required for their respective providers when using API keys.
 - `PEEKABOO_OLLAMA_BASE_URL`: change when your Ollama daemon isn’t on `localhost:11434`.
 
@@ -56,6 +59,29 @@ Peekaboo resolves settings in this order (highest → lowest):
 
 - `PEEKABOO_DEFAULT_SAVE_PATH`: screenshot destination (created automatically).
 - `PEEKABOO_CLI_PATH`: point Peekaboo at a debug build (`.build/debug/peekaboo`) without copying binaries around.
+
+## Agent generation settings
+
+The macOS Settings UI and `peekaboo agent` share `agent.temperature` and `agent.maxTokens` through
+`~/.peekaboo/config.json`:
+
+```json
+{
+  "agent": {
+    "defaultModel": "anthropic/claude-fable-5",
+    "temperature": 0.7,
+    "maxTokens": 128000
+  }
+}
+```
+
+`maxTokens` is an upper request, not a promise: Peekaboo clamps it to the selected model's advertised output limit.
+Fable 5 supports up to 128K output and a 1M context window. Anthropic-compatible custom providers inherit known
+Fable limits from the model ID, while custom model entries can advertise their own `maxTokens`.
+
+Temperature is clamped to `0...1` for Anthropic-compatible models and `0...2` elsewhere. Peekaboo omits it entirely
+for models that reject sampling controls, including GPT-5-compatible endpoints and current Anthropic adaptive-thinking
+models.
 
 ## UI Input Strategy
 

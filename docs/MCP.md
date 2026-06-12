@@ -13,6 +13,9 @@ This document explains how Peekaboo exposes its automation tools as an MCP serve
 
 Peekaboo runs as an MCP server over stdio, exposing its native tools (image, see, click, etc.) to external MCP clients such as Codex, Claude Code, or Cursor.
 Peekaboo no longer hosts or manages external MCP servers; configure your MCP client to launch `peekaboo mcp` directly.
+By default, the MCP process owns its lifecycle and keeps support services process-local. An explicit
+`--bridge-socket <path>` instead attaches MCP tools to that existing Bridge host and skips the embedded support daemon.
+In both modes, MCP never publishes `daemon.sock`, `bridge.sock`, or another Bridge listener itself.
 
 Action-oriented UI tools include:
 

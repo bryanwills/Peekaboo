@@ -1,5 +1,5 @@
 ---
-summary: 'Index of AI provider docs (OpenAI, Anthropic, Gemini, MiniMax, Grok, Ollama)'
+summary: 'Index of AI provider docs (OpenAI, Anthropic, Gemini, MiniMax, Grok, Ollama).'
 read_when:
   - 'choosing or configuring AI providers for Peekaboo'
   - 'looking for provider-specific plans or status'
@@ -8,7 +8,7 @@ read_when:
 # Providers index
 
 - **OpenAI** — `openai.md`: architecture, migration status, and guidance for adding models.
-- **Anthropic** — `anthropic.md`: plan/status, streaming/tool notes, and Claude CLI examples.
+- **Anthropic** — `anthropic.md`: Fable/Claude models, output limits, generation settings, and credentials.
 - **Google** — configured with `GEMINI_API_KEY`; supports Gemini 3.1 Pro Preview and Gemini 3 Flash.
 - **MiniMax** — configured with `MINIMAX_API_KEY`; supports MiniMax M2.7 through the Anthropic-compatible API.
 - **MiniMax China** — use `minimax-cn/...` with `MINIMAX_CN_API_KEY` or the shared `MINIMAX_API_KEY`; routes to `api.minimaxi.com`.
@@ -22,8 +22,8 @@ configuration syntax, and environment variable reference.
 
 | Provider | Tools | Vision | Streaming | Local/offline | Auth |
 | --- | --- | --- | --- | --- | --- |
-| OpenAI | Yes (function/tool calling) | Yes (gpt-4o/4.1) | Yes | No | API key |
-| Anthropic | Yes | Yes (Sonnet/Opus vision) | Yes (SSE) | No | API key or OAuth (Claude Pro/Max) |
+| OpenAI | Yes (function/tool calling) | Yes | Yes | No | API key or OAuth |
+| Anthropic | Yes | Yes | Model-dependent; Fable/Opus 4.8 currently non-streaming | No | API key or OAuth (Claude Pro/Max) |
 | Google | Yes | Yes | Yes | No | API key |
 | MiniMax | Yes | No | Yes | No | API key |
 | MiniMax China | Yes | No | Yes | No | API key |

@@ -200,9 +200,9 @@ public enum ProviderDetector {
     /// Get recommended model for each provider - updated with latest models
     public static func recommendedModels() -> [String: String] {
         [
-            "OpenAI": "gpt-4.1", // Latest GPT-4.1
-            "Anthropic": "claude-opus-4-20250514", // Claude Opus 4 (May 2025)
-            "Grok": "grok-4", // Latest Grok
+            "OpenAI": "gpt-5.5",
+            "Anthropic": "claude-opus-4-8",
+            "Grok": "grok-4.3",
             "Ollama": "llama3.3", // Best Ollama model for function calling
         ]
     }

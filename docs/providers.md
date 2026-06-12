@@ -67,6 +67,10 @@ peekaboo agent --model lmstudio/openai/gpt-oss-120b "summarize this window"
 
 Defaults come from `agent.defaultModel` in `~/.peekaboo/config.json`. Anthropic defaults stay on Opus 4.8 for zero-retention compatibility; select Fable explicitly when your Anthropic organization allows it. Set a per-project default with `PEEKABOO_AGENT_MODEL`.
 
+The app and CLI share `agent.temperature` and `agent.maxTokens`. Peekaboo clamps those requests to provider
+capabilities; Fable supports a 1M context window and up to 128K output. See
+[configuration.md](configuration.md#agent-generation-settings).
+
 ## Tool calling
 
 The agent expects tool-calling capable models. If your provider doesn't support it (some tiny local models), Peekaboo falls back to a structured-output prompt — slower and less reliable. Stick with mainstream tool-calling models for production runs.

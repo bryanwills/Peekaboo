@@ -51,7 +51,7 @@ struct AboutSettingsView: View {
                 AboutLinkRow(
                     icon: "chevron.left.slash.chevron.right",
                     title: "GitHub",
-                    url: "https://github.com/steipete/Peekaboo")
+                    url: "https://github.com/openclaw/Peekaboo")
                 AboutLinkRow(icon: "globe", title: "Website", url: "https://steipete.me")
                 AboutLinkRow(icon: "envelope", title: "Email", url: "mailto:peter@steipete.me")
             }
@@ -94,7 +94,7 @@ struct AboutSettingsView: View {
     }
 
     private func openProjectHome() {
-        guard let url = URL(string: "https://github.com/steipete/Peekaboo") else { return }
+        guard let url = URL(string: "https://github.com/openclaw/Peekaboo") else { return }
         NSWorkspace.shared.open(url)
     }
 }

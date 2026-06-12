@@ -225,7 +225,7 @@ struct TachikomaBasics: AsyncParsableCommand {
 
         // Auto-select the best available model
         // Prioritized by quality and general capabilities
-        let preferredOrder = ["claude-opus-4-20250514", "gpt-4.1", "llama3.3", "grok-4"]
+        let preferredOrder = ["claude-opus-4-8", "gpt-5.5", "llama3.3", "grok-4.3"]
 
         for preferred in preferredOrder {
             if availableModels.contains(preferred) {

@@ -40,6 +40,9 @@ If you are running from SSH, a LaunchAgent, Codex, or another background launchd
 host with Screen Recording permission. Local capture-engine overrides are for debugging and can produce
 wallpaper-only screenshots in background sessions.
 
+Normal CLI automation uses a healthy reusable daemon, then a capable Peekaboo.app Bridge host, and otherwise starts
+the daemon on demand. `peekaboo bridge status --verbose` shows the selected runtime.
+
 ## 3. Inspect the UI
 
 `see` returns a structured map of clickable elements with stable IDs:

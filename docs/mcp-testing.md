@@ -77,7 +77,7 @@ node reloaderoo/dist/bin/reloaderoo.js inspect list-resources -- "$PEEKABOO_BIN"
 node reloaderoo/dist/bin/reloaderoo.js inspect list-prompts -- "$PEEKABOO_BIN" mcp
 
 # Test with AI provider
-PEEKABOO_AI_PROVIDERS="anthropic/claude-opus-4-20250514" node reloaderoo/dist/bin/reloaderoo.js inspect call-tool analyze --params '{"image_path": "/tmp/screenshot.png", "question": "What is shown in this image?"}' -- "$PEEKABOO_BIN" mcp
+PEEKABOO_AI_PROVIDERS="anthropic/claude-opus-4-8" node reloaderoo/dist/bin/reloaderoo.js inspect call-tool analyze --params '{"image_path": "/tmp/screenshot.png", "question": "What is shown in this image?"}' -- "$PEEKABOO_BIN" mcp
 ```
 
 #### Proxy Mode (Hot-Reload Development)
@@ -110,7 +110,7 @@ claude mcp add peekaboo peekaboo mcp
 
 # Add with environment variables
 claude mcp add peekaboo peekaboo mcp \
-  -e PEEKABOO_AI_PROVIDERS="anthropic/claude-opus-4-20250514"
+  -e PEEKABOO_AI_PROVIDERS="anthropic/claude-opus-4-8"
 
 # List configured servers
 claude mcp list
@@ -176,7 +176,7 @@ pnpm run build:cli  # Rebuild after changes (or use your local watcher)
 
 ```bash
 # Set AI provider for agent tools
-export PEEKABOO_AI_PROVIDERS="anthropic/claude-opus-4-20250514"
+export PEEKABOO_AI_PROVIDERS="anthropic/claude-opus-4-8"
 
 # Enable debug logging
 export DEBUG="peekaboo:*"
@@ -221,7 +221,7 @@ Test that all tools are properly exposed:
 // Expected tool: runAgent
 {
   "task": "Take a screenshot of the current window",
-  "provider": "anthropic/claude-opus-4-20250514"
+  "provider": "anthropic/claude-opus-4-8"
 }
 ```
 

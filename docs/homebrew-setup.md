@@ -149,10 +149,10 @@ cask "peekaboo" do
   version "2.0.0"
   sha256 "..."
   
-  url "https://github.com/steipete/peekaboo/releases/download/v#{version}/Peekaboo.app.zip"
+  url "https://github.com/openclaw/Peekaboo/releases/download/v#{version}/Peekaboo.app.zip"
   name "Peekaboo"
   desc "Screenshot and AI analysis tool"
-  homepage "https://github.com/steipete/peekaboo"
+  homepage "https://github.com/openclaw/Peekaboo"
   
   app "Peekaboo.app"
 end

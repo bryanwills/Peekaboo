@@ -104,7 +104,7 @@ struct TachikomaMultimodal: AsyncParsableCommand {
 
         if visionModels.isEmpty {
             TerminalOutput.print("❌ No vision-capable models available", color: .red)
-            TerminalOutput.print("💡 Vision models require: GPT-4V, Claude 3+, or LLaVA", color: .yellow)
+            TerminalOutput.print("💡 Vision models require a vision-capable GPT, Claude, or LLaVA model", color: .yellow)
             return
         }
 
@@ -316,7 +316,7 @@ struct TachikomaMultimodal: AsyncParsableCommand {
 
         if visionModels.isEmpty {
             throw NSError(domain: "TachikomaMultimodal", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: "No vision-capable models available. Need GPT-4V, Claude 3+, or LLaVA.",
+                NSLocalizedDescriptionKey: "No vision-capable GPT, Claude, or LLaVA model is available.",
             ])
         }
 
@@ -332,7 +332,7 @@ struct TachikomaMultimodal: AsyncParsableCommand {
         }
 
         // Prefer high-quality vision models
-        let visionPreferred = ["gpt-4o", "claude-opus-4-20250514", "claude-3-5-sonnet", "llava"]
+        let visionPreferred = ["gpt-5.5", "claude-opus-4-8", "claude-sonnet-4-6", "llava"]
 
         for preferred in visionPreferred {
             if visionModels.contains(preferred) {
@@ -349,8 +349,13 @@ struct TachikomaMultimodal: AsyncParsableCommand {
             let lowercased = model.lowercased()
             return lowercased.contains("gpt-4o") ||
                 lowercased.contains("gpt-4-vision") ||
+                lowercased.contains("gpt-5") ||
                 lowercased.contains("claude-3") ||
                 lowercased.contains("claude-4") ||
+                lowercased.contains("claude-fable") ||
+                lowercased.contains("claude-opus-4") ||
+                lowercased.contains("claude-sonnet-4") ||
+                lowercased.contains("claude-haiku-4") ||
                 lowercased.contains("llava") ||
                 lowercased.contains("vision")
         }

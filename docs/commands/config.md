@@ -20,11 +20,11 @@ read_when:
 | `status` | Display provider credential readiness. | `--timeout` (sec, default 30). |
 | `login` | Run an OAuth flow (no API key stored) for supported providers. | `login openai` (ChatGPT/Codex), `login anthropic` (Claude Pro/Max). |
 | `set-credential` | Legacy alias for `add <key> <value>`. | Positional `<key> <value>` pair. |
-| `add-provider` | Append or replace a custom AI provider entry. | `--type openai|anthropic`, `--name`, `--base-url`, `--api-key`, `--headers key:value,…`, `--description`, `--force`. |
+| `add-provider` | Append or replace a custom AI provider entry. | Positional `<provider-id>` plus `--type openai|anthropic`, `--name`, `--base-url`, `--api-key`, `--headers key:value,…`, `--description`, `--force`, `--dry-run`. |
 | `list-providers` | Dump built-in + custom providers plus whether they’re enabled. | `--json` follows the same schema that the runtime loads. |
-| `test-provider` | Fires a quick `/models` request (or Anthropic equivalent) against the provider definition to make sure credentials/base URL are valid. | `--provider-id <id>` (required), `--timeout-ms`, `--model`. |
-| `remove-provider` | Delete a custom provider entry. | `--provider-id <id>` and optional `--force` to skip confirmation. |
-| `models` | Enumerate every model Peekaboo knows about (native, providers, or the specific server you pass). | `--provider-id`, `--include-disabled`. |
+| `test-provider` | Fires a quick `/models` request (or Anthropic equivalent) against the provider definition to make sure credentials/base URL are valid. | Positional `<provider-id>`. |
+| `remove-provider` | Delete a custom provider entry. | Positional `<provider-id>` plus optional `--force` and `--dry-run`. |
+| `models-provider` | Check the provider endpoint and list configured models, or return discovered OpenAI-compatible models with `--discover`. | Positional `<provider-id>` plus optional `--discover` and `--save`. |
 
 ## Implementation notes
 - The underlying auth/config plumbing lives in the shared Tachikoma library and the `tachikoma config` CLI; Peekaboo sets `TachikomaConfiguration.profileDirectoryName = ".peekaboo"` so both tools read/write the same `~/.peekaboo/credentials` without copying environment variables.
@@ -32,7 +32,7 @@ read_when:
 - `add`/`login`/`set-credential` write through `ConfigurationManager.shared`, so they use macOS file permissions + atomic temp-file renames; partial writes won’t corrupt the store even if the process crashes.
 - Provider readiness in human `init`/`show --effective` output is live-validated with per-provider pings (OpenAI/Codex, Anthropic, Grok/xai, Gemini, OpenRouter). Timeouts default to 30s and are caller overridable. JSON mode skips appended readiness text so stdout remains parseable.
 - Provider management commands share the same validation helpers: IDs must match `^[A-Za-z0-9-_]+$`, and provider types are limited to `.openai` or `.anthropic`. Headers passed via `--headers KEY:VALUE,…` are parsed into a `[String:String]` dictionary before being serialized back to disk.
-- `test-provider` and `models` invoke the actual HTTP client stack (respecting proxy, TLS, and custom headers) rather than mocking responses, which is why they run on the main actor and surface real latencies.
+- `test-provider` and every `models-provider` invocation contact the actual endpoint (respecting proxy, TLS, and custom headers). Without `--discover`, the model list still comes from configuration, but endpoint errors and timeouts are reported. With `--discover`, an OpenAI-compatible provider returns the remote model list.
 - All subcommands are `RuntimeOptionsConfigurable`, so global `--json` or `--verbose` flags work uniformly (handy when you script config changes).
 
 ## Examples
@@ -55,6 +55,16 @@ peekaboo config add openrouter sk-or-v1-...
 # OAuth logins (no API key stored)
 peekaboo config login openai
 peekaboo config login anthropic
+
+# Manage a custom OpenAI-compatible endpoint
+peekaboo config add-provider local-ollama \
+  --type openai \
+  --name "Local Ollama" \
+  --base-url "http://localhost:11434/v1" \
+  --api-key "dummy-key"
+peekaboo config test-provider local-ollama
+peekaboo config models-provider local-ollama --discover --save
+peekaboo config remove-provider local-ollama --force
 ```
 
 ## Troubleshooting

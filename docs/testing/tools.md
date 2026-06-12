@@ -213,7 +213,7 @@ The following subsections spell out the concrete steps, required Playground surf
 - **2025-12-17 CLI evidence**: `.artifacts/playground-tools/20251217-192349-clipboard-{save-original,set-file,get-file-text,set-image,get-image,restore-original}.json` plus exported `/tmp/peekaboo-clipboard-out.png`.
 
 #### `config`
-- **Focus**: `config show`, `config validate`, `config models`.
+- **Focus**: `config show`, `config validate`, `config models-provider`.
 - **Steps**:
   1. Snapshot `~/.peekaboo/config.json` (read-only).
   2. Run `polter peekaboo -- config validate --verbose`.

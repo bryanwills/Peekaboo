@@ -27,6 +27,8 @@ Peekaboo is a macOS automation toolkit for humans and agents. It captures pixels
 - **[Automation](automation.md)** — click, type, scroll, drag, hotkeys, menus, dialogs, windows, Spaces.
 - **[Agent](commands/agent.md)** — natural-language plan/act loop with provider switching, resumable sessions, and visualizer feedback.
 - **[MCP](MCP.md)** — expose every Peekaboo tool over stdio for Codex, Claude Code, and Cursor.
+- **[Daemon](daemon.md)** — warm CLI runtime, lifecycle, sockets, and migration.
+- **[Bridge host](bridge-host.md)** — TCC broker transport, discovery, security, and troubleshooting.
 
 ## Reference
 

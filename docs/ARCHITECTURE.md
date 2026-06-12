@@ -38,6 +38,24 @@ This document provides a high-level overview of how Tachikoma and PeekabooCore w
 - **Tachikoma** – still the AI provider surface that the runtime modules call through. See
   [providers.md](providers.md) for the current provider and model catalog.
 
+### Runtime hosting
+
+Permission-bound automation can execute in three runtime shapes:
+
+| Runtime | State and permissions | Transport |
+| --- | --- | --- |
+| Reusable daemon | Warm snapshots, tracking, browser MCP state; daemon process TCC | `daemon.sock` Bridge protocol |
+| Peekaboo.app | GUI-held TCC grants and app lifecycle | `bridge.sock` Bridge protocol |
+| MCP server | Process-local services owned by the MCP client | stdio; no Bridge listener |
+
+CLI automation resolves a healthy daemon first, then a capable Peekaboo.app host, then auto-starts the reusable daemon.
+Operations that permit local fallback can run in the CLI process when no host is usable. Explicit socket and
+`--no-remote` flags override this selection.
+
+The daemon and GUI app never share a socket. Each Bridge listener holds an exclusive lease, publishes its socket
+atomically, and removes only the filesystem object it owns. See [daemon.md](daemon.md) and
+[bridge-host.md](bridge-host.md) for lifecycle, migration, security, and TCC troubleshooting.
+
 ### Dependency Flow
 
 **Tachikoma** (AI Model Management)

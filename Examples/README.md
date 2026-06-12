@@ -122,7 +122,7 @@ import Tachikoma
 let modelProvider = try AIConfiguration.fromEnvironment()
 
 // 2. Get a specific model
-let model = try modelProvider.getModel("gpt-4.1") // or "claude-opus-4-20250514", "llama3.3", etc.
+let model = try modelProvider.getModel("gpt-5.5") // or "claude-opus-4-8", "llama3.3", etc.
 ```
 
 ### Simple Text Generation
@@ -150,7 +150,7 @@ print(text)
 
 ```swift
 // Compare responses from multiple providers
-let providers = ["gpt-4.1", "claude-opus-4-20250514", "llama3.3"]
+let providers = ["gpt-5.5", "claude-opus-4-8", "llama3.3"]
 
 for providerModel in providers {
     let model = try modelProvider.getModel(providerModel)
@@ -262,9 +262,17 @@ let request = ModelRequest(
     )
 )
 
-// Anthropic-specific: Use thinking mode
-let claudeModel = try modelProvider.getModel("claude-opus-4-20250514-thinking")
-// Thinking mode automatically enabled
+// Anthropic-specific: Enable adaptive thinking explicitly
+let claudeResult = try await generateText(
+    model: .anthropic(.opus48),
+    messages: [.user("Solve this complex problem")],
+    settings: GenerationSettings(
+        maxTokens: 4000,
+        providerOptions: ProviderOptions(
+            anthropic: AnthropicOptions(thinking: .adaptive)
+        )
+    )
+)
 ```
 
 ### Configuration Options

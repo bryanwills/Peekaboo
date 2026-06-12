@@ -368,13 +368,13 @@ peekaboo image --app Safari --path screenshot.png
 # List applications
 peekaboo list apps
 
-# Analyze image with AI
-peekaboo analyze image.png "What is shown?"
+# Capture and analyze a window with AI
+peekaboo image --app Safari --analyze "What is shown?"
 \`\`\`
 
 ## Documentation
 
-Full documentation: https://github.com/steipete/peekaboo
+Full documentation: https://github.com/openclaw/Peekaboo
 
 ## License
 

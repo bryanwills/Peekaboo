@@ -113,7 +113,7 @@ struct TachikomaComparison: AsyncParsableCommand {
             let availableProviders = recommended.values.filter { availableModels.contains($0) }
 
             // Prefer a good mix if we have many available
-            let preferredOrder = ["gpt-4.1", "claude-opus-4-20250514", "llama3.3", "grok-4"]
+            let preferredOrder = ["gpt-5.5", "claude-opus-4-8", "llama3.3", "grok-4.3"]
             var selected: [String] = []
 
             for model in preferredOrder {

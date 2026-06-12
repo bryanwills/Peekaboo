@@ -1,45 +1,57 @@
 ---
-summary: 'Anthropic provider plan, status, and usage examples for Peekaboo'
+summary: 'Configure and use Anthropic Claude models in Peekaboo.'
 read_when:
-  - 'planning or extending Anthropic/Claude support'
-  - 'debugging Anthropic provider behavior or SDK wiring'
-  - 'needing CLI examples for Claude models'
+  - 'selecting Claude models or Anthropic credentials'
+  - 'debugging Fable limits, generation settings, or compatible endpoints'
 ---
 
-# Anthropic in Peekaboo
+# Anthropic Claude
 
-## Overview
-Peekaboo ships a native Swift integration for Anthropic Claude models so agents and CLI commands can use Claude alongside OpenAI or local providers. The goal is parity with our OpenAI architecture while avoiding external SDK dependencies.
+Peekaboo uses Tachikoma's native Anthropic Messages integration for API-key and OAuth-backed Claude models, including
+tool calls, vision, thinking blocks, and provider-specific event handling.
 
-## SDK options (evaluated)
-- Community Swift SDKs (AnthropicSwiftSDK, SwiftAnthropic): featureful but add external deps and may lag API updates.
-- Official TypeScript SDK: always current but would require a Node bridge and add overhead.
-- **Chosen**: custom Swift implementation to match Peekaboo’s protocol-based model layer and keep dependencies lean.
+## Current models
 
-## Implementation status (verification)
-- Core types (`AnthropicTypes`, request/response/content blocks, tool definitions, error types) and `AnthropicModel` conform to the shared `ModelInterface`.
-- Streaming is fully implemented with SSE parsing for all Claude events (`message_start`, `content_block_*`, `message_delta/stop`) and tool streaming.
-- Tool/function calling maps Peekaboo tool schemas to Anthropic `input_schema`, supports `tool_use`, and converts results back to Peekaboo tool envelopes.
-- Endpoint and headers: `POST https://api.anthropic.com/v1/messages` with `x-api-key` and `anthropic-version: 2023-06-01`.
+| Model | Context | Max output | Notes |
+| --- | ---: | ---: | --- |
+| `claude-fable-5` | 1M | 128K | Explicit opt-in for long-horizon agent work. |
+| `claude-opus-4-8` | 1M | 128K | Default Anthropic choice; compatible with zero-retention organizations. |
+| `claude-sonnet-4-6` | 1M | 64K | Balanced speed and capability. |
+| `claude-haiku-4-5` | 200K | 64K | Fast, lower-cost tasks. |
 
-## Usage examples
+Fable is not the automatic Anthropic default. Select it explicitly when your Anthropic organization allows the model:
+
 ```bash
-# Use Claude 3 Opus for complex tasks
-peekaboo agent "Analyze the UI structure of Safari" --model claude-3-opus-20240229
-
-# Balanced performance with Claude 3.5 Sonnet
-peekaboo agent "Click the Submit button" --model claude-3-5-sonnet-latest
-
-# Fast responses with Claude 3 Haiku
-peekaboo agent "What windows are currently open?" --model claude-3-haiku-20240307
-
-# Configure Anthropic as default
-export ANTHROPIC_API_KEY=sk-ant-...
-export PEEKABOO_AI_PROVIDERS="anthropic/claude-3-opus-latest,openai/gpt-4.1"
-peekaboo agent "Help me organize my desktop"
+peekaboo agent --model claude-fable-5 "inspect this app and summarize its workflow"
 ```
 
-## Next steps / maintenance
-- Keep parity with Anthropic model/version names as they ship.
-- Add regression tests for tool streaming and error mapping when new event types appear.
-- Re-run the verification checklist when upgrading the API version header.
+## Credentials
+
+```bash
+peekaboo config add anthropic sk-ant-...
+# or
+peekaboo config login anthropic
+```
+
+Environment credentials remain available for automation:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... \
+  peekaboo agent --model claude-opus-4-8 "describe the current window"
+```
+
+## Generation settings
+
+The app and CLI read the same `agent.temperature` and `agent.maxTokens` values from
+`~/.peekaboo/config.json`. Peekaboo clamps the token request to the selected model's output capability and strips
+sampling parameters from current adaptive-thinking models when the Anthropic API does not accept them.
+
+Fable and Opus 4.8 currently use the non-streaming generation path so signed thinking history and rollback behavior
+remain valid. Agent progress events still report start, assistant output, tool activity, completion, and errors.
+
+Anthropic-compatible custom providers inherit known Fable capability limits when their model ID is
+`claude-fable-5` (including provider-qualified forms). A custom model's explicit `maxTokens` value takes precedence
+for other IDs.
+
+See [configuration.md](../configuration.md) for the shared settings schema and [providers.md](../providers.md) for
+the full provider catalog.

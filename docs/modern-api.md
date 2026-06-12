@@ -59,7 +59,7 @@ let response2 = try await generate("Hello", using: .anthropic(.opus4))
 let response3 = try await generate("Hello", using: .openai(.custom("ft:gpt-5.5:my-org:abc123")))
 
 // OpenRouter models
-let response4 = try await generate("Hello", using: .openRouter("anthropic/claude-3.5-sonnet"))
+let response4 = try await generate("Hello", using: .openRouter("anthropic/claude-sonnet-4-6"))
 
 // Custom OpenAI-compatible endpoints
 let response5 = try await generate("Hello", using: .openaiCompatible(
@@ -517,7 +517,7 @@ extension PeekabooCLI {
                 return .openai(.gpt55)
             
             case let custom where custom.contains("/"):
-                // OpenRouter format like "anthropic/claude-3.5-sonnet"
+                // OpenRouter format like "anthropic/claude-sonnet-4-6"
                 return .openRouter(modelId: custom)
             default:
                 // Try as custom model ID
@@ -688,7 +688,7 @@ struct BasicGenerationExample {
         print("4. OpenRouter model:")
         let openRouter = try await generate(
             "Write a haiku about code",
-            using: .openRouter("anthropic/claude-3.5-sonnet")
+            using: .openRouter("anthropic/claude-sonnet-4-6")
         )
         print(openRouter)
     }
@@ -922,7 +922,7 @@ struct ToolCallingExample {
 ### Provider System Modernization
 - [ ] **Refactor all providers to use modern patterns**
   - [ ] OpenAI provider with latest API support (GPT-5, o4-mini, etc.)
-  - [ ] Anthropic provider with Claude 3.5 and tools
+  - [ ] Anthropic provider with Claude 4.x/Fable and tools
   - [ ] Add Google AI (Gemini) provider
   - [ ] Add Mistral AI provider  
   - [ ] Add Groq provider for fast inference

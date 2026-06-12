@@ -22,7 +22,7 @@ Use `peekaboo <command> --help` for inline flag descriptions; this page links to
 - [`run`](commands/run.md) – Execute `.peekaboo.json` scripts (`--output`, `--no-fail-fast`).
 - [`sleep`](commands/sleep.md) – Millisecond pauses between steps.
 - [`clean`](commands/clean.md) – Remove snapshot caches by ID, age, or all at once (`--dry-run` supported).
-- [`config`](commands/config.md) – Subcommands: `init`, `show`, `edit`, `validate`, `add`, `login`, `set-credential` (legacy), `add-provider`, `list-providers`, `test-provider`, `remove-provider`, `models`.
+- [`config`](commands/config.md) – Subcommands: `init`, `show`, `status`, `edit`, `validate`, `add`, `login`, `set-credential` (legacy), `add-provider`, `list-providers`, `test-provider`, `remove-provider`, `models-provider`.
 - [`daemon`](commands/daemon.md) – Start/stop/status for the headless daemon (live window tracking, in-memory snapshots).
 - [`permissions`](commands/permissions.md) – `status` (default), `grant`, and Event Synthesizing request helpers.
 - [`learn`](commands/learn.md) – Print the complete agent guide (system prompt, tool catalog, Commander signatures).
@@ -56,6 +56,6 @@ Use `peekaboo <command> --help` for inline flag descriptions; this page links to
 - [`agent`](commands/agent.md) – Natural-language automation with dry-run planning, resume, audio modes, and model overrides.
 - [`browser`](browser-mcp.md) – Dedicated CLI wrapper for the browser MCP tool: Chrome page status/connect/navigation/snapshot/click/fill/type/console/network/screenshot/trace.
 - `inspect-ui` – Dedicated CLI wrapper for the `inspect_ui` MCP tool, useful for accessibility-tree text/control inspection without screenshots.
-- [`mcp`](commands/mcp.md) – `serve`, `list`, `add`, `remove`, `enable`, `disable`, `info`, `test`, `call`, `inspect` (stub) for Model Context Protocol workflows.
+- [`mcp`](commands/mcp.md) – Run Peekaboo's MCP server; `serve` is the only subcommand and stdio is the implemented transport.
 
 Need structured payloads? Pass `--json` (or `--json-output`) where supported, or orchestrate multiple commands inside `.peekaboo.json` scripts executed via [`peekaboo run`](commands/run.md).

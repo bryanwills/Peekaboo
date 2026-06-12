@@ -86,7 +86,8 @@ Bridge hosts are intended to be long-lived and keep automation state **in memory
 
 ## CLI behavior
 
-- By default, automation-oriented CLI commands use the on-demand Peekaboo daemon and fall back to local execution if it cannot start.
+- By default, automation-oriented CLI commands use a healthy reusable daemon, then a capable Peekaboo.app GUI host,
+  then auto-start a daemon, with process-local execution as the final operation-dependent fallback.
 - Use `--no-remote` to force local execution.
 - Use `--bridge-socket <path>` or `PEEKABOO_BRIDGE_SOCKET` to override host discovery.
 - Use `PEEKABOO_DAEMON_SOCKET` only to change the auto-start daemon socket without treating it as an explicit Bridge override.

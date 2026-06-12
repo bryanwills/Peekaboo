@@ -314,7 +314,7 @@ struct TachikomaStreaming: AsyncParsableCommand {
         }
 
         // Auto-select best available for streaming
-        let streamingPreferred = ["claude-opus-4-20250514", "gpt-4.1", "llama3.3", "grok-4"]
+        let streamingPreferred = ["claude-sonnet-4-6", "gpt-5.5", "llama3.3", "grok-4.3"]
 
         for preferred in streamingPreferred {
             if availableModels.contains(preferred) {
@@ -327,15 +327,12 @@ struct TachikomaStreaming: AsyncParsableCommand {
 
     /// Select models for racing (up to 4)
     private func selectRacingModels(from availableModels: [String]) -> [String] {
-        let recommended = ProviderDetector.recommendedModels()
-        let availableProviderModels = recommended.values.filter { availableModels.contains($0) }
-
         // Prefer a good mix for racing
-        let racingOrder = ["gpt-4.1", "claude-opus-4-20250514", "llama3.3", "grok-4"]
+        let racingOrder = ["gpt-5.5", "claude-sonnet-4-6", "llama3.3", "grok-4.3"]
         var selected: [String] = []
 
         for model in racingOrder {
-            if availableProviderModels.contains(model), selected.count < 4 {
+            if availableModels.contains(model), selected.count < 4 {
                 selected.append(model)
             }
         }

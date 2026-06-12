@@ -29,6 +29,8 @@ read_when:
 - All agent executions run under `CommandRuntime.makeDefault()`, so environment variables, credentials, and logging levels match the top-level CLI state.
 - When `--dry-run` is set the agent still reasons about the task, but tool invocations are skipped; this is useful for understanding plans without touching the UI.
 - Audio flags wire into Tachikoma’s audio stack: `--audio` opens the microphone, `--audio-file` loads a WAV/CAF file, and `--realtime` enables low-latency streaming (OpenAI-only).
+- Generation uses `agent.temperature` and `agent.maxTokens` from the shared config written by the macOS Settings UI.
+  Token requests are capped to model capability; unsupported temperature controls are omitted automatically.
 
 ## Chat mode
 

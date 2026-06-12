@@ -187,7 +187,7 @@ struct TachikomaAgent: AsyncParsableCommand {
         }
 
         // Prefer models with good function calling support
-        let functionCallingPreferred = ["gpt-4.1", "claude-opus-4-20250514", "grok-4", "llama3.3"]
+        let functionCallingPreferred = ["gpt-5.5", "claude-opus-4-8", "grok-4.3", "llama3.3"]
 
         for preferred in functionCallingPreferred {
             if availableModels.contains(preferred) {

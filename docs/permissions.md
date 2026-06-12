@@ -46,8 +46,8 @@ For build and runtime version details, see [platform-support.md](platform-suppor
 ## Bridge and subprocess runners
 
 `peekaboo permissions status` prints a `Source:` line. If it says `Peekaboo Bridge`, capture and automation
-permissions are being checked through the explicit Bridge socket or selected reusable daemon. Grant Screen
-Recording and Accessibility to that host process,
+permissions are being checked through an explicit socket, the selected reusable daemon, or a healthy Peekaboo.app
+fallback. Grant Screen Recording and Accessibility to that host process,
 or bypass Bridge for local capture only when the caller is known to run in the active Aqua GUI session:
 
 ```bash

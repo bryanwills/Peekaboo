@@ -21,7 +21,7 @@ Swift packages, source builds, and pnpm helper scripts.
 
 ```bash
 # Clone
-git clone https://github.com/steipete/peekaboo.git
+git clone https://github.com/openclaw/Peekaboo.git
 cd peekaboo
 
 # Install JS deps
