@@ -384,6 +384,7 @@ else
     -quiet \
     MARKETING_VERSION="$VERSION" \
     CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+    CODE_SIGNING_ALLOWED=NO \
     build
 fi
 
