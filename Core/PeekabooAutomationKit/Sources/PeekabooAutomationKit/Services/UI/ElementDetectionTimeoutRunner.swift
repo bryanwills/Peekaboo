@@ -27,7 +27,6 @@ import PeekabooFoundation
                 let timeoutTask = Task {
                     do {
                         try await Task.sleep(nanoseconds: self.nanoseconds(for: seconds))
-                        workTask.cancel()
                         state.resume(with: .failure(CaptureError.detectionTimedOut(seconds)))
                     } catch {
                         // Cancellation means work finished or the parent task was cancelled.

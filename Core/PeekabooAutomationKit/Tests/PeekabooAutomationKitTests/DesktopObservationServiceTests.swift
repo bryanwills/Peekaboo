@@ -456,8 +456,9 @@ final class DesktopObservationServiceTests: XCTestCase {
         let window = Self.window(id: 100, title: "Timeout", bounds: CGRect(x: 100, y: 100, width: 500, height: 400))
         let service = DesktopObservationService(
             screenCapture: RecordingScreenCaptureService(result: Self.captureResult(app: app, window: window)),
-            automation: RecordingUIAutomationService(delay: 0.2),
+            automation: RecordingUIAutomationService(delay: 0.5, ignoresCancellation: true),
             applications: RecordingApplicationService(applications: [app], windows: [window]))
+        let startedAt = Date()
 
         do {
             _ = try await service.observe(DesktopObservationRequest(
@@ -468,6 +469,7 @@ final class DesktopObservationServiceTests: XCTestCase {
         } catch let CaptureError.detectionTimedOut(seconds) {
             XCTAssertEqual(seconds, 0.01, accuracy: 0.001)
         }
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 0.25)
     }
 
     private static func app() -> ServiceApplicationInfo {
@@ -679,13 +681,19 @@ EngineAwareScreenCaptureServiceProtocol {
 @MainActor
 private final class RecordingUIAutomationService: UIAutomationServiceProtocol {
     private let delay: TimeInterval
+    private let ignoresCancellation: Bool
     private let elements: DetectedElements
     var detectCalls = 0
     var lastSnapshotID: String?
     var lastWindowContext: WindowContext?
 
-    init(delay: TimeInterval = 0, elements: DetectedElements = DetectedElements()) {
+    init(
+        delay: TimeInterval = 0,
+        ignoresCancellation: Bool = false,
+        elements: DetectedElements = DetectedElements())
+    {
         self.delay = delay
+        self.ignoresCancellation = ignoresCancellation
         self.elements = elements
     }
 
@@ -695,7 +703,15 @@ private final class RecordingUIAutomationService: UIAutomationServiceProtocol {
         windowContext: WindowContext?) async throws -> ElementDetectionResult
     {
         if self.delay > 0 {
-            try await Task.sleep(nanoseconds: UInt64(self.delay * 1_000_000_000))
+            if self.ignoresCancellation {
+                await withCheckedContinuation { continuation in
+                    DispatchQueue.global().asyncAfter(deadline: .now() + self.delay) {
+                        continuation.resume()
+                    }
+                }
+            } else {
+                try await Task.sleep(nanoseconds: UInt64(self.delay * 1_000_000_000))
+            }
         }
         self.detectCalls += 1
         self.lastSnapshotID = snapshotId

@@ -34,7 +34,7 @@ This is the form you point Codex, Claude Code, and Cursor at. See [MCP.md](MCP.m
 
 ## Mac app
 
-The full menu-bar app (visualizer, permission flows, status item) is on the [Releases](https://github.com/openclaw/Peekaboo/releases/latest) page. The bundled CLI lives at `/Applications/Peekaboo.app/Contents/MacOS/peekaboo`; symlink it if you want it on your `PATH` without Homebrew.
+The full menu-bar app (visualizer, permission flows, status item) is on the [Releases](https://github.com/openclaw/Peekaboo/releases/latest) page. The app and CLI are separate installs; use Homebrew or npm above when you also need the `peekaboo` command on your `PATH`.
 
 ## Build from source
 

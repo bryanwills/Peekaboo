@@ -131,22 +131,8 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
             try await CrossProcessOperationGate.withExclusiveOperation(
                 named: CrossProcessOperationGate.desktopObservationName
             ) {
-                try await withThrowingTaskGroup(of: Void.self) { group in
-                    group.addTask {
-                        try await commandCopy.runImpl(startTime: startTime, logger: logger)
-                    }
-                    group.addTask {
-                        try await Task.sleep(nanoseconds: UInt64(overallTimeout * 1_000_000_000))
-                        throw CaptureError.detectionTimedOut(overallTimeout)
-                    }
-
-                    do {
-                        _ = try await group.next()
-                        group.cancelAll()
-                    } catch {
-                        group.cancelAll()
-                        throw error
-                    }
+                try await Self.withWallClockTimeout(seconds: overallTimeout) {
+                    try await commandCopy.runImpl(startTime: startTime, logger: logger)
                 }
             }
         } catch {

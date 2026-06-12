@@ -31,26 +31,18 @@ extension SeeCommand {
         }
     }
 
-    /// Timeout helper that is not MainActor-bound, so it can still fire if the main actor is blocked.
+    /// Drives the deadline independently while the MainActor operation is suspended.
+    /// Synchronous MainActor calls cannot be preempted.
     static func withWallClockTimeout<T: Sendable>(
         seconds: TimeInterval,
-        operation: @escaping @Sendable () async throws -> T
+        operation: @escaping @MainActor @Sendable () async throws -> T
     ) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask {
-                try await operation()
-            }
-
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw CaptureError.detectionTimedOut(seconds)
-            }
-
-            guard let result = try await group.next() else {
-                throw CaptureError.detectionTimedOut(seconds)
-            }
-            group.cancelAll()
-            return result
+        try await withMainActorCommandTimeout(
+            seconds: seconds,
+            operationName: "see",
+            timeoutError: { CaptureError.detectionTimedOut(seconds) }
+        ) {
+            try await operation()
         }
     }
 

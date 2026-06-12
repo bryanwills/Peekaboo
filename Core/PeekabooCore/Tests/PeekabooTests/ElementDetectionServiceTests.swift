@@ -282,6 +282,21 @@ struct ElementDetectionServiceTests {
 @Suite(.tags(.ui, .safe))
 struct ElementDetectionTimeoutRunnerTests {
     @Test
+    func `Detection timeout wins over cooperative cancellation`() async {
+        do {
+            _ = try await ElementDetectionTimeoutRunner.run(seconds: 0.02) {
+                try await Task.sleep(nanoseconds: 500_000_000)
+                return [DetectedElement]()
+            }
+            Issue.record("Expected detection timeout")
+        } catch let CaptureError.detectionTimedOut(duration) {
+            #expect(duration == 0.02)
+        } catch {
+            Issue.record("Expected detection timeout, got \(error)")
+        }
+    }
+
+    @Test
     func `Detection timeout wins over noncooperative work`() async throws {
         let startedAt = Date()
 

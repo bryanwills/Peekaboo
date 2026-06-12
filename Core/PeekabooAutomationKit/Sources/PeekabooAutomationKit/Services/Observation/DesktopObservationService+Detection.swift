@@ -106,7 +106,7 @@ extension DesktopObservationService {
         timeout: TimeInterval?) async throws -> ElementDetectionResult
     {
         let automation = self.automation
-        let operation: @Sendable () async throws -> ElementDetectionResult = {
+        let operation: @MainActor @Sendable () async throws -> ElementDetectionResult = {
             try await automation.detectElements(
                 in: imageData,
                 snapshotId: snapshotID,
@@ -122,33 +122,9 @@ extension DesktopObservationService {
 
     func withDetectionTimeout<T: Sendable>(
         seconds: TimeInterval,
-        operation: @escaping @Sendable () async throws -> T) async throws -> T
+        operation: @escaping @MainActor @Sendable () async throws -> T) async throws -> T
     {
-        guard seconds > 0 else {
-            throw CaptureError.detectionTimedOut(seconds)
-        }
-
-        return try await withThrowingTaskGroup(of: T.self) { group in
-            // Race AX detection against a wall-clock timeout so hung accessibility calls cannot stall observation.
-            group.addTask {
-                try await operation()
-            }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw CaptureError.detectionTimedOut(seconds)
-            }
-
-            do {
-                guard let result = try await group.next() else {
-                    throw CaptureError.detectionTimedOut(seconds)
-                }
-                group.cancelAll()
-                return result
-            } catch {
-                group.cancelAll()
-                throw error
-            }
-        }
+        try await ElementDetectionTimeoutRunner.run(seconds: seconds, operation: operation)
     }
 
     static func windowContext(from capture: CaptureResult) -> WindowContext? {

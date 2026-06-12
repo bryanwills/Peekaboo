@@ -126,7 +126,11 @@ func withCommandTimeout<T: Sendable>(
     }
 
     let timeoutTask = Task.detached {
-        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        do {
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        } catch {
+            return
+        }
         race.resume(with: Result<T, any Error>.failure(PeekabooError.timeout(
             operation: operationName,
             duration: seconds
@@ -139,6 +143,7 @@ func withCommandTimeout<T: Sendable>(
             race.setContinuation(continuation)
         }
     } onCancel: {
+        race.resume(with: Result<T, any Error>.failure(CancellationError()))
         workTask.cancel()
         timeoutTask.cancel()
     }
@@ -148,6 +153,7 @@ func withCommandTimeout<T: Sendable>(
 func withMainActorCommandTimeout<T: Sendable>(
     seconds: TimeInterval,
     operationName: String,
+    timeoutError: (@Sendable () -> any Error)? = nil,
     operation: @escaping @MainActor () async throws -> T
 ) async throws -> T {
     guard seconds > 0 else {
@@ -165,11 +171,13 @@ func withMainActorCommandTimeout<T: Sendable>(
     }
 
     let timeoutTask = Task.detached {
-        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-        race.resume(with: Result<T, any Error>.failure(PeekabooError.timeout(
-            operation: operationName,
-            duration: seconds
-        )))
+        do {
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        } catch {
+            return
+        }
+        let error = timeoutError?() ?? PeekabooError.timeout(operation: operationName, duration: seconds)
+        race.resume(with: Result<T, any Error>.failure(error))
         workTask.cancel()
     }
 
@@ -178,6 +186,7 @@ func withMainActorCommandTimeout<T: Sendable>(
             race.setContinuation(continuation)
         }
     } onCancel: {
+        race.resume(with: Result<T, any Error>.failure(CancellationError()))
         workTask.cancel()
         timeoutTask.cancel()
     }
