@@ -197,6 +197,55 @@ struct ScreenCapturePlannerMatchDisplayTests {
         #expect(size.height == 360)
     }
 
+    // MARK: - System screencapture display selection
+
+    @Test
+    func `system screencapture maps the first active display to one`() {
+        let displayNumber = ScreenCapturePlanner.systemScreencaptureDisplayNumber(
+            displayID: 42,
+            activeDisplayIDs: [42, 99])
+
+        #expect(displayNumber == 1)
+    }
+
+    @Test
+    func `system screencapture maps a secondary active display to its one-based position`() {
+        let displayNumber = ScreenCapturePlanner.systemScreencaptureDisplayNumber(
+            displayID: 99,
+            activeDisplayIDs: [42, 99, 123])
+
+        #expect(displayNumber == 2)
+    }
+
+    @Test
+    func `system screencapture rejects a display missing from the active list`() {
+        let displayNumber = ScreenCapturePlanner.systemScreencaptureDisplayNumber(
+            displayID: 7,
+            activeDisplayIDs: [42, 99])
+
+        #expect(displayNumber == nil)
+    }
+
+    @Test
+    func `system screencapture omits subordinate mirrors when numbering extended displays`() {
+        let displayNumber = ScreenCapturePlanner.systemScreencaptureDisplayNumber(
+            displayID: 99,
+            activeDisplayIDs: [42, 43, 99],
+            mirroredDisplayOwners: [43: 42])
+
+        #expect(displayNumber == 2)
+    }
+
+    @Test
+    func `system screencapture maps a subordinate mirror to its owner`() {
+        let displayNumber = ScreenCapturePlanner.systemScreencaptureDisplayNumber(
+            displayID: 43,
+            activeDisplayIDs: [42, 43, 99],
+            mirroredDisplayOwners: [43: 42])
+
+        #expect(displayNumber == 1)
+    }
+
     // MARK: - Unmapped fallback paths (the core #143 fix)
 
     @Test

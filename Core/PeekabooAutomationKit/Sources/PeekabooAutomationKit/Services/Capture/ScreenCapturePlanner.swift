@@ -20,6 +20,17 @@ import Foundation
         globalRect.offsetBy(dx: -displayFrame.origin.x, dy: -displayFrame.origin.y)
     }
 
+    /// Resolve the one-based display number expected by `/usr/sbin/screencapture -D`.
+    public static func systemScreencaptureDisplayNumber(
+        displayID: CGDirectDisplayID,
+        activeDisplayIDs: [CGDirectDisplayID],
+        mirroredDisplayOwners: [CGDirectDisplayID: CGDirectDisplayID] = [:]) -> Int?
+    {
+        let captureDisplayID = mirroredDisplayOwners[displayID] ?? displayID
+        let captureDisplayIDs = activeDisplayIDs.filter { mirroredDisplayOwners[$0] == nil }
+        return captureDisplayIDs.firstIndex(of: captureDisplayID).map { $0 + 1 }
+    }
+
     public static func capturePixelSize(
         for frame: CGRect,
         fallbackFrame: CGRect? = nil,
