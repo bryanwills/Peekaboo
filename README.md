@@ -2,14 +2,14 @@
 
 ![Peekaboo Banner](assets/peekaboo.png)
 
-[![npm package](https://img.shields.io/badge/npm_package-3.4.2-brightgreen?logo=npm&logoColor=white&style=flat-square)](https://www.npmjs.com/package/@steipete/peekaboo)
+[![npm package](https://img.shields.io/badge/npm_package-3.5.0-brightgreen?logo=npm&logoColor=white&style=flat-square)](https://www.npmjs.com/package/@steipete/peekaboo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-ffd60a?style=flat-square)](https://opensource.org/licenses/MIT)
 [![macOS 15.0+ (Sequoia)](https://img.shields.io/badge/macOS-15.0%2B_(Sequoia)-0078d7?logo=apple&logoColor=white&style=flat-square)](https://www.apple.com/macos/)
 [![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white&style=flat-square)](https://swift.org/)
 [![node >=22](https://img.shields.io/badge/node-%3E%3D22.0.0-2ea44f?logo=node.js&logoColor=white&style=flat-square)](https://nodejs.org/)
-[![Download macOS](https://img.shields.io/badge/Download-macOS-000000?logo=apple&logoColor=white&style=flat-square)](https://github.com/steipete/peekaboo/releases/latest)
+[![Download macOS](https://img.shields.io/badge/Download-macOS-000000?logo=apple&logoColor=white&style=flat-square)](https://github.com/openclaw/Peekaboo/releases/latest)
 [![Homebrew](https://img.shields.io/badge/Homebrew-steipete%2Ftap-b28f62?logo=homebrew&logoColor=white&style=flat-square)](https://github.com/steipete/homebrew-tap)
-[![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-0088cc?style=flat-square)](https://deepwiki.com/steipete/peekaboo)
+[![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-0088cc?style=flat-square)](https://deepwiki.com/openclaw/Peekaboo)
 
 Peekaboo brings high-fidelity screen capture, AI analysis, and complete GUI automation to macOS. Version 3 adds native agent flows and multi-screen automation across the CLI and MCP server.
 
@@ -20,7 +20,9 @@ Peekaboo brings high-fidelity screen capture, AI analysis, and complete GUI auto
 - Direct accessibility tools for settable values and named actions (`set-value`, `perform-action`).
 - Menu and menubar discovery with structured JSON; no clicks required.
 - Multi-provider AI through Tachikoma, including hosted, local, and OpenAI-/Anthropic-compatible providers.
+- Claude Fable 5 support with 1M context and a 128K output ceiling; saved temperature/max-token settings are shared by the app and CLI and clamped to each model's capabilities.
 - MCP server for Codex, Claude Code, and Cursor plus a native CLI; the same tools in both.
+- Warm daemon and Peekaboo.app Bridge hosts for permission-bound automation, with distinct lease-owned sockets and local fallback.
 - Configurable, testable workflows with reproducible sessions and strict typing.
 - Requires macOS Screen Recording + Accessibility permissions (see [docs/permissions.md](docs/permissions.md)).
 
@@ -143,6 +145,8 @@ Peekaboo's provider list changes with Tachikoma and the tested model catalog. Se
 Google Gemini, MiniMax, Ollama, LM Studio, and compatible custom endpoints.
 
 Set providers via `PEEKABOO_AI_PROVIDERS` or `peekaboo config add`.
+Agent generation settings live under `agent.temperature` and `agent.maxTokens` in `~/.peekaboo/config.json`; the
+macOS Settings UI reads and writes the same values.
 
 ## Learn more
 - Command reference: [docs/commands/](docs/commands/)

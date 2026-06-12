@@ -1,6 +1,6 @@
 {
   "name": "@steipete/peekaboo",
-  "version": "3.4.2",
+  "version": "3.5.0",
   "description": "macOS automation MCP server with screen capture, UI interaction, and AI analysis",
   "private": false,
   "type": "module",
@@ -63,14 +63,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/steipete/peekaboo.git"
+    "url": "git+https://github.com/openclaw/Peekaboo.git"
   },
   "author": "Peter Steinberger <steipete@gmail.com>",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/steipete/peekaboo/issues"
+    "url": "https://github.com/openclaw/Peekaboo/issues"
   },
-  "homepage": "https://github.com/steipete/peekaboo#readme",
+  "homepage": "https://github.com/openclaw/Peekaboo#readme",
   "keywords": [
     "mcp",
     "model-context-protocol",
