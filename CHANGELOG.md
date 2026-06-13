@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [3.5.2] - 2026-06-13
 
 ### Changed
 - `peekaboo type` and the MCP `type` tool now default to zero-delay linear typing; supplying `--wpm`/`wpm` still opts into human cadence.

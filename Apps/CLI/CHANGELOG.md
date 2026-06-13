@@ -5,7 +5,13 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [3.5.2] - 2026-06-13
+
+### Changed
+- `peekaboo type` and the MCP `type` tool now default to zero-delay linear typing; supplying `--wpm`/`wpm` still opts into human cadence.
+
+### Fixed
+- Synchronized Tachikoma's OpenAI `gpt-5-chat-latest` catalog metadata so configured models apply the correct GPT-5 parameter filtering.
 
 ## [3.5.1] - 2026-06-12
 
