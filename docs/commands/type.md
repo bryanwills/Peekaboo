@@ -16,7 +16,7 @@ read_when:
 | `--snapshot <id>` | Target a specific snapshot; otherwise the most recent snapshot ID is used if available. |
 | `--delay <ms>` | Milliseconds between synthetic keystrokes (default `2`). |
 | `--wpm <80-220>` | Enable human-typing cadence at the chosen words per minute. |
-| `--profile <human|linear>` | Switch between human (default, honors `--wpm`) and linear (honors `--delay`). |
+| `--profile <linear|human>` | Switch between linear (default, honors `--delay`) and human (honors `--wpm`). |
 | `--clear` | Issue Cmd+A, Delete before typing any new text. |
 | `--return`, `--tab <count>`, `--escape`, `--delete` | Append those keypresses after (or without) the text payload. |
 | Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>` — send background input to a specific app/window when possible. (`--window-title`/`--window-index` require `--app` or `--pid`; `--window-id` does not.) |
@@ -32,7 +32,7 @@ read_when:
 - You can omit the text entirely and rely on the key flags (e.g., just `--tab 2 --return`). Validation only requires *some* action to be specified.
 - Escape handling splits literal text and key presses: `"Hello\nWorld"` becomes `text("Hello"), key(.return), text("World")`, so newlines don’t require separate flags.
 - Without a resolvable snapshot or target process, the command falls back to foreground/global keyboard input and logs a warning that typing will be “blind” because it cannot confirm focus.
-- Default profile is `human`, which uses `--wpm` (or 140 WPM if omitted). Switch to `--profile linear` when you need deterministic millisecond spacing via `--delay`.
+- Default profile is `linear`, using a 2ms delay for fast deterministic input. Passing `--wpm` opts into human cadence; `--profile human` uses 140 WPM when `--wpm` is omitted.
 - Background delivery uses process-targeted CoreGraphics keyboard events and requires Event Synthesizing access. Apps that only accept typing in a focused key window may still need `--foreground`.
 - JSON output reports `totalCharacters`, `keyPresses`, delivery mode, optional target PID, and elapsed time; this matches what the agent logs when executing scripted steps.
 
@@ -50,7 +50,7 @@ peekaboo type alice@example.com --clear --tab 2 --return
 # Send only control keys during a form walk
 peekaboo type --tab 1 --tab 1 --return
 
-# Human typing at 140 WPM
+# Opt into human typing at 140 WPM
 peekaboo type "status report ready" --wpm 140
 
 # Linear profile with fixed 10ms delay

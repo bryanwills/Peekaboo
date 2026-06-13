@@ -28,7 +28,7 @@ extension TypeCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "profile",
-                    help: "Typing profile: human (default) or linear",
+                    help: "Typing profile: linear (default) or human",
                     long: "profile"
                 ),
                 .commandOption(

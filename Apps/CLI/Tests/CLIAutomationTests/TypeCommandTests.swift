@@ -96,9 +96,23 @@ struct TypeCommandTests {
     }
 
     @Test
-    func `Type execution defaults to human cadence`() async throws {
+    func `Type execution defaults to linear cadence`() async throws {
         let context = await self.makeContext()
         let result = try await self.runType(arguments: ["Hello"], context: context)
+
+        #expect(result.exitStatus == 0)
+        let call = try #require(await self.automationState(context) { $0.typeActionsCalls.first })
+        if case let .fixed(milliseconds) = call.cadence {
+            #expect(milliseconds == 2)
+        } else {
+            Issue.record("Expected linear cadence")
+        }
+    }
+
+    @Test
+    func `Type execution with WPM opts into human cadence`() async throws {
+        let context = await self.makeContext()
+        let result = try await self.runType(arguments: ["Hello", "--wpm", "140"], context: context)
 
         #expect(result.exitStatus == 0)
         let call = try #require(await self.automationState(context) { $0.typeActionsCalls.first })

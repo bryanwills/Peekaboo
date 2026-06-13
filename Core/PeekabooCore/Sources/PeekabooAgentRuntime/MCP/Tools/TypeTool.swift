@@ -35,10 +35,10 @@ public struct TypeTool: MCPTool {
                     description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
                         "Uses latest snapshot if not specified."),
                 "delay": SchemaBuilder.number(
-                    description: "Optional. Delay between keystrokes in milliseconds (linear profile). Default: 5.",
-                    default: 5),
+                    description: "Optional. Delay between keystrokes in milliseconds (linear profile). Default: 2.",
+                    default: 2),
                 "profile": SchemaBuilder.string(
-                    description: "Optional. Typing profile: human (default) or linear."),
+                    description: "Optional. Typing profile: linear (default) or human."),
                 "wpm": SchemaBuilder.number(
                     description: "Optional. Human typing speed (80-220 WPM). Overrides delay when set."),
                 "clear": SchemaBuilder.boolean(
@@ -96,7 +96,8 @@ public struct TypeTool: MCPTool {
     }
 
     private func parseRequest(arguments: ToolArguments) throws -> TypeRequest {
-        let profile = try self.parseProfile(arguments.getString("profile"))
+        let wordsPerMinute = arguments.getNumber("wpm").map { Int($0) }
+        let profile = try self.parseProfile(arguments.getString("profile"), wordsPerMinute: wordsPerMinute)
         let target = MCPInteractionTarget(
             app: arguments.getString("app"),
             pid: arguments.getInt("pid"),
@@ -108,9 +109,9 @@ public struct TypeTool: MCPTool {
             text: arguments.getString("text"),
             elementId: arguments.getString("on"),
             snapshotId: arguments.getString("snapshot"),
-            delay: Int(arguments.getNumber("delay") ?? 5),
+            delay: Int(arguments.getNumber("delay") ?? 2),
             profile: profile,
-            wordsPerMinute: arguments.getNumber("wpm").map { Int($0) },
+            wordsPerMinute: wordsPerMinute,
             clearField: arguments.getBool("clear") ?? false,
             pressReturn: arguments.getBool("press_return") ?? false,
             tabCount: arguments.getNumber("tab").map { Int($0) },
@@ -134,8 +135,8 @@ public struct TypeTool: MCPTool {
         return request
     }
 
-    private func parseProfile(_ raw: String?) throws -> TypingProfile {
-        guard let raw else { return .human }
+    private func parseProfile(_ raw: String?, wordsPerMinute: Int?) throws -> TypingProfile {
+        guard let raw else { return wordsPerMinute == nil ? .linear : .human }
         guard let profile = TypingProfile(rawValue: raw.lowercased()) else {
             throw TypeToolValidationError("profile must be 'human' or 'linear'")
         }

@@ -1574,12 +1574,38 @@ struct MCPToolErrorHandlingTests {
     }
 
     @Test
-    func `Type tool defaults to human cadence`() async throws {
+    func `Type tool defaults to linear cadence`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
 
         try await MCPToolTestHelpers.withContext(automation: automation) {
             let tool = TypeTool()
             let response = try await tool.execute(arguments: ToolArguments(raw: ["text": "Hello"]))
+            #expect(response.isError == false)
+        }
+
+        let capturedCadence = await MainActor.run { automation.lastCadence }
+        guard let cadence = capturedCadence else {
+            Issue.record("Expected automation service to capture cadence")
+            return
+        }
+
+        if case let .fixed(milliseconds) = cadence {
+            #expect(milliseconds == 2)
+        } else {
+            Issue.record("Expected linear cadence, got \(cadence)")
+        }
+    }
+
+    @Test
+    func `Type tool with WPM opts into human cadence`() async throws {
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+
+        try await MCPToolTestHelpers.withContext(automation: automation) {
+            let tool = TypeTool()
+            let response = try await tool.execute(arguments: ToolArguments(raw: [
+                "text": "Hello",
+                "wpm": 140,
+            ]))
             #expect(response.isError == false)
         }
 

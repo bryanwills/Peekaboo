@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Changed
+- `peekaboo type` and the MCP `type` tool now default to fast linear typing at 2ms per character; supplying `--wpm`/`wpm` still opts into human cadence.
 - Hardened the maintainer release workflow around 1Password credential consistency, non-login shells, and neutral-directory npm verification.
 
 ## [3.5.1] - 2026-06-12

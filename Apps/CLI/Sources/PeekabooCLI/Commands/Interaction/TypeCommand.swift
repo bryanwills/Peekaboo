@@ -22,8 +22,8 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfi
     @Option(name: .customLong("wpm"), help: "Approximate human typing speed (words per minute)")
     var wordsPerMinute: Int?
 
-    @Option(name: .customLong("profile"), help: "Typing profile: human (default) or linear")
-    var profileOption: String? = TypingProfile.human.rawValue
+    @Option(name: .customLong("profile"), help: "Typing profile: linear (default) or human")
+    var profileOption: String?
 
     @Flag(names: [.customLong("return"), .long], help: "Press return/enter after typing")
     var pressReturn = false
@@ -86,7 +86,7 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfi
            let selection = TypingProfile(rawValue: profileOption.lowercased()) {
             return selection
         }
-        return .human
+        return self.wordsPerMinute == nil ? .linear : .human
     }
 
     private var resolvedWordsPerMinute: Int {
@@ -392,9 +392,9 @@ extension TypeCommand: ParsableCommand {
                       Use --foreground only when the target requires focused keyboard input.
                       Without a target, keys are injected into the current focused element.
 
-                    HUMAN TYPING:
-                    Use --profile human (default) for realistic cadence; override speed with --wpm (80-220).
-                    Use --profile linear for deterministic timing via --delay.
+                    TYPING CADENCE:
+                    Linear typing is the default and uses --delay (2ms by default).
+                    Use --profile human or --wpm (80-220) for realistic cadence.
                 """,
 
                 showHelpOnEmptyInvocation: true

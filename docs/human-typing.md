@@ -35,7 +35,7 @@ Implementation: derive base delay from the formula, then apply ±20 % jitter p
 ## Implementation Plan
 
 ### CLI & Commander layer
-- Surface `--profile human|linear` so WPM is only relevant when profile == human, with human as the default profile. Linear continues to honor `--delay` for deterministic pacing.
+- Surface `--profile linear|human`, with fast deterministic linear input as the default. Supplying `--wpm` opts into human cadence; linear continues to honor `--delay`.
 - Add `@Option(name: .customLong("wpm"), help: ...) var wpm: Int?` to `TypeCommand`, treating it as mutually exclusive with `--delay` when `--profile linear` is selected.
 - Validate acceptable range (80–220) and warn when users mix both knobs (“WPM takes precedence over --delay”).
 - Emit the chosen cadence inside `TypeCommandResult` so downstream log parsing shows whether human mode was active.
