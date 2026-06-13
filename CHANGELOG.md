@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- Hardened the maintainer release workflow around 1Password credential consistency, non-login shells, and neutral-directory npm verification.
+
 ## [3.5.1] - 2026-06-12
 
 ### Fixed

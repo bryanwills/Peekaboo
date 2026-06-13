@@ -99,10 +99,11 @@ If both `history` and non-S3 `submit` fail, suspect wrong access level or stale 
 
 ```bash
 op run --env-file "$ENVFILE" -- \
-  bash -lc 'printf "y\n" | ./scripts/release-binaries.sh --create-github-release --publish-npm'
+  bash -c 'printf "y\n" | ./scripts/release-binaries.sh --create-github-release --publish-npm'
 ```
 
 The script builds universal CLI, npm package, signed/notarized app zip, appcast, checksums, draft GitHub release, and npm publish.
+Use a non-login shell: profile exports can replace current 1Password ASC IDs with stale values while leaving the current `.p8`, producing a misleading `401`.
 
 Notarized releases must sign with `Developer ID Application: Peter Steinberger (Y5PE65HELJ)`, not `Apple Development`. If your shell has `SIGN_IDENTITY` exported for CLI builds, override it for the release command.
 
@@ -114,6 +115,7 @@ Required before closeout:
 
 ```bash
 npm view @steipete/peekaboo@<version> version dist-tags dist.tarball dist.integrity time --json
+(cd /tmp && npm exec --yes --package=@steipete/peekaboo@<version> -- peekaboo --version)
 gh release view v<version> --repo openclaw/Peekaboo --json tagName,isDraft,isPrerelease,url,assets,body
 xmllint --noout appcast.xml
 git status --short --branch
@@ -122,6 +124,7 @@ git status --short --branch
 Confirm:
 
 - npm version exists and `latest` points to it.
+- npm-downloaded CLI reports the release version from a neutral cwd.
 - GitHub release/tag/assets exist; release body is from changelog.
 - app zip asset exists and appcast points at `v<version>`.
 - `appcast.xml` changes are committed and pushed.
