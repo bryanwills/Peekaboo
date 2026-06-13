@@ -12,7 +12,7 @@ struct TypeCommandTests {
 
         #expect(command.text == "Hello World")
         #expect(command.jsonOutput == true)
-        #expect(command.delay == 2) // default delay
+        #expect(command.delay == 0) // default delay
         #expect(command.pressReturn == false)
         #expect(command.clear == false)
     }
@@ -42,7 +42,7 @@ struct TypeCommandTests {
 
         #expect(command.text == "New Text")
         #expect(command.clear == true)
-        #expect(command.delay == 2) // default delay
+        #expect(command.delay == 0) // default delay
     }
 
     @Test
@@ -57,7 +57,7 @@ struct TypeCommandTests {
     func `Type command with human typing speed`() throws {
         var command = try TypeCommand.parse(["Message", "--wpm", "140", "--json"])
         #expect(command.wordsPerMinute == 140)
-        #expect(command.delay == 2)
+        #expect(command.delay == 0)
         // Validation should allow the selected range
         try command.validate()
     }
@@ -103,7 +103,7 @@ struct TypeCommandTests {
         #expect(result.exitStatus == 0)
         let call = try #require(await self.automationState(context) { $0.typeActionsCalls.first })
         if case let .fixed(milliseconds) = call.cadence {
-            #expect(milliseconds == 2)
+            #expect(milliseconds == 0)
         } else {
             Issue.record("Expected linear cadence")
         }

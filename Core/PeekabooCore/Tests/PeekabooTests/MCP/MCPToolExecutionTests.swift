@@ -1590,7 +1590,7 @@ struct MCPToolErrorHandlingTests {
         }
 
         if case let .fixed(milliseconds) = cadence {
-            #expect(milliseconds == 2)
+            #expect(milliseconds == 0)
         } else {
             Issue.record("Expected linear cadence, got \(cadence)")
         }

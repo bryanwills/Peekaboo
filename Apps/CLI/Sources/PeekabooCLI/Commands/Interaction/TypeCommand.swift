@@ -17,7 +17,7 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfi
     var snapshot: String?
 
     @Option(help: "Delay between keystrokes in milliseconds")
-    var delay: Int = 2
+    var delay: Int = 0
 
     @Option(name: .customLong("wpm"), help: "Approximate human typing speed (words per minute)")
     var wordsPerMinute: Int?
@@ -393,7 +393,7 @@ extension TypeCommand: ParsableCommand {
                       Without a target, keys are injected into the current focused element.
 
                     TYPING CADENCE:
-                    Linear typing is the default and uses --delay (2ms by default).
+                    Linear typing is the default and uses --delay (0ms by default).
                     Use --profile human or --wpm (80-220) for realistic cadence.
                 """,
 

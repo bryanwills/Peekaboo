@@ -35,8 +35,8 @@ public struct TypeTool: MCPTool {
                     description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
                         "Uses latest snapshot if not specified."),
                 "delay": SchemaBuilder.number(
-                    description: "Optional. Delay between keystrokes in milliseconds (linear profile). Default: 2.",
-                    default: 2),
+                    description: "Optional. Delay between keystrokes in milliseconds (linear profile). Default: 0.",
+                    default: 0),
                 "profile": SchemaBuilder.string(
                     description: "Optional. Typing profile: linear (default) or human."),
                 "wpm": SchemaBuilder.number(
@@ -109,7 +109,7 @@ public struct TypeTool: MCPTool {
             text: arguments.getString("text"),
             elementId: arguments.getString("on"),
             snapshotId: arguments.getString("snapshot"),
-            delay: Int(arguments.getNumber("delay") ?? 2),
+            delay: Int(arguments.getNumber("delay") ?? 0),
             profile: profile,
             wordsPerMinute: wordsPerMinute,
             clearField: arguments.getBool("clear") ?? false,
