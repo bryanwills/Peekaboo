@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [3.5.1] - 2026-06-12
 
 ### Fixed
 - `peekaboo see` now returns at its configured wall-clock deadline when suspended capture or detection work ignores task cancellation, while preserving explicit command cancellation.
