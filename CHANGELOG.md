@@ -1,9 +1,6 @@
 # Changelog
 
-## Unreleased
-
-### Changed
-- Refreshed the project banner and social preview with a more restrained ghost design.
+## [3.5.3] - 2026-06-13
 
 ### Fixed
 - `peekaboo app list` now excludes accessory/background processes by default, while `--include-background` restores them as documented.
