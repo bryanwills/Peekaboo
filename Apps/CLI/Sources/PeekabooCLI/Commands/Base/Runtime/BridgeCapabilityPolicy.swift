@@ -12,15 +12,46 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
-        if options.requiresElementActions && !self.supportsElementActions(for: handshake) {
+        if options.requiresElementActions, !self.supportsElementActions(for: handshake) {
             return false
         }
 
-        if options.requiresInspectAccessibilityTree && !self.supportsInspectAccessibilityTree(for: handshake) {
+        if options.requiresInspectAccessibilityTree, !self.supportsInspectAccessibilityTree(for: handshake) {
             return false
         }
 
-        if options.requiresBrowserMCP && !self.supportsBrowserMCP(for: handshake) {
+        if options.requiresBrowserMCP, !self.supportsBrowserMCP(for: handshake) {
+            return false
+        }
+
+        if options.requiresApplicationLaunchOptions, !self.supportsApplicationLaunchOptions(for: handshake) {
+            return false
+        }
+
+        if options.requiresApplicationRelaunch, !self.supportsApplicationRelaunch(for: handshake) {
+            return false
+        }
+
+        if options.requiresSurvivingApplicationHost, handshake.hostKind != .onDemand {
+            return false
+        }
+
+        if options.requiresHostApplicationInventory, !self.supportsHostApplicationInventory(for: handshake) {
+            return false
+        }
+
+        if options.requiresExactWindowTargetedClicks,
+           !self.supportsExactWindowTargetedClicks(for: handshake) {
+            return false
+        }
+
+        if options.requiresPostEventClickPermission,
+           handshake.permissions?.postEvent != true {
+            return false
+        }
+
+        if options.requiresImplicitSnapshotInvalidation || options.usesPerToolSnapshotInvalidation,
+           !self.supportsImplicitSnapshotInvalidation(for: handshake) {
             return false
         }
 
@@ -37,6 +68,45 @@ enum BridgeCapabilityPolicy {
 
     static func supportsTargetedClicks(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         self.targetedClickAvailability(for: handshake).isEnabled
+    }
+
+    static func supportsApplicationLaunchOptions(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 9) &&
+            handshake.supportedOperations.contains(.launchApplicationWithOptions)
+    }
+
+    static func supportsApplicationRelaunch(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        guard handshake.hostKind == .onDemand,
+              handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 9),
+              handshake.supportedOperations.contains(.relaunchApplicationWithOptions)
+        else {
+            return false
+        }
+
+        let enabledOperations = handshake.enabledOperations ?? handshake.supportedOperations
+        return enabledOperations.contains(.relaunchApplicationWithOptions)
+    }
+
+    static func supportsHostApplicationInventory(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        guard handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 0),
+              handshake.supportedOperations.contains(.listApplications)
+        else {
+            return false
+        }
+
+        let enabledOperations = handshake.enabledOperations ?? handshake.supportedOperations
+        return enabledOperations.contains(.listApplications)
+    }
+
+    static func supportsImplicitSnapshotInvalidation(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        guard handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 9),
+              handshake.supportedOperations.contains(.invalidateImplicitLatestSnapshot)
+        else {
+            return false
+        }
+
+        let enabledOperations = handshake.enabledOperations ?? handshake.supportedOperations
+        return enabledOperations.contains(.invalidateImplicitLatestSnapshot)
     }
 
     static func supportsElementActions(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
@@ -82,7 +152,7 @@ enum BridgeCapabilityPolicy {
             return (true, nil, [])
         }
 
-        let missingPermissions = self.missingPermissions(for: .targetedHotkey, handshake: handshake)
+        let missingPermissions = missingPermissions(for: .targetedHotkey, handshake: handshake)
         guard !missingPermissions.isEmpty else {
             return (
                 false,
@@ -110,10 +180,25 @@ enum BridgeCapabilityPolicy {
 
         let enabledOperations = handshake.enabledOperations ?? handshake.supportedOperations
         if enabledOperations.contains(.targetedClick) {
-            return (true, nil, [])
+            let missingVariantPermissions: Set<PeekabooBridgePermissionKind> =
+                handshake.permissions?.postEvent == false ? [.postEvent] : []
+            return (true, nil, missingVariantPermissions)
         }
 
-        let missingPermissions = self.missingPermissions(for: .targetedClick, handshake: handshake)
+        let requestAwarePermissions =
+            handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 9) &&
+            handshake.permissionTags[PeekabooBridgeOperation.targetedClick.rawValue]?.isEmpty == true
+        if requestAwarePermissions,
+           handshake.permissions?.accessibility == false,
+           handshake.permissions?.postEvent == false {
+            return (
+                false,
+                "Remote bridge host background clicks require Accessibility or Event Synthesizing permission",
+                []
+            )
+        }
+
+        let missingPermissions = missingPermissions(for: .targetedClick, handshake: handshake)
         guard !missingPermissions.isEmpty else {
             return (
                 false,
@@ -130,6 +215,16 @@ enum BridgeCapabilityPolicy {
         )
     }
 
+    static func supportsExactWindowTargetedClicks(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        guard handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 9),
+              handshake.supportedOperations.contains(.exactWindowTargetedClick)
+        else {
+            return false
+        }
+        return (handshake.enabledOperations ?? handshake.supportedOperations)
+            .contains(.exactWindowTargetedClick)
+    }
+
     static func targetedTypeAvailability(for handshake: PeekabooBridgeHandshakeResponse)
     -> (isEnabled: Bool, unavailableReason: String?, missingPermissions: Set<PeekabooBridgePermissionKind>) {
         guard
@@ -144,7 +239,7 @@ enum BridgeCapabilityPolicy {
             return (true, nil, [])
         }
 
-        let missingPermissions = self.missingPermissions(for: .targetedTypeActions, handshake: handshake)
+        let missingPermissions = missingPermissions(for: .targetedTypeActions, handshake: handshake)
         guard !missingPermissions.isEmpty else {
             return (
                 false,
@@ -168,7 +263,7 @@ enum BridgeCapabilityPolicy {
         let requiredPermissions = Set(
             handshake.permissionTags[operation.rawValue] ?? Array(operation.requiredPermissions)
         )
-        let grantedPermissions = self.grantedPermissions(from: handshake.permissions)
+        let grantedPermissions = grantedPermissions(from: handshake.permissions)
         return requiredPermissions.subtracting(grantedPermissions)
     }
 

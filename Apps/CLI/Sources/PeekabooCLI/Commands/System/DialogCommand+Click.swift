@@ -44,6 +44,9 @@ extension DialogCommand {
 
             do {
                 try self.target.validate()
+                if self.focusOptions.autoFocus {
+                    self.resolvedRuntime.beginInteractionMutation()
+                }
                 try await ensureFocused(
                     snapshotId: nil,
                     target: self.target,
@@ -54,6 +57,7 @@ extension DialogCommand {
                 let resolvedWindowTitle = try await self.target.resolveWindowTitleOptional(services: self.services)
                 let appHint = try await DialogCommand.resolveDialogAppHint(target: self.target, services: self.services)
 
+                self.resolvedRuntime.beginInteractionMutation()
                 let result = try await self.services.dialogs.clickButton(
                     buttonText: self.button,
                     windowTitle: resolvedWindowTitle,

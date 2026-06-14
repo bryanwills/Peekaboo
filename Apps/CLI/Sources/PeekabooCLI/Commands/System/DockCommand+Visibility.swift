@@ -37,6 +37,7 @@ extension DockCommand {
             self.logger.setJsonOutputMode(self.jsonOutput)
 
             do {
+                self.resolvedRuntime.beginInteractionMutation()
                 try await DockServiceBridge.hideDock(dock: self.services.dock)
                 AutomationEventLogger.log(.dock, "hide")
 
@@ -91,6 +92,7 @@ extension DockCommand {
             self.logger.setJsonOutputMode(self.jsonOutput)
 
             do {
+                self.resolvedRuntime.beginInteractionMutation()
                 try await DockServiceBridge.showDock(dock: self.services.dock)
                 AutomationEventLogger.log(.dock, "show")
 

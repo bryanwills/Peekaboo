@@ -76,7 +76,10 @@ extension SeeCommand {
         }
     }
 
-    func makeObservationRequest(target: DesktopObservationTargetRequest) -> DesktopObservationRequest {
+    func makeObservationRequest(
+        target: DesktopObservationTargetRequest,
+        snapshotID: String? = nil
+    ) -> DesktopObservationRequest {
         DesktopObservationRequest(
             target: target,
             capture: DesktopCaptureOptions(
@@ -89,7 +92,8 @@ extension SeeCommand {
                 path: self.screenshotOutputPath(),
                 saveRawScreenshot: true,
                 saveAnnotatedScreenshot: self.annotate && self.allowsAnnotation(for: target),
-                saveSnapshot: true
+                saveSnapshot: true,
+                snapshotID: snapshotID
             )
         )
     }

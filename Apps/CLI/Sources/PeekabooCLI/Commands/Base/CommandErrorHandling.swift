@@ -76,22 +76,22 @@ extension ErrorHandlingCommand {
     }
 
     private func mapPeekabooErrorToCode(_ error: PeekabooError) -> ErrorCode {
-        if let lookupCode = self.lookupErrorCode(for: error) {
+        if let lookupCode = lookupErrorCode(for: error) {
             return lookupCode
         }
-        if let permissionCode = self.permissionErrorCode(for: error) {
+        if let permissionCode = permissionErrorCode(for: error) {
             return permissionCode
         }
-        if let timeoutCode = self.timeoutErrorCode(for: error) {
+        if let timeoutCode = timeoutErrorCode(for: error) {
             return timeoutCode
         }
-        if let automationCode = self.automationErrorCode(for: error) {
+        if let automationCode = automationErrorCode(for: error) {
             return automationCode
         }
-        if let inputCode = self.inputErrorCode(for: error) {
+        if let inputCode = inputErrorCode(for: error) {
             return inputCode
         }
-        if let credentialCode = self.credentialErrorCode(for: error) {
+        if let credentialCode = credentialErrorCode(for: error) {
             return credentialCode
         }
         return .UNKNOWN_ERROR
@@ -230,6 +230,15 @@ func errorMessage(for error: any Error) -> String {
         return bridgeError.message
     }
     return error.localizedDescription
+}
+
+func applicationLaunchErrorCode(for error: any Error) -> ErrorCode? {
+    guard let bridgeError = error as? PeekabooBridgeErrorEnvelope,
+          bridgeError.code == .notFound
+    else {
+        return nil
+    }
+    return .APP_NOT_FOUND
 }
 
 func errorDetails(for error: any Error) -> String? {

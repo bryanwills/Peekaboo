@@ -96,6 +96,7 @@ struct HotkeyCommand: ErrorHandlingCommand, OutputFormattable {
             let targetPID: pid_t?
 
             let backgroundPID = try await self.backgroundProcessIdentifier(snapshotId: observation.snapshotId)
+            self.resolvedRuntime.beginInteractionMutation()
 
             if let backgroundPID {
                 try self.validateBackgroundHotkeyOptions(snapshotId: observation.snapshotId)
@@ -124,9 +125,8 @@ struct HotkeyCommand: ErrorHandlingCommand, OutputFormattable {
                 targetPID = nil
             }
 
-            await InteractionObservationInvalidator.invalidateAfterMutationOrLatest(
-                observation,
-                snapshots: self.services.snapshots,
+            await InteractionObservationInvalidator.invalidateAfterMutation(
+                targets: self.resolvedRuntime.interactionMutationTargets,
                 logger: self.logger,
                 reason: "hotkey"
             )

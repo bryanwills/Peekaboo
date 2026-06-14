@@ -9,11 +9,6 @@ extension AppCommand {
 
     @MainActor
     struct RelaunchSubcommand {
-        @MainActor
-        static var launcher: any ApplicationLaunching = ApplicationLaunchEnvironment.launcher
-        @MainActor
-        static var resolver: any ApplicationURLResolving = ApplicationURLResolverEnvironment.resolver
-
         static let commandDescription = CommandDescription(
             commandName: "relaunch",
             abstract: "Quit and relaunch an application"
@@ -68,41 +63,45 @@ extension AppCommand {
             self.runtime = runtime
 
             do {
+                guard self.resolvedRuntime.applicationRelaunchAllowed else {
+                    throw PeekabooError.serviceUnavailable(
+                        "Relaunch requires a surviving daemon host; the selected bridge is unavailable or GUI-hosted"
+                    )
+                }
+
                 // Find the application first
-                let appIdentifier = try self.resolveApplicationIdentifier()
-                let appInfo = try await resolveApplication(appIdentifier, services: self.services)
+                let appIdentifier = try resolveApplicationIdentifier()
+                let appInfo = try await resolveApplication(appIdentifier, services: services)
                 let originalPID = appInfo.processIdentifier
+                guard originalPID != self.resolvedRuntime.selectedRemoteHostProcessIdentifier else {
+                    throw PeekabooError.serviceUnavailable(
+                        "Cannot relaunch the selected daemon through itself; use another bridge host"
+                    )
+                }
                 let processIdentifier = "PID:\(originalPID)"
-
-                // Step 1: Quit the app
-                let quitSuccess = try await self.services.applications.quitApplication(
-                    identifier: processIdentifier,
-                    force: self.force
+                guard self.wait.isFinite, self.wait >= 0 else {
+                    throw PeekabooError.invalidInput("Relaunch wait must be a finite, non-negative number of seconds")
+                }
+                let launchIdentifier = appInfo.bundleIdentifier == nil ? (appInfo.bundlePath ?? appInfo.name) : nil
+                self.resolvedRuntime.beginInteractionMutation()
+                let launchedApp = try await services.applications.relaunchApplication(
+                    request: ApplicationRelaunchRequest(
+                        targetIdentifier: processIdentifier,
+                        launchRequest: ApplicationLaunchRequest(
+                            applicationIdentifier: launchIdentifier,
+                            applicationBundleIdentifier: appInfo.bundleIdentifier,
+                            activates: true,
+                            waitUntilReady: self.waitUntilReady
+                        ),
+                        force: self.force,
+                        waitSeconds: self.wait
+                    )
                 )
-
-                if !quitSuccess {
-                    throw PeekabooError
-                        .commandFailed(
-                            "Failed to quit \(appInfo.name) (PID: \(originalPID)). The app may have unsaved changes."
-                        )
-                }
-
-                // Wait for the app to actually terminate
-                try await self.waitUntilTerminated(identifier: processIdentifier, appName: appInfo.name)
-
-                // Step 2: Wait the specified duration
-                if self.wait > 0 {
-                    try await Task.sleep(nanoseconds: UInt64(self.wait * 1_000_000_000))
-                }
-
-                // Step 3: Launch the app
-                let appURL = try self.resolveLaunchURL(for: appInfo)
-                let launchedApp = try await Self.launcher.launchApplication(at: appURL, activates: true)
-
-                // Wait until ready if requested
-                if self.waitUntilReady {
-                    try await self.waitUntilReady(launchedApp)
-                }
+                await InteractionObservationInvalidator.invalidateAfterMutation(
+                    targets: self.resolvedRuntime.interactionMutationTargets,
+                    logger: self.logger,
+                    reason: "app relaunch focus"
+                )
 
                 struct RelaunchResult: Codable {
                     let action: String
@@ -123,51 +122,20 @@ extension AppCommand {
                     bundle_id: appInfo.bundleIdentifier,
                     quit_forced: self.force,
                     wait_time: self.wait,
-                    launch_success: launchedApp.isFinishedLaunching || !self.waitUntilReady
+                    launch_success: !self.waitUntilReady || launchedApp.isFinishedLaunching == true
                 )
 
                 output(data) {
                     print("✓ Relaunched \(appInfo.name)")
                     print("  Old PID: \(originalPID) → New PID: \(launchedApp.processIdentifier)")
                     if self.waitUntilReady {
-                        print("  Status: \(launchedApp.isFinishedLaunching ? "Ready" : "Launching...")")
+                        print("  Status: \(launchedApp.isFinishedLaunching == true ? "Ready" : "Launching...")")
                     }
                 }
 
             } catch {
-                handleError(error)
+                handleError(error, customCode: applicationLaunchErrorCode(for: error))
                 throw ExitCode(1)
-            }
-        }
-
-        private func waitUntilTerminated(identifier: String, appName: String) async throws {
-            var terminateWaitTime = 0.0
-            while await self.services.applications.isApplicationRunning(identifier: identifier),
-                  terminateWaitTime < 5.0 {
-                try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-                terminateWaitTime += 0.1
-            }
-
-            if await self.services.applications.isApplicationRunning(identifier: identifier) {
-                throw PeekabooError.timeout("App \(appName) did not terminate within 5 seconds")
-            }
-        }
-
-        private func resolveLaunchURL(for appInfo: ServiceApplicationInfo) throws -> URL {
-            if let bundleID = appInfo.bundleIdentifier {
-                return try Self.resolver.resolveBundleIdentifier(bundleID)
-            }
-            if let bundlePath = appInfo.bundlePath {
-                return URL(fileURLWithPath: bundlePath)
-            }
-            throw PeekabooError.commandFailed("No bundle ID or path available to relaunch \(appInfo.name)")
-        }
-
-        private func waitUntilReady(_ app: any RunningApplicationHandle) async throws {
-            var readyWaitTime = 0.0
-            while !app.isFinishedLaunching && readyWaitTime < 10.0 {
-                try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-                readyWaitTime += 0.1
             }
         }
     }
@@ -180,12 +148,12 @@ extension AppCommand.RelaunchSubcommand: AsyncRuntimeCommand, ErrorHandlingComma
 @MainActor
 extension AppCommand.RelaunchSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        self.app = try values.decodePositional(0, label: "app")
-        self.pid = try values.decodeOption("pid", as: Int32.self)
+        app = try values.decodePositional(0, label: "app")
+        pid = try values.decodeOption("pid", as: Int32.self)
         if let wait: TimeInterval = try values.decodeOption("wait", as: TimeInterval.self) {
             self.wait = wait
         }
-        self.force = values.flag("force")
-        self.waitUntilReady = values.flag("waitUntilReady")
+        force = values.flag("force")
+        waitUntilReady = values.flag("waitUntilReady")
     }
 }

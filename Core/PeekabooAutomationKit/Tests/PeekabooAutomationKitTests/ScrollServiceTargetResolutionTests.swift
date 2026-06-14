@@ -30,6 +30,32 @@ struct ScrollServiceTargetResolutionTests {
 
     @Test
     @MainActor
+    func `synthetic scroll treats explicit missing snapshot as authoritative`() async {
+        let synthetic = ScrollRecordingSyntheticInputDriver()
+        let service = ScrollService(
+            snapshotManager: InMemorySnapshotManager(),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthFirst),
+            syntheticInputDriver: synthetic)
+
+        do {
+            try await service.scroll(ScrollRequest(
+                direction: .down,
+                amount: 1,
+                target: "missing-\(UUID().uuidString)",
+                smooth: false,
+                delay: 2,
+                snapshotId: "missing"))
+            Issue.record("Expected stale element error for missing synthetic snapshot.")
+        } catch let error as ActionInputError {
+            #expect(error == .staleElement)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(synthetic.events.isEmpty)
+    }
+
+    @Test
+    @MainActor
     func `action-first unresolved snapshot target falls back to coordinate scroll`() async throws {
         let element = DetectedElement(
             id: "S1",

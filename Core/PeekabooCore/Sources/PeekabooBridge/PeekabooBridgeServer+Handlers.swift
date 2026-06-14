@@ -19,15 +19,16 @@ extension PeekabooBridgeServer {
         case .desktopObservation:
             try await self.handleDesktopObservationRequest(request)
         case .detectElements, .inspectAccessibilityTree, .click, .type, .typeActions, .targetedTypeActions,
-             .setValue, .performAction, .scroll, .hotkey, .targetedHotkey, .targetedClick, .swipe, .drag, .moveMouse,
-             .waitForElement:
+             .setValue, .performAction, .scroll, .hotkey, .targetedHotkey, .targetedClick,
+             .exactWindowTargetedClick, .swipe, .drag, .moveMouse, .waitForElement:
             try await self.handleAutomationRequest(request)
         case .listWindows, .focusWindow, .moveWindow, .resizeWindow, .setWindowBounds, .closeWindow,
              .minimizeWindow, .maximizeWindow, .getFocusedWindow:
             try await self.handleWindowRequest(request)
         case .listApplications, .findApplication, .getFrontmostApplication, .isApplicationRunning,
-             .launchApplication, .activateApplication, .quitApplication, .hideApplication, .unhideApplication,
-             .hideOtherApplications, .showAllApplications:
+             .launchApplication, .launchApplicationWithOptions, .relaunchApplicationWithOptions,
+             .activateApplication, .quitApplication,
+             .hideApplication, .unhideApplication, .hideOtherApplications, .showAllApplications:
             try await self.handleApplicationRequest(request)
         case .listMenus, .listFrontmostMenus, .clickMenuItem, .clickMenuItemByName, .listMenuExtras,
              .clickMenuExtra, .menuExtraOpenMenuFrame, .listMenuBarItems, .clickMenuBarItemNamed,
@@ -41,7 +42,7 @@ extension PeekabooBridgeServer {
             try await self.handleDialogRequest(request)
         case .createSnapshot, .storeDetectionResult, .getDetectionResult, .storeScreenshot,
              .storeAnnotatedScreenshot, .listSnapshots, .getMostRecentSnapshot, .cleanSnapshot,
-             .cleanSnapshotsOlderThan, .cleanAllSnapshots:
+             .invalidateImplicitLatestSnapshot, .cleanSnapshotsOlderThan, .cleanAllSnapshots:
             try await self.handleSnapshotRequest(request)
         case ._appleScriptProbe:
             try self.handleAppleScriptProbe()
@@ -302,11 +303,26 @@ extension PeekabooBridgeServer {
                     message: "Background clicks are not supported by this bridge host")
             }
 
-            try await targetedClickService.click(
-                target: payload.target,
-                clickType: payload.clickType,
-                snapshotId: payload.snapshotId,
-                targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
+            if let targetWindowID = payload.targetWindowID {
+                guard let exactWindowService = targetedClickService as? any ExactWindowTargetedClickServiceProtocol
+                else {
+                    throw PeekabooBridgeErrorEnvelope(
+                        code: .operationNotSupported,
+                        message: "Exact-window background clicks are not supported by this bridge host")
+                }
+                try await exactWindowService.click(
+                    target: payload.target,
+                    clickType: payload.clickType,
+                    snapshotId: payload.snapshotId,
+                    targetProcessIdentifier: pid_t(payload.targetProcessIdentifier),
+                    targetWindowID: targetWindowID)
+            } else {
+                try await targetedClickService.click(
+                    target: payload.target,
+                    clickType: payload.clickType,
+                    snapshotId: payload.snapshotId,
+                    targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
+            }
             return .ok
         default:
             throw Self.invalidRequest(for: request)

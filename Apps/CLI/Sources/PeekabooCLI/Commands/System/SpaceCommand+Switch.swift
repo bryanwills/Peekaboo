@@ -43,6 +43,7 @@ struct SwitchSubcommand: ErrorHandlingCommand, OutputFormattable {
             }
 
             let targetSpace = spaces[self.to - 1]
+            self.resolvedRuntime.beginInteractionMutation()
             try await spaceService.switchToSpace(targetSpace.id)
             AutomationEventLogger.log(
                 .space,

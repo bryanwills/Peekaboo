@@ -48,6 +48,9 @@ extension MenuCommand {
                 try self.target.validate()
                 let appIdentifier = try await self.resolveTargetApplicationIdentifier()
                 let windowID = try await self.target.resolveWindowID(services: self.services)
+                if self.focusOptions.autoFocus {
+                    self.resolvedRuntime.beginInteractionMutation()
+                }
                 try await ensureFocusIgnoringMissingWindows(
                     request: FocusIgnoringMissingWindowsRequest(
                         windowID: windowID,

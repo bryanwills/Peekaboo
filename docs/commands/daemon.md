@@ -23,6 +23,9 @@ context and start the reusable daemon only if the app host is unavailable or lac
 Automatic migration defers while operational requests are active and keeps using the legacy daemon for that invocation.
 Older daemons without conditional stop remain on `bridge.sock` until they exit or are explicitly stopped. Explicit
 `daemon start` asks the user to stop those older daemons first, and asks for a retry when supported daemons are busy.
+If an incompatible daemon already owns `daemon.sock`, automation uses a build-scoped fallback. Default `status` reports
+the compatible fallback and warns about the additional daemon; `start` promotes an idle, safely stoppable fallback from
+auto to persistent manual mode on the same socket.
 
 ## Commands
 

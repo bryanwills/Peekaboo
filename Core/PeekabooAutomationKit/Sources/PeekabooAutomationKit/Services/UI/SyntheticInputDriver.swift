@@ -1,11 +1,18 @@
 import AXorcist
 import CoreGraphics
 import Foundation
+import enum PeekabooFoundation.PeekabooError
 
 @MainActor
 protocol SyntheticInputDriving: Sendable {
     func click(at point: CGPoint, button: MouseButton, count: Int) throws
     func click(at point: CGPoint, button: MouseButton, count: Int, targetProcessIdentifier: pid_t) throws
+    func click(
+        at point: CGPoint,
+        button: MouseButton,
+        count: Int,
+        targetProcessIdentifier: pid_t,
+        targetWindowID: CGWindowID?) throws
     func move(to point: CGPoint) throws
     func currentLocation() -> CGPoint?
     func pressHold(at point: CGPoint, button: MouseButton, duration: TimeInterval) throws
@@ -13,6 +20,26 @@ protocol SyntheticInputDriving: Sendable {
     func type(_ text: String, delayPerCharacter: TimeInterval) throws
     func tapKey(_ key: SpecialKey, modifiers: CGEventFlags) throws
     func hotkey(keys: [String], holdDuration: TimeInterval) throws
+}
+
+extension SyntheticInputDriving {
+    func click(
+        at point: CGPoint,
+        button: MouseButton,
+        count: Int,
+        targetProcessIdentifier: pid_t,
+        targetWindowID: CGWindowID?) throws
+    {
+        guard targetWindowID == nil else {
+            throw PeekabooError.serviceUnavailable(
+                "Synthetic input driver does not support exact-window click delivery")
+        }
+        try self.click(
+            at: point,
+            button: button,
+            count: count,
+            targetProcessIdentifier: targetProcessIdentifier)
+    }
 }
 
 /// Thin injectable wrapper over AXorcist's low-level synthetic input helpers.
@@ -23,11 +50,27 @@ struct SyntheticInputDriver: SyntheticInputDriving {
     }
 
     func click(at point: CGPoint, button: MouseButton = .left, count: Int = 1, targetProcessIdentifier: pid_t) throws {
+        try self.click(
+            at: point,
+            button: button,
+            count: count,
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetWindowID: nil)
+    }
+
+    func click(
+        at point: CGPoint,
+        button: MouseButton = .left,
+        count: Int = 1,
+        targetProcessIdentifier: pid_t,
+        targetWindowID: CGWindowID?) throws
+    {
         try BackgroundInputDriver.click(
             at: point,
             button: button,
             count: count,
-            targetProcessIdentifier: targetProcessIdentifier)
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetWindowID: targetWindowID)
     }
 
     func move(to point: CGPoint) throws {

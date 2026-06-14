@@ -112,6 +112,7 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfi
             let observation = await self.resolveObservationContext()
             try await observation.validateIfExplicit(using: self.services.snapshots)
             let targetPID = try await self.backgroundProcessIdentifier(snapshotId: observation.snapshotId)
+            self.resolvedRuntime.beginInteractionMutation()
             if targetPID == nil {
                 self.warnIfFocusUnknown(snapshotId: observation.snapshotId)
                 try await self.focusIfNeeded(snapshotId: observation.focusSnapshotId(for: self.target))
@@ -122,8 +123,7 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfi
                 targetProcessIdentifier: targetPID
             )
             await InteractionObservationInvalidator.invalidateAfterMutation(
-                observation,
-                snapshots: self.services.snapshots,
+                targets: self.resolvedRuntime.interactionMutationTargets,
                 logger: self.logger,
                 reason: "type"
             )

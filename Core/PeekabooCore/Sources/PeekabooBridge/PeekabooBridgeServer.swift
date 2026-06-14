@@ -36,6 +36,8 @@ public final class PeekabooBridgeServer {
     let postEventAccessEvaluator: @MainActor @Sendable () -> Bool
     let postEventAccessRequester: @MainActor @Sendable () -> Bool
     let permissionStatusEvaluator: @MainActor @Sendable (_ allowAppleScriptLaunch: Bool) -> PermissionsStatus
+    let desktopMutationWatermarkStore: DesktopMutationWatermarkStore?
+    private let desktopMutationGate = PeekabooBridgeMutationGate()
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     let logger = Logger(subsystem: "boo.peekaboo.bridge", category: "server")
@@ -48,6 +50,7 @@ public final class PeekabooBridgeServer {
         supportedVersions: ClosedRange<PeekabooBridgeProtocolVersion> = PeekabooBridgeConstants.supportedProtocolRange,
         allowedOperations: Set<PeekabooBridgeOperation> = PeekabooBridgeOperation.remoteDefaultAllowlist,
         daemonControl: (any PeekabooDaemonControlProviding)? = nil,
+        desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil,
         postEventAccessEvaluator: @escaping @MainActor @Sendable () -> Bool = { CGPreflightPostEventAccess() },
         postEventAccessRequester: @escaping @MainActor @Sendable () -> Bool = { CGRequestPostEventAccess() },
         permissionStatusEvaluator: (@MainActor @Sendable (_ allowAppleScriptLaunch: Bool) -> PermissionsStatus)? = nil,
@@ -61,6 +64,7 @@ public final class PeekabooBridgeServer {
         self.supportedVersions = supportedVersions
         self.allowedOperations = allowedOperations
         self.daemonControl = daemonControl
+        self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
         self.postEventAccessEvaluator = postEventAccessEvaluator
         self.postEventAccessRequester = postEventAccessRequester
         if let permissionStatusEvaluator {
@@ -134,7 +138,7 @@ public final class PeekabooBridgeServer {
                     await daemonControl.recordActivityStart(operation: op)
                 }
                 do {
-                    let response = try await self.handleAuthorized(request, peer: peer)
+                    let response = try await self.handleAuthorizedWithDesktopMutationBarrier(request, peer: peer)
                     await daemonControl.recordActivityEnd(operation: op)
                     return response
                 } catch {
@@ -143,7 +147,7 @@ public final class PeekabooBridgeServer {
                 }
             }
 
-            return try await self.handleAuthorized(request, peer: peer)
+            return try await self.handleAuthorizedWithDesktopMutationBarrier(request, peer: peer)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             failed = true
             let duration = Date().timeIntervalSince(start)
@@ -184,6 +188,37 @@ public final class PeekabooBridgeServer {
                         code: .operationNotSupported,
                         message: "Operation \(op.rawValue) is not supported: \(message)",
                         details: "\(error)")
+                case .appNotFound, .notFound:
+                    throw PeekabooBridgeErrorEnvelope(
+                        code: .notFound,
+                        message: error.localizedDescription,
+                        details: "\(error)")
+                case let .elementNotFound(identifier):
+                    throw PeekabooBridgeErrorEnvelope(
+                        code: .notFound,
+                        message: error.localizedDescription,
+                        details: "\(error)",
+                        kind: .elementNotFound,
+                        context: identifier)
+                case let .snapshotNotFound(snapshotId):
+                    throw PeekabooBridgeErrorEnvelope(
+                        code: .notFound,
+                        message: error.localizedDescription,
+                        details: "\(error)",
+                        kind: .snapshotNotFound,
+                        context: snapshotId)
+                case let .snapshotStale(reason):
+                    throw PeekabooBridgeErrorEnvelope(
+                        code: .invalidRequest,
+                        message: error.localizedDescription,
+                        details: "\(error)",
+                        kind: .snapshotStale,
+                        context: reason)
+                case .timeout, .captureTimeout:
+                    throw PeekabooBridgeErrorEnvelope(
+                        code: .timeout,
+                        message: error.localizedDescription,
+                        details: "\(error)")
                 default:
                     break
                 }
@@ -194,6 +229,157 @@ public final class PeekabooBridgeServer {
                 message: "Bridge operation failed",
                 details: "\(error)")
         }
+    }
+
+    private func handleAuthorizedWithDesktopMutationBarrier(
+        _ request: PeekabooBridgeRequest,
+        peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeResponse
+    {
+        guard request.mayMutateDesktop, let desktopMutationWatermarkStore else {
+            return try await self.handleAuthorized(request, peer: peer)
+        }
+
+        await self.desktopMutationGate.acquire()
+        let mutation: DesktopMutationWatermarkStore.PendingMutation
+        do {
+            mutation = try desktopMutationWatermarkStore.beginMutation()
+        } catch {
+            await self.desktopMutationGate.release()
+            throw PeekabooBridgeErrorEnvelope(
+                code: .internalError,
+                message: "Could not establish the desktop mutation barrier; operation was not executed",
+                details: error.localizedDescription)
+        }
+
+        let response: PeekabooBridgeResponse?
+        let operationError: (any Error)?
+        do {
+            response = try await self.handleAuthorized(request, peer: peer)
+            operationError = nil
+        } catch {
+            response = nil
+            operationError = error
+        }
+
+        let completedResponse: PeekabooBridgeResponse?
+        do {
+            completedResponse = try await self.completeDesktopMutation(
+                mutation,
+                request: request,
+                response: response,
+                store: desktopMutationWatermarkStore)
+        } catch {
+            await self.desktopMutationGate.release()
+            throw error
+        }
+        await self.desktopMutationGate.release()
+
+        if let operationError {
+            throw operationError
+        }
+        guard let completedResponse = completedResponse ?? response else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .internalError,
+                message: "Desktop operation returned neither a response nor an error")
+        }
+        return completedResponse
+    }
+
+    private func completeDesktopMutation(
+        _ mutation: DesktopMutationWatermarkStore.PendingMutation,
+        request: PeekabooBridgeRequest,
+        response: PeekabooBridgeResponse?,
+        store: DesktopMutationWatermarkStore) async throws -> PeekabooBridgeResponse?
+    {
+        let completedAt = Date()
+        let completion: DesktopMutationWatermarkStore.MutationCompletion
+        do {
+            completion = try store.completeMutation(mutation, through: completedAt)
+        } catch {
+            self.logger.error(
+                "Desktop mutation barrier finalization failed: \(error.localizedDescription, privacy: .public)")
+            throw PeekabooBridgeErrorEnvelope(
+                code: .internalError,
+                message: "The desktop operation completed, but its snapshot safety barrier could not be finalized",
+                details: error.localizedDescription,
+                operationMayHaveCompleted: true)
+        }
+
+        let completedResponse = response.map {
+            Self.annotatingDesktopMutationCompletion($0, completion: completion)
+        }
+        if completion.allowsObservationPreservation,
+           let snapshotId = Self.preservedSnapshotID(for: request, response: completedResponse)
+        {
+            do {
+                _ = try await self.services.snapshots.invalidateImplicitLatestSnapshot(
+                    through: completion.cutoff,
+                    preserving: snapshotId,
+                    preservedAt: completion.cutoff)
+            } catch {
+                let failure = error.localizedDescription
+                self.logger.error(
+                    "Failed to preserve bridge observation after desktop mutation: \(failure, privacy: .public)")
+            }
+        }
+        return completedResponse
+    }
+
+    private static func preservedSnapshotID(
+        for request: PeekabooBridgeRequest,
+        response: PeekabooBridgeResponse?) -> String?
+    {
+        guard case let .desktopObservation(observationRequest) = request,
+              case let .desktopObservation(result)? = response
+        else { return nil }
+        return result.elements?.snapshotId ?? observationRequest.output.snapshotID
+    }
+
+    private static func annotatingDesktopMutationCompletion(
+        _ response: PeekabooBridgeResponse,
+        completion: DesktopMutationWatermarkStore.MutationCompletion) -> PeekabooBridgeResponse
+    {
+        switch response {
+        case let .elementDetection(result):
+            .elementDetection(self.annotatingDetectionResult(result, completion: completion))
+        case let .desktopObservation(result):
+            .desktopObservation(DesktopObservationResult(
+                target: result.target,
+                capture: result.capture,
+                elements: result.elements.map { self.annotatingDetectionResult($0, completion: completion) },
+                ocr: result.ocr,
+                files: result.files,
+                timings: result.timings,
+                diagnostics: DesktopObservationDiagnostics(
+                    warnings: result.diagnostics.warnings,
+                    stateSnapshot: result.diagnostics.stateSnapshot,
+                    target: result.diagnostics.target,
+                    desktopMutationCompletedAt: completion.cutoff,
+                    desktopMutationPreservationAllowed: completion.allowsObservationPreservation)))
+        default:
+            response
+        }
+    }
+
+    private static func annotatingDetectionResult(
+        _ result: ElementDetectionResult,
+        completion: DesktopMutationWatermarkStore.MutationCompletion) -> ElementDetectionResult
+    {
+        let metadata = result.metadata
+        return ElementDetectionResult(
+            snapshotId: result.snapshotId,
+            screenshotPath: result.screenshotPath,
+            elements: result.elements,
+            metadata: DetectionMetadata(
+                detectionTime: metadata.detectionTime,
+                elementCount: metadata.elementCount,
+                method: metadata.method,
+                warnings: metadata.warnings,
+                windowContext: metadata.windowContext,
+                isDialog: metadata.isDialog,
+                truncationInfo: metadata.truncationInfo,
+                desktopMutationCompletedAt: completion.cutoff,
+                desktopMutationPreservationAllowed: completion.allowsObservationPreservation))
     }
 
     private func validateOperationAccess(
@@ -212,6 +398,10 @@ public final class PeekabooBridgeServer {
                 message: "Operation \(op.rawValue) is not supported by this host")
         }
 
+        if case let .targetedClick(payload) = request {
+            try Self.validateTargetedClickAccess(payload, permissions: permissions)
+        }
+
         guard effectiveOps.contains(op) else {
             let missingPermission = op.requiredPermissions
                 .subtracting(Self.grantedPermissions(from: permissions))
@@ -220,6 +410,28 @@ public final class PeekabooBridgeServer {
                 code: .permissionDenied,
                 message: "Operation \(op.rawValue) is not allowed with current permissions",
                 permission: missingPermission)
+        }
+    }
+
+    private static func validateTargetedClickAccess(
+        _ request: PeekabooBridgeTargetedClickRequest,
+        permissions: PermissionsStatus) throws
+    {
+        if request.requiresPostEventPermission {
+            guard permissions.postEvent else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .permissionDenied,
+                    message: "Coordinate and double background clicks require Event Synthesizing permission",
+                    permission: .postEvent)
+            }
+            return
+        }
+
+        guard permissions.accessibility || permissions.postEvent else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .permissionDenied,
+                message: "Element and query background clicks require Accessibility or Event Synthesizing permission",
+                permission: .accessibility)
         }
     }
 }

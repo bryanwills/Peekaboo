@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooAutomation
 import PeekabooBridge
 import Security
 
@@ -12,11 +13,13 @@ struct BridgeDiagnostics {
     @MainActor
     func run(runtimeOptions: CommandRuntimeOptions) async -> BridgeStatusReport {
         let environment = ProcessInfo.processInfo.environment
-        let envNoRemote = environment["PEEKABOO_NO_REMOTE"]
-        let shouldSkipRemote = !runtimeOptions.preferRemote || envNoRemote != nil
-        let remoteSkipReason = shouldSkipRemote
-            ? (!runtimeOptions.preferRemote ? "--no-remote" : "PEEKABOO_NO_REMOTE")
-            : nil
+        let effectiveOptions = runtimeOptions.applyingEnvironmentOverrides(environment: environment)
+        let configurationInput = PeekabooAutomation.ConfigurationManager.shared.getConfiguration()?.input
+        let remoteSkipReason = Self.remoteSkipReason(
+            runtimeOptions: effectiveOptions,
+            environment: environment,
+            configurationInput: configurationInput
+        )
 
         let identity = PeekabooBridgeClientIdentity(
             bundleIdentifier: Bundle.main.bundleIdentifier,
@@ -25,17 +28,12 @@ struct BridgeDiagnostics {
             hostname: Host.current().name
         )
 
-        let runtimeCandidates = Self.runtimeCandidateSocketPaths(
-            runtimeOptions: runtimeOptions,
-            environment: environment
-        )
-        let candidates = Self.diagnosticSocketPaths(
-            runtimeOptions: runtimeOptions,
-            environment: environment
-        )
-        let selectablePaths = Set(runtimeCandidates)
-        if shouldSkipRemote {
-            self.logger.debug("Bridge status: remote skipped (\(remoteSkipReason ?? "unknown reason"))")
+        if let remoteSkipReason {
+            let candidates = Self.diagnosticSocketPaths(
+                runtimeOptions: effectiveOptions,
+                environment: environment
+            )
+            self.logger.debug("Bridge status: remote skipped (\(remoteSkipReason))")
             return BridgeStatusReport(
                 remoteSkipped: true,
                 remoteSkipReason: remoteSkipReason,
@@ -43,6 +41,23 @@ struct BridgeDiagnostics {
                 candidates: candidates.map { BridgeCandidateReport(socketPath: $0, result: .skipped) },
                 client: .init(identity: identity)
             )
+        }
+
+        let candidatePlan = await RuntimeHostResolver.remoteCandidatePlan(
+            options: effectiveOptions,
+            environment: environment
+        )
+        let runtimeCandidates = candidatePlan.candidates
+        let candidates = Self.diagnosticSocketPaths(
+            runtimeCandidateSocketPaths: runtimeCandidates.map(\.socketPath),
+            hasExplicitSocket: candidatePlan.explicitSocket != nil
+        )
+        var runtimeCandidateByPath: [String: RuntimeHostResolver.ImplicitRemoteCandidate] = [:]
+        for candidate in runtimeCandidates {
+            let path = NSString(string: candidate.socketPath).standardizingPath
+            if runtimeCandidateByPath[path] == nil {
+                runtimeCandidateByPath[path] = candidate
+            }
         }
 
         var results: [BridgeCandidateReport] = []
@@ -59,37 +74,17 @@ struct BridgeDiagnostics {
                 )
                 results.append(.init(socketPath: socketPath, result: .success(report)))
 
-                let enabledOps = handshake.enabledOperations ?? handshake.supportedOperations
-                let isImplicitRuntimeCandidate =
-                    BridgeSocketResolver.explicitBridgeSocket(
-                        options: runtimeOptions,
-                        environment: environment
-                    ) == nil &&
-                    selectablePaths.contains(socketPath)
-                let isSelectableRuntime: Bool
-                if isImplicitRuntimeCandidate,
-                   let role = DaemonLaunchPolicy.implicitRuntimeCandidateRole(
-                       socketPath: socketPath,
-                       daemonSocketPath: DaemonLaunchPolicy.daemonSocketPath(
-                           environment: environment
-                       )
-                   ) {
-                    let daemonStatus = handshake.hostKind == .gui
-                        ? nil
-                        : await DaemonControlClient(socketPath: socketPath).fetchStatus()
-                    isSelectableRuntime = DaemonLaunchPolicy.isSelectableImplicitRuntimeCandidate(
-                        role: role,
-                        handshake: handshake,
-                        daemonStatus: daemonStatus
-                    )
-                } else {
-                    isSelectableRuntime = true
-                }
+                let candidatePath = NSString(string: socketPath).standardizingPath
                 if selected == nil,
-                   selectablePaths.contains(socketPath),
-                   isSelectableRuntime,
-                   enabledOps.contains(.captureScreen) {
-                    selected = .remote(socketPath: socketPath, handshake: report)
+                   let runtimeCandidate = runtimeCandidateByPath[candidatePath] {
+                    let validation = await RuntimeHostResolver.validateRemoteCandidate(
+                        runtimeCandidate,
+                        handshake: handshake,
+                        options: effectiveOptions
+                    )
+                    if validation != nil {
+                        selected = .remote(socketPath: socketPath, handshake: report)
+                    }
                 }
             } catch let envelope as PeekabooBridgeErrorEnvelope {
                 self.logger.debug(
@@ -115,44 +110,89 @@ struct BridgeDiagnostics {
         )
     }
 
+    static func remoteSkipReason(
+        runtimeOptions: CommandRuntimeOptions,
+        environment: [String: String],
+        configurationInput: PeekabooAutomation.Configuration.InputConfig?
+    ) -> String? {
+        let decision = RuntimeHostResolver.initialRoutingDecision(
+            options: runtimeOptions,
+            environment: environment,
+            configurationInput: configurationInput,
+            knownSnapshotInvalidationRemoteSocketPaths: []
+        )
+        guard case .local = decision else { return nil }
+
+        if environment["PEEKABOO_NO_REMOTE"] != nil {
+            return "PEEKABOO_NO_REMOTE"
+        }
+        if runtimeOptions.remoteIsolationRequested {
+            return "--no-remote"
+        }
+        if RuntimeHostResolver.inputPolicyRequiresLocal(
+            options: runtimeOptions,
+            environment: environment,
+            configurationInput: configurationInput
+        ) {
+            return "input strategy policy"
+        }
+        return "local runtime policy"
+    }
+
     static func runtimeCandidateSocketPaths(
         runtimeOptions: CommandRuntimeOptions,
-        environment: [String: String]
+        environment: [String: String],
+        historicalBuildScopedDaemonSocketPaths: [String] = []
     ) -> [String] {
         if let explicitPath = BridgeSocketResolver.explicitBridgeSocket(
             options: runtimeOptions,
             environment: environment
         ) {
-            return [NSString(string: explicitPath).expandingTildeInPath]
+            return [explicitPath]
         }
 
-        let daemonPath = NSString(
-            string: DaemonLaunchPolicy.daemonSocketPath(environment: environment)
-        ).expandingTildeInPath
-        guard DaemonLaunchPolicy.shouldMigrateLegacyDaemon(targetSocketPath: daemonPath) else {
-            return [daemonPath]
-        }
-        let legacyPath = NSString(string: PeekabooBridgeConstants.peekabooSocketPath).expandingTildeInPath
-        return [daemonPath, legacyPath]
+        let daemonPath = DaemonLaunchPolicy.daemonSocketPath(environment: environment)
+        let buildScopedPath = DaemonLaunchPolicy.buildScopedDaemonSocketPath(
+            daemonSocketPath: daemonPath,
+            runtimeBuildIdentity: DaemonLaunchPolicy.runtimeBuildIdentity()
+        )
+        return RuntimeHostResolver.implicitRemoteCandidates(
+            options: runtimeOptions,
+            daemonSocketPath: daemonPath,
+            buildScopedDaemonSocketPath: buildScopedPath,
+            historicalBuildScopedDaemonSocketPaths: historicalBuildScopedDaemonSocketPaths
+        ).map(\.socketPath)
     }
 
     static func diagnosticSocketPaths(
         runtimeOptions: CommandRuntimeOptions,
-        environment: [String: String]
+        environment: [String: String],
+        historicalBuildScopedDaemonSocketPaths: [String] = []
     ) -> [String] {
         let runtimePaths = self.runtimeCandidateSocketPaths(
             runtimeOptions: runtimeOptions,
-            environment: environment
+            environment: environment,
+            historicalBuildScopedDaemonSocketPaths: historicalBuildScopedDaemonSocketPaths
         )
-        if BridgeSocketResolver.explicitBridgeSocket(options: runtimeOptions, environment: environment) != nil {
-            return runtimePaths
-        }
+        return self.diagnosticSocketPaths(
+            runtimeCandidateSocketPaths: runtimePaths,
+            hasExplicitSocket: BridgeSocketResolver.explicitBridgeSocket(
+                options: runtimeOptions,
+                environment: environment
+            ) != nil
+        )
+    }
 
+    private static func diagnosticSocketPaths(
+        runtimeCandidateSocketPaths runtimePaths: [String],
+        hasExplicitSocket: Bool
+    ) -> [String] {
+        if hasExplicitSocket { return runtimePaths }
         let additionalPaths = [
             PeekabooBridgeConstants.peekabooSocketPath,
             PeekabooBridgeConstants.claudeSocketPath,
             PeekabooBridgeConstants.clawdbotSocketPath,
-        ].map { NSString(string: $0).expandingTildeInPath }
+        ]
         return runtimePaths + additionalPaths.filter { !runtimePaths.contains($0) }
     }
 

@@ -1,3 +1,4 @@
+import AppKit
 import AXorcist
 import Foundation
 import os.log
@@ -42,23 +43,66 @@ import PeekabooFoundation
  */
 @MainActor
 public final class ApplicationService: ApplicationServiceProtocol {
+    public let supportsApplicationLaunchOptions = true
+    public let supportsApplicationRelaunch = true
+
+    typealias ApplicationOpenHandler = @MainActor (
+        _ applicationURL: URL,
+        _ openURLs: [URL],
+        _ configuration: NSWorkspace.OpenConfiguration) async throws -> NSRunningApplication
+    typealias RelaunchTargetResolver = @MainActor (_ identifier: String) async throws -> ServiceApplicationInfo
+    typealias RelaunchQuitHandler = @MainActor (_ identifier: String, _ force: Bool) async throws -> Bool
+    typealias RelaunchRunningHandler = @MainActor (_ identifier: String) async -> Bool
+
     let logger = Logger(subsystem: "boo.peekaboo.core", category: "ApplicationService")
     let windowIdentityService = WindowIdentityService()
     let permissions: PermissionsService
     let feedbackClient: any AutomationFeedbackClient
+    let applicationOpenHandler: ApplicationOpenHandler
+    let relaunchTargetResolver: RelaunchTargetResolver?
+    let relaunchQuitHandler: RelaunchQuitHandler?
+    let relaunchRunningHandler: RelaunchRunningHandler?
 
     /// Timeout for accessibility API calls to prevent hangs
     /// AX can be sluggish on some apps (e.g., Arc); allow more headroom.
     static let axTimeout: Float = 10.0
 
-    public init(
+    public convenience init(
         permissions: PermissionsService = PermissionsService(),
         feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient())
+    {
+        self.init(
+            permissions: permissions,
+            feedbackClient: feedbackClient,
+            applicationOpenHandler: { applicationURL, openURLs, configuration in
+                if openURLs.isEmpty {
+                    return try await NSWorkspace.shared.openApplication(
+                        at: applicationURL,
+                        configuration: configuration)
+                }
+                return try await NSWorkspace.shared.open(
+                    openURLs,
+                    withApplicationAt: applicationURL,
+                    configuration: configuration)
+            })
+    }
+
+    init(
+        permissions: PermissionsService = PermissionsService(),
+        feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient(),
+        applicationOpenHandler: @escaping ApplicationOpenHandler,
+        relaunchTargetResolver: RelaunchTargetResolver? = nil,
+        relaunchQuitHandler: RelaunchQuitHandler? = nil,
+        relaunchRunningHandler: RelaunchRunningHandler? = nil)
     {
         // Set global AX timeout to prevent hangs
         AXTimeoutConfiguration.setGlobalTimeout(Self.axTimeout)
         self.permissions = permissions
         self.feedbackClient = feedbackClient
+        self.applicationOpenHandler = applicationOpenHandler
+        self.relaunchTargetResolver = relaunchTargetResolver
+        self.relaunchQuitHandler = relaunchQuitHandler
+        self.relaunchRunningHandler = relaunchRunningHandler
 
         // Connect to visual feedback if available.
         let isMacApp = Bundle.main.bundleIdentifier?.hasPrefix("boo.peekaboo.mac") == true

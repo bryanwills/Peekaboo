@@ -61,6 +61,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case hotkey
     case targetedHotkey
     case targetedClick
+    case exactWindowTargetedClick
     case swipe
     case drag
     case moveMouse
@@ -81,6 +82,8 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case getFrontmostApplication
     case isApplicationRunning
     case launchApplication
+    case launchApplicationWithOptions
+    case relaunchApplicationWithOptions
     case activateApplication
     case quitApplication
     case hideApplication
@@ -122,10 +125,54 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case storeAnnotatedScreenshot
     case listSnapshots
     case getMostRecentSnapshot
+    case invalidateImplicitLatestSnapshot
     case cleanSnapshot
     case cleanSnapshotsOlderThan
     case cleanAllSnapshots
     case _appleScriptProbe
+
+    /// Filters operations to cases a peer at `version` can decode.
+    public static func compatible(
+        _ operations: Set<Self>,
+        with version: PeekabooBridgeProtocolVersion) -> Set<Self>
+    {
+        var compatible = operations
+        if version < PeekabooBridgeProtocolVersion(major: 1, minor: 1) {
+            compatible.remove(.targetedHotkey)
+        }
+        if version < PeekabooBridgeProtocolVersion(major: 1, minor: 2) {
+            compatible.remove(.requestPostEventPermission)
+        }
+        if version < PeekabooBridgeProtocolVersion(major: 1, minor: 3) {
+            compatible.remove(.setValue)
+            compatible.remove(.performAction)
+        }
+        if version < PeekabooBridgeProtocolVersion(major: 1, minor: 4) {
+            compatible.remove(.browserStatus)
+            compatible.remove(.browserConnect)
+            compatible.remove(.browserDisconnect)
+            compatible.remove(.browserExecute)
+        }
+        if version < PeekabooBridgeProtocolVersion(major: 1, minor: 5) {
+            compatible.remove(.desktopObservation)
+        }
+        if version < PeekabooBridgeProtocolVersion(major: 1, minor: 6) {
+            compatible.remove(.targetedClick)
+        }
+        if version < PeekabooBridgeProtocolVersion(major: 1, minor: 7) {
+            compatible.remove(.inspectAccessibilityTree)
+        }
+        if version < PeekabooBridgeProtocolVersion(major: 1, minor: 8) {
+            compatible.remove(.targetedTypeActions)
+        }
+        if version < PeekabooBridgeProtocolVersion(major: 1, minor: 9) {
+            compatible.remove(.launchApplicationWithOptions)
+            compatible.remove(.relaunchApplicationWithOptions)
+            compatible.remove(.invalidateImplicitLatestSnapshot)
+            compatible.remove(.exactWindowTargetedClick)
+        }
+        return compatible
+    }
 }
 
 public struct PeekabooBridgeClientIdentity: Codable, Sendable {
@@ -245,21 +292,95 @@ public enum PeekabooBridgeErrorCode: String, Codable, Sendable {
     case internalError
 }
 
-public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, Error {
+public enum PeekabooBridgeErrorKind: String, Codable, Sendable {
+    case elementNotFound
+    case snapshotNotFound
+    case snapshotStale
+}
+
+public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
     public let code: PeekabooBridgeErrorCode
     public let message: String
     public let details: String?
     public let permission: PeekabooBridgePermissionKind?
+    public let kind: PeekabooBridgeErrorKind?
+    public let context: String?
+    public let operationMayHaveCompleted: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case code
+        case message
+        case details
+        case permission
+        case kind
+        case context
+        case operationMayHaveCompleted
+    }
 
     public init(
         code: PeekabooBridgeErrorCode,
         message: String,
         details: String? = nil,
-        permission: PeekabooBridgePermissionKind? = nil)
+        permission: PeekabooBridgePermissionKind? = nil,
+        kind: PeekabooBridgeErrorKind? = nil,
+        context: String? = nil,
+        operationMayHaveCompleted: Bool = false)
     {
         self.code = code
         self.message = message
         self.details = details
         self.permission = permission
+        self.kind = kind
+        self.context = context
+        self.operationMayHaveCompleted = operationMayHaveCompleted
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.code = try container.decode(PeekabooBridgeErrorCode.self, forKey: .code)
+        self.message = try container.decode(String.self, forKey: .message)
+        self.details = try container.decodeIfPresent(String.self, forKey: .details)
+        self.permission = try container.decodeIfPresent(PeekabooBridgePermissionKind.self, forKey: .permission)
+        self.context = try container.decodeIfPresent(String.self, forKey: .context)
+        let rawKind = try container.decodeIfPresent(String.self, forKey: .kind)
+        self.kind = rawKind.flatMap(PeekabooBridgeErrorKind.init(rawValue:))
+        self.operationMayHaveCompleted = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .operationMayHaveCompleted) ?? false
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.code, forKey: .code)
+        try container.encode(self.message, forKey: .message)
+        try container.encodeIfPresent(self.details, forKey: .details)
+        try container.encodeIfPresent(self.permission, forKey: .permission)
+        try container.encodeIfPresent(self.kind?.rawValue, forKey: .kind)
+        try container.encodeIfPresent(self.context, forKey: .context)
+        if self.operationMayHaveCompleted {
+            try container.encode(true, forKey: .operationMayHaveCompleted)
+        }
+    }
+
+    public var errorDescription: String? {
+        self.message
+    }
+}
+
+extension PeekabooBridgeErrorEnvelope: PendingSnapshotFailureDispositionProviding {
+    public var mayCompleteSnapshotWorkAfterFailure: Bool {
+        if self.operationMayHaveCompleted {
+            return true
+        }
+        return switch self.code {
+        case .timeout:
+            true
+        case .internalError:
+            self.message == "Bridge host returned no response"
+        case .decodingFailed:
+            self.message == "Bridge host returned an invalid response"
+        default:
+            false
+        }
     }
 }

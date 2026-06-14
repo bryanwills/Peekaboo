@@ -73,7 +73,7 @@ struct ActionInputResult: Equatable {
 @MainActor
 protocol ActionInputDriving: Sendable {
     func tryClick(element: AutomationElement) throws -> ActionInputResult
-    func tryRightClick(element: AutomationElement) throws -> ActionInputResult
+    func tryRightClick(element: any AutomationElementRepresenting) throws -> ActionInputResult
     func tryScroll(
         element: AutomationElement,
         direction: PeekabooFoundation.ScrollDirection,
@@ -102,8 +102,12 @@ struct ActionInputDriver: ActionInputDriving {
         }
     }
 
-    func tryRightClick(element: AutomationElement) throws -> ActionInputResult {
-        try self.tryRightClick(element)
+    func tryRightClick(element: any AutomationElementRepresenting) throws -> ActionInputResult {
+        do {
+            return try self.performAction(AXActionNames.kAXShowMenuAction, on: element)
+        } catch ActionInputError.targetUnavailable {
+            throw ActionInputError.unsupported(.actionUnsupported)
+        }
     }
 
     func tryScroll(
@@ -235,14 +239,6 @@ struct ActionInputDriver: ActionInputDriving {
                 elementRole: element.role)
         } catch {
             throw Self.classify(error)
-        }
-    }
-
-    private func tryRightClick(_ element: any AutomationElementRepresenting) throws -> ActionInputResult {
-        do {
-            return try self.performAction(AXActionNames.kAXShowMenuAction, on: element)
-        } catch ActionInputError.targetUnavailable {
-            throw ActionInputError.unsupported(.actionUnsupported)
         }
     }
 
@@ -513,10 +509,6 @@ extension ActionInputDriver {
         {
             return try self.focusForClick(element)
         }
-    }
-
-    func tryRightClickForTesting(element: any AutomationElementRepresenting) throws -> ActionInputResult {
-        try self.tryRightClick(element)
     }
 
     func trySetValueForTesting(

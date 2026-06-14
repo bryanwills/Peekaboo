@@ -59,9 +59,14 @@ public struct InspectUITool: MCPTool {
     @MainActor
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
         let request = InspectUIRequest(arguments: arguments)
+        var newlyCreatedSnapshotID: String?
+        var newlyCreatedSnapshotWasPending = false
 
         do {
-            let snapshot = try await self.getOrCreateSnapshot(snapshotId: request.snapshotId)
+            let selection = try await self.getOrCreateSnapshot(snapshotId: request.snapshotId)
+            let snapshot = selection.snapshot
+            newlyCreatedSnapshotID = selection.isNew ? snapshot.id : nil
+            newlyCreatedSnapshotWasPending = selection.isNew && MCPToolContext.snapshotObservationStartedAt != nil
             let target = try self.parseTarget(request.appTarget)
             let windowContext = try self.makeWindowContext(for: target, traversalBudget: request.traversalBudget)
 
@@ -81,13 +86,21 @@ public struct InspectUITool: MCPTool {
                 result: snapshotResult,
                 target: target)
 
-            let metadata: Value = .object([
+            var metadataValues: [String: Value] = [
                 "snapshot_id": .string(snapshot.id),
                 "element_count": .double(Double(snapshotResult.elements.all.count)),
                 "actionable_count": .double(Double(snapshotResult.elements.all.count(where: \.isEnabled))),
                 "used_cache": .bool(snapshotResult.metadata.method.contains("cached")),
                 "truncated": .bool(snapshotResult.metadata.truncationInfo?.isTruncated == true),
-            ])
+            ]
+            if let completedAt = snapshotResult.metadata.desktopMutationCompletedAt {
+                metadataValues["desktop_mutation_completed_at"] =
+                    .double(completedAt.timeIntervalSinceReferenceDate)
+            }
+            if let allowed = snapshotResult.metadata.desktopMutationPreservationAllowed {
+                metadataValues["desktop_mutation_preservation_allowed"] = .bool(allowed)
+            }
+            let metadata: Value = .object(metadataValues)
 
             var summary = ToolEventSummary(
                 targetApp: snapshotResult.metadata.windowContext?.applicationName,
@@ -103,6 +116,14 @@ public struct InspectUITool: MCPTool {
                 content: [.text(text: summaryText, annotations: nil, _meta: nil)],
                 meta: mergedMeta)
         } catch {
+            if let newlyCreatedSnapshotID {
+                let preserveReservation = newlyCreatedSnapshotWasPending &&
+                    PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: error)
+                if !preserveReservation {
+                    try? await self.context.snapshots.cleanSnapshot(snapshotId: newlyCreatedSnapshotID)
+                    await UISnapshotManager.shared.removeSnapshot(id: newlyCreatedSnapshotID)
+                }
+            }
             self.logger.error("Inspect UI tool execution failed: \(error.localizedDescription)")
             return ToolResponse.error("Failed to inspect UI: \(error.localizedDescription)")
         }
@@ -110,13 +131,26 @@ public struct InspectUITool: MCPTool {
 
     // MARK: - Private Helpers
 
-    private func getOrCreateSnapshot(snapshotId: String?) async throws -> UISnapshot {
+    private func getOrCreateSnapshot(snapshotId: String?) async throws -> (snapshot: UISnapshot, isNew: Bool) {
         if let snapshotId {
-            if let existingSnapshot = await UISnapshotManager.shared.getSnapshot(id: snapshotId) {
-                return existingSnapshot
+            let hostHasSnapshot = try await self.context.snapshots.listSnapshots().contains { $0.id == snapshotId }
+            if hostHasSnapshot,
+               let existingSnapshot = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
+            {
+                return (existingSnapshot, false)
             }
         }
-        return await UISnapshotManager.shared.createSnapshot()
+        let observationStartedAt = MCPToolContext.snapshotObservationStartedAt
+        let snapshotId = if let observationStartedAt {
+            try await self.context.snapshots.createSnapshot(pendingAt: observationStartedAt)
+        } else {
+            try await self.context.snapshots.createSnapshot()
+        }
+        let snapshot = await UISnapshotManager.shared.createSnapshot(
+            id: snapshotId,
+            at: observationStartedAt ?? Date(),
+            pending: observationStartedAt != nil)
+        return (snapshot, true)
     }
 
     private func parseTarget(_ rawTarget: String?) throws -> ObservationTargetArgument {

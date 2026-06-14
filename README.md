@@ -93,7 +93,7 @@ For persistent setup and troubleshooting, see
 
 `click`, `type`, `press`, `hotkey`, and `paste` default to **background** delivery when Peekaboo can resolve a target process from `--app`, `--pid`, `--window-id`, or snapshot metadata. Background delivery posts process-targeted input without making the target app frontmost, so scripts can interact with Safari, Notes, Terminal, etc. without stealing focus.
 
-Use `--foreground` when the app only accepts input in its focused key window, when you need a real foreground mouse event, or when you are intentionally driving the current focus. Focus flags such as `--space-switch` and `--bring-to-current-space` also imply foreground delivery. Background input requires Event Synthesizing permission for the process that sends the event; run `peekaboo permissions request-event-synthesizing` if `permissions status` reports it missing.
+Use `--foreground` when the app only accepts input in its focused key window, when you need a real foreground mouse event, or when you are intentionally driving the current focus. Focus flags such as `--space-switch` and `--bring-to-current-space` also imply foreground delivery. Element/query clicks first use Accessibility actions; keyboard input, coordinate clicks, and synthetic click fallback require Event Synthesizing for the sending process. Run `peekaboo permissions request-event-synthesizing` if `permissions status` reports it missing.
 
 ```bash
 # Background: target Safari without activating it

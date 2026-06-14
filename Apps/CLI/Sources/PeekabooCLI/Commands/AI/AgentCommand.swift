@@ -221,6 +221,8 @@ extension AgentCommand {
 
         let configuredAIService = PeekabooAIService(configuration: services.configuration)
         let existingAgent = services.agent as? PeekabooAgentService
+        let mutationCoordinator = runtime.toolSnapshotMutationCoordinator
+        existingAgent?.configureSnapshotMutationCoordinator(mutationCoordinator)
         let existingAgentModel = existingAgent.flatMap {
             configuredAIService.resolveConfiguredModel($0.defaultModelSelection) ??
                 LanguageModel.parse(from: $0.defaultModelSelection)
@@ -236,7 +238,11 @@ extension AgentCommand {
             let agentService: any AgentServiceProtocol = if let existing = existingAgent {
                 existing
             } else {
-                try PeekabooAgentService(services: services, defaultModel: listingModel)
+                try PeekabooAgentService(
+                    services: services,
+                    defaultModel: listingModel,
+                    snapshotMutationCoordinator: mutationCoordinator
+                )
             }
             try await self.showSessions(agentService)
             return
@@ -263,7 +269,11 @@ extension AgentCommand {
         let agentService: any AgentServiceProtocol = if let existing = existingAgent {
             existing
         } else {
-            try PeekabooAgentService(services: services, defaultModel: selectedModel)
+            try PeekabooAgentService(
+                services: services,
+                defaultModel: selectedModel,
+                snapshotMutationCoordinator: mutationCoordinator
+            )
         }
 
         let terminalCapabilities = TerminalDetector.detectCapabilities()

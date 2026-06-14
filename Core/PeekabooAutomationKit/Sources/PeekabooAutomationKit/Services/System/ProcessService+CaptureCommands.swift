@@ -14,7 +14,7 @@ extension ProcessService {
             path: screenshotPath,
             existingSnapshotId: snapshotId)
 
-        try await self.annotateIfNeeded(
+        let mutationCertificate = try await self.annotateIfNeeded(
             shouldAnnotate: params.annotate ?? true,
             captureResult: captureResult,
             snapshotId: resolvedSnapshotId)
@@ -24,7 +24,9 @@ extension ProcessService {
                 "snapshot_id": .success(resolvedSnapshotId),
                 "screenshot_path": .success(screenshotPath),
             ]),
-            snapshotId: resolvedSnapshotId)
+            snapshotId: resolvedSnapshotId,
+            desktopMutationCompletedAt: mutationCertificate.completedAt,
+            desktopMutationPreservationAllowed: mutationCertificate.preservationAllowed)
     }
 
     private func screenshotParameters(from step: ScriptStep) -> ProcessCommandParameters.ScreenshotParameters {
@@ -109,9 +111,9 @@ extension ProcessService {
     private func annotateIfNeeded(
         shouldAnnotate: Bool,
         captureResult: CaptureResult,
-        snapshotId: String) async throws
+        snapshotId: String) async throws -> (completedAt: Date?, preservationAllowed: Bool?)
     {
-        guard shouldAnnotate else { return }
+        guard shouldAnnotate else { return (nil, nil) }
         let detectionResult = try await uiAutomationService.detectElements(
             in: captureResult.imageData,
             snapshotId: snapshotId,
@@ -119,5 +121,8 @@ extension ProcessService {
         try await self.snapshotManager.storeDetectionResult(
             snapshotId: snapshotId,
             result: detectionResult)
+        return (
+            detectionResult.metadata.desktopMutationCompletedAt,
+            detectionResult.metadata.desktopMutationPreservationAllowed)
     }
 }

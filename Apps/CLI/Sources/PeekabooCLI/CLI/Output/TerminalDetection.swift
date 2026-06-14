@@ -28,14 +28,18 @@ struct TerminalCapabilities {
 
 /// Terminal detection utilities following modern CLI best practices
 enum TerminalDetector {
+    @TaskLocal
+    static var standardOutputFileDescriptor: Int32?
+
     /// Detect comprehensive terminal capabilities
     static func detectCapabilities() -> TerminalCapabilities {
         // Detect comprehensive terminal capabilities
-        let isInteractive = self.isInteractiveTerminal()
-        let (width, height) = self.getTerminalDimensions()
+        let outputFileDescriptor = self.standardOutputFileDescriptor ?? STDOUT_FILENO
+        let isInteractive = self.isInteractiveTerminal(outputFileDescriptor)
+        let (width, height) = self.getTerminalDimensions(outputFileDescriptor)
         let termType = ProcessInfo.processInfo.environment["TERM"]
         let isCI = self.isCIEnvironment()
-        let isPiped = self.isPipedOutput()
+        let isPiped = self.isPipedOutput(outputFileDescriptor)
 
         let supportsColors = self.detectColorSupport(termType: termType, isInteractive: isInteractive)
         let supportsTrueColor = self.detectTrueColorSupport()
@@ -54,15 +58,15 @@ enum TerminalDetector {
     // MARK: - Core Detection Methods
 
     /// Check if stdout is connected to an interactive terminal
-    private static func isInteractiveTerminal() -> Bool {
+    private static func isInteractiveTerminal(_ outputFileDescriptor: Int32) -> Bool {
         // Check if stdout is connected to an interactive terminal
-        isatty(STDOUT_FILENO) != 0
+        isatty(outputFileDescriptor) != 0
     }
 
     /// Check if output is being piped or redirected
-    private static func isPipedOutput() -> Bool {
+    private static func isPipedOutput(_ outputFileDescriptor: Int32) -> Bool {
         // Check if output is being piped or redirected
-        isatty(STDOUT_FILENO) == 0
+        isatty(outputFileDescriptor) == 0
     }
 
     /// Detect CI/automation environments
@@ -79,7 +83,7 @@ enum TerminalDetector {
             "AZURE_PIPELINES", "TF_BUILD",
             "BITBUCKET_COMMIT", "BITBUCKET_BUILD_NUMBER",
             "DRONE", "DRONE_BUILD_NUMBER",
-            "SEMAPHORE", "SEMAPHORE_BUILD_NUMBER"
+            "SEMAPHORE", "SEMAPHORE_BUILD_NUMBER",
         ]
 
         let env = ProcessInfo.processInfo.environment
@@ -87,11 +91,11 @@ enum TerminalDetector {
     }
 
     /// Get terminal dimensions using ioctl
-    private static func getTerminalDimensions() -> (width: Int, height: Int) {
+    private static func getTerminalDimensions(_ outputFileDescriptor: Int32) -> (width: Int, height: Int) {
         // Get terminal dimensions using ioctl
         var windowSize = winsize()
 
-        guard ioctl(STDOUT_FILENO, TIOCGWINSZ, &windowSize) == 0 else {
+        guard ioctl(outputFileDescriptor, TIOCGWINSZ, &windowSize) == 0 else {
             // Fallback to environment variables
             let width = Int(ProcessInfo.processInfo.environment["COLUMNS"] ?? "80") ?? 80
             let height = Int(ProcessInfo.processInfo.environment["LINES"] ?? "24") ?? 24
@@ -120,7 +124,7 @@ enum TerminalDetector {
         if let term = termType {
             let colorTermPatterns = [
                 "color", "256color", "truecolor", "24bit",
-                "xterm-256", "screen-256", "tmux-256"
+                "xterm-256", "screen-256", "tmux-256",
             ]
 
             if colorTermPatterns.contains(where: term.contains) {
@@ -131,7 +135,7 @@ enum TerminalDetector {
             let colorTerminals = [
                 "xterm", "screen", "tmux", "rxvt", "konsole",
                 "gnome", "mate", "xfce", "terminology", "kitty",
-                "alacritty", "iterm", "hyper", "vscode"
+                "alacritty", "iterm", "hyper", "vscode",
             ]
 
             if colorTerminals.contains(where: term.contains) {
@@ -163,7 +167,7 @@ enum TerminalDetector {
         if let term = env["TERM"] {
             let trueColorTerminals = [
                 "iterm", "kitty", "alacritty", "wezterm",
-                "hyper", "vscode", "gnome-terminal"
+                "hyper", "vscode", "gnome-terminal",
             ]
             return trueColorTerminals.contains(where: term.contains)
         }

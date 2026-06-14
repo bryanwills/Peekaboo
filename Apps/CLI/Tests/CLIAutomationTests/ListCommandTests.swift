@@ -35,12 +35,12 @@ struct ListCommandCLIHarnessTests {
                 windowCount: 1
             ),
         ]
-        let context = await self.makeContext(applications: applications)
+        let context = await makeContext(applications: applications)
 
-        let result = try await self.runList(arguments: ["list", "apps", "--json"], services: context.services)
+        let result = try await runList(arguments: ["list", "apps", "--json"], services: context.services)
         #expect(result.exitStatus == 0)
 
-        let data = try #require(self.output(from: result).data(using: .utf8))
+        let data = try #require(output(from: result).data(using: .utf8))
         let payload = try JSONDecoder().decode(CodableJSONResponse<ServiceApplicationListData>.self, from: data)
         #expect(payload.success == true)
         #expect(payload.data.applications.count == 2)
@@ -58,11 +58,11 @@ struct ListCommandCLIHarnessTests {
                 windowCount: 4
             ),
         ]
-        let context = await self.makeContext(applications: applications)
+        let context = await makeContext(applications: applications)
 
-        let result = try await self.runList(arguments: ["list", "apps"], services: context.services)
+        let result = try await runList(arguments: ["list", "apps"], services: context.services)
         #expect(result.exitStatus == 0)
-        let output = self.output(from: result)
+        let output = output(from: result)
         #expect(output.contains("Viewer"))
         #expect(output.contains("PID"))
     }
@@ -94,9 +94,9 @@ struct ListCommandCLIHarnessTests {
         let applicationService = await MainActor.run {
             StubApplicationService(applications: applications, windowsByApp: [appName: windows])
         }
-        let context = await self.makeContext(applicationService: applicationService)
+        let context = await makeContext(applicationService: applicationService)
 
-        let result = try await self.runList(
+        let result = try await runList(
             arguments: [
                 "list", "windows",
                 "--app", appName,
@@ -107,14 +107,14 @@ struct ListCommandCLIHarnessTests {
         )
 
         #expect(result.exitStatus == 0)
-        let output = self.output(from: result)
+        let output = output(from: result)
         #expect(output.contains("\"windowID\""))
         #expect(output.contains("\"bounds\""))
         #expect(output.contains("\"spaceID\""))
     }
 
     @Test
-    func `list apps fails when screen recording permission missing`() async throws {
+    func `list apps works when screen recording permission is missing`() async throws {
         let applications = [
             ServiceApplicationInfo(
                 processIdentifier: 101,
@@ -127,11 +127,11 @@ struct ListCommandCLIHarnessTests {
         let screenCapture = await MainActor.run {
             StubScreenCaptureService(permissionGranted: false)
         }
-        let context = await self.makeContext(applications: applications, screenCapture: screenCapture)
+        let context = await makeContext(applications: applications, screenCapture: screenCapture)
 
-        let result = try await self.runList(arguments: ["list", "apps"], services: context.services)
-        #expect(result.exitStatus != 0)
-        #expect(self.output(from: result).contains("Screen recording permission"))
+        let result = try await runList(arguments: ["list", "apps"], services: context.services)
+        #expect(result.exitStatus == 0)
+        #expect(self.output(from: result).contains("AlphaApp"))
     }
 
     // MARK: - Helpers

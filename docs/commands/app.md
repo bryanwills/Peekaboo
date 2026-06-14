@@ -7,7 +7,7 @@ read_when:
 
 # `peekaboo app`
 
-`app` bundles every app-management primitive Peekaboo exposes: launching, quitting, hiding, relaunching, switching focus, and listing processes. Each subcommand works directly with `NSWorkspace`/AX data so it shares the same view of the system as the rest of the CLI.
+`app` bundles every app-management primitive Peekaboo exposes: launching, quitting, hiding, relaunching, switching focus, and listing processes. Commands run through the selected Peekaboo runtime host so they share its macOS session, LaunchServices, and AX view instead of the caller's sandbox.
 
 ## Subcommands
 | Name | Purpose | Key flags |
@@ -20,12 +20,12 @@ read_when:
 | `list` | Enumerate running apps. | `--include-hidden`, `--include-background`. |
 
 ## Implementation notes
-- Launch resolves bundle IDs first, then friendly names (searching `/Applications`, `/System/Applications`, `~/Applications`, etc.), and finally absolute paths. `--open` can be repeated to pass multiple documents/URLs to the launched app.
+- Launch resolves explicit paths, bundle IDs, and friendly names on the selected runtime host. `--open` can be repeated to pass multiple documents/URLs to the launched app; `--no-focus` is preserved across the bridge and suppresses activation and launch feedback UI.
 - Quit mode supports `--all` plus `--except`, automatically ignoring core system processes (`Finder`, `Dock`, `SystemUIServer`, `WindowServer`). When quits fail, the command prints hints about unsaved changes and suggests `--force`.
 - Hide/unhide uses `NSRunningApplication.hide()` / `.unhide()` and surfaces JSON output with per-app success data.
 - `switch --cycle` synthesizes Cmd+Tab events using `CGEvent` so it behaves like the real keyboard shortcut; `switch --to` activates the exact PID resolved via AX.
 - `switch --verify` confirms the requested app is frontmost after activation (only supported with `--to`).
-- `relaunch` polls for termination (up to 5 s), waits the requested interval, then launches via bundle ID or bundle path and optionally waits for `isFinishedLaunching` before reporting success.
+- `relaunch` sends quit, termination polling (up to 5 s), the requested delay, and launch as one daemon-held transaction, so even a short daemon idle timeout cannot strand the app closed. It refuses to relaunch its own daemon, launches via bundle ID or bundle path, and can wait for `isFinishedLaunching` before reporting success.
 
 ## Examples
 ```bash

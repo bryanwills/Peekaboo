@@ -52,6 +52,7 @@ struct SetValueCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsC
             let observation = await self.resolveObservationContext()
             try await observation.validateIfExplicit(using: self.services.snapshots)
             let startTime = Date()
+            self.resolvedRuntime.beginInteractionMutation()
             let result = try await AutomationServiceBridge.setValue(
                 automation: self.services.automation,
                 target: target,
@@ -59,8 +60,7 @@ struct SetValueCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsC
                 snapshotId: observation.snapshotId
             )
             await InteractionObservationInvalidator.invalidateAfterMutation(
-                observation,
-                snapshots: self.services.snapshots,
+                targets: self.resolvedRuntime.interactionMutationTargets,
                 logger: self.logger,
                 reason: "set-value"
             )

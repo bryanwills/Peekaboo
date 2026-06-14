@@ -8,7 +8,7 @@ import PeekabooFoundation
 @MainActor
 public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, TargetedHotkeyServiceProtocol,
     TargetedTypeServiceProtocol,
-    TargetedClickServiceProtocol
+    ExactWindowTargetedClickServiceProtocol
 {
     let client: PeekabooBridgeClient
     public let supportsTargetedHotkeys: Bool
@@ -20,6 +20,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public let supportsTargetedClicks: Bool
     public let targetedClickUnavailableReason: String?
     public let targetedClickRequiresEventSynthesizingPermission: Bool
+    public let supportsExactWindowTargetedClicks: Bool
     public let supportsInspectAccessibilityTree: Bool
     public let inspectAccessibilityTreeUnavailableReason: String?
 
@@ -34,6 +35,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         supportsTargetedClicks: Bool = false,
         targetedClickUnavailableReason: String? = nil,
         targetedClickRequiresEventSynthesizingPermission: Bool = false,
+        supportsExactWindowTargetedClicks: Bool = false,
         supportsInspectAccessibilityTree: Bool = false,
         inspectAccessibilityTreeUnavailableReason: String? = nil)
     {
@@ -47,6 +49,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         self.supportsTargetedClicks = supportsTargetedClicks
         self.targetedClickUnavailableReason = targetedClickUnavailableReason
         self.targetedClickRequiresEventSynthesizingPermission = targetedClickRequiresEventSynthesizingPermission
+        self.supportsExactWindowTargetedClicks = supportsExactWindowTargetedClicks
         self.supportsInspectAccessibilityTree = supportsInspectAccessibilityTree
         self.inspectAccessibilityTreeUnavailableReason = inspectAccessibilityTreeUnavailableReason
     }
@@ -87,7 +90,11 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     }
 
     public func click(target: ClickTarget, clickType: ClickType, snapshotId: String?) async throws {
-        try await self.client.click(target: target, clickType: clickType, snapshotId: snapshotId)
+        do {
+            try await self.client.click(target: target, clickType: clickType, snapshotId: snapshotId)
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.automationError(for: envelope, snapshotId: snapshotId)
+        }
     }
 
     public func click(
@@ -102,6 +109,12 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 requiresEventSynthesizingPermission: self.targetedClickRequiresEventSynthesizingPermission)
         }
 
+        if self.targetedClickRequiresEventSynthesizingPermission,
+           PeekabooBridgeTargetedClickRequest.requiresPostEventPermission(target: target, clickType: clickType)
+        {
+            throw PeekabooError.permissionDeniedEventSynthesizing
+        }
+
         do {
             try await self.client.click(
                 target: target,
@@ -109,16 +122,42 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 snapshotId: snapshotId,
                 targetProcessIdentifier: targetProcessIdentifier)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
-            switch envelope.code {
-            case .permissionDenied:
-                throw Self.permissionDeniedError(for: envelope)
-            case .invalidRequest:
-                throw PeekabooError.invalidInput(envelope.message)
-            case .operationNotSupported:
-                throw PeekabooError.serviceUnavailable(envelope.message)
-            default:
-                throw envelope
-            }
+            throw Self.automationError(for: envelope, snapshotId: snapshotId)
+        }
+    }
+
+    public func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t,
+        targetWindowID: Int) async throws
+    {
+        guard self.supportsExactWindowTargetedClicks else {
+            throw PeekabooError.serviceUnavailable(
+                "Remote bridge host does not support exact-window background clicks")
+        }
+        guard self.supportsTargetedClicks else {
+            throw Self.targetedClickUnavailableError(
+                reason: self.targetedClickUnavailableReason,
+                requiresEventSynthesizingPermission: self.targetedClickRequiresEventSynthesizingPermission)
+        }
+
+        if self.targetedClickRequiresEventSynthesizingPermission,
+           PeekabooBridgeTargetedClickRequest.requiresPostEventPermission(target: target, clickType: clickType)
+        {
+            throw PeekabooError.permissionDeniedEventSynthesizing
+        }
+
+        do {
+            try await self.client.click(
+                target: target,
+                clickType: clickType,
+                snapshotId: snapshotId,
+                targetProcessIdentifier: targetProcessIdentifier,
+                targetWindowID: targetWindowID)
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.automationError(for: envelope, snapshotId: snapshotId)
         }
     }
 
@@ -129,12 +168,16 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         typingDelay: Int,
         snapshotId: String?) async throws
     {
-        try await self.client.type(
-            text: text,
-            target: target,
-            clearExisting: clearExisting,
-            typingDelay: typingDelay,
-            snapshotId: snapshotId)
+        do {
+            try await self.client.type(
+                text: text,
+                target: target,
+                clearExisting: clearExisting,
+                typingDelay: typingDelay,
+                snapshotId: snapshotId)
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.automationError(for: envelope, snapshotId: snapshotId)
+        }
     }
 
     public func typeActions(
@@ -142,7 +185,11 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         cadence: TypingCadence,
         snapshotId: String?) async throws -> TypeResult
     {
-        try await self.client.typeActions(actions, cadence: cadence, snapshotId: snapshotId)
+        do {
+            return try await self.client.typeActions(actions, cadence: cadence, snapshotId: snapshotId)
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.automationError(for: envelope, snapshotId: snapshotId)
+        }
     }
 
     public func typeActions(
@@ -164,21 +211,16 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 snapshotId: snapshotId,
                 targetProcessIdentifier: targetProcessIdentifier)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
-            switch envelope.code {
-            case .permissionDenied:
-                throw Self.permissionDeniedError(for: envelope)
-            case .invalidRequest:
-                throw PeekabooError.invalidInput(envelope.message)
-            case .operationNotSupported:
-                throw PeekabooError.serviceUnavailable(envelope.message)
-            default:
-                throw envelope
-            }
+            throw Self.automationError(for: envelope, snapshotId: snapshotId)
         }
     }
 
     public func scroll(_ request: ScrollRequest) async throws {
-        try await self.client.scroll(request)
+        do {
+            try await self.client.scroll(request)
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.automationError(for: envelope, snapshotId: request.snapshotId)
+        }
     }
 
     public func hotkey(keys: String, holdDuration: Int) async throws {
@@ -208,6 +250,33 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
             default:
                 throw envelope
             }
+        }
+    }
+
+    static func automationError(
+        for envelope: PeekabooBridgeErrorEnvelope,
+        snapshotId: String?) -> any Error
+    {
+        switch envelope.kind {
+        case .elementNotFound:
+            return PeekabooError.elementNotFound(envelope.context ?? envelope.message)
+        case .snapshotNotFound:
+            return PeekabooError.snapshotNotFound(envelope.context ?? snapshotId ?? envelope.message)
+        case .snapshotStale:
+            return PeekabooError.snapshotStale(envelope.context ?? envelope.message)
+        case nil:
+            break
+        }
+
+        return switch envelope.code {
+        case .permissionDenied:
+            self.permissionDeniedError(for: envelope)
+        case .invalidRequest:
+            PeekabooError.invalidInput(envelope.message)
+        case .operationNotSupported:
+            PeekabooError.serviceUnavailable(envelope.message)
+        default:
+            envelope
         }
     }
 
@@ -289,7 +358,11 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         timeout: TimeInterval,
         snapshotId: String?) async throws -> WaitForElementResult
     {
-        try await self.client.waitForElement(target: target, timeout: timeout, snapshotId: snapshotId)
+        do {
+            return try await self.client.waitForElement(target: target, timeout: timeout, snapshotId: snapshotId)
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.automationError(for: envelope, snapshotId: snapshotId)
+        }
     }
 
     public func drag(_ request: DragOperationRequest) async throws {
@@ -319,12 +392,23 @@ ElementActionAutomationServiceProtocol {
     public func setValue(target: String, value: UIElementValue, snapshotId: String?) async throws
         -> ElementActionResult
     {
-        try await self.client.setValue(target: target, value: value, snapshotId: snapshotId)
+        do {
+            return try await self.client.setValue(target: target, value: value, snapshotId: snapshotId)
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.automationError(for: envelope, snapshotId: snapshotId)
+        }
     }
 
     public func performAction(target: String, actionName: String, snapshotId: String?) async throws
         -> ElementActionResult
     {
-        try await self.client.performAction(target: target, actionName: actionName, snapshotId: snapshotId)
+        do {
+            return try await self.client.performAction(
+                target: target,
+                actionName: actionName,
+                snapshotId: snapshotId)
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.automationError(for: envelope, snapshotId: snapshotId)
+        }
     }
 }

@@ -191,6 +191,66 @@ struct CommandRuntimeInjectionTests {
     }
 
     @Test
+    func `exact window click support requires protocol 1_9 capability`() {
+        let oldHost = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 8),
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.targetedClick],
+            enabledOperations: [.targetedClick]
+        )
+        let currentHost = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 9),
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.targetedClick, .exactWindowTargetedClick],
+            enabledOperations: [.targetedClick, .exactWindowTargetedClick]
+        )
+
+        #expect(!BridgeCapabilityPolicy.supportsExactWindowTargetedClicks(for: oldHost))
+        #expect(BridgeCapabilityPolicy.supportsExactWindowTargetedClicks(for: currentHost))
+    }
+
+    @Test
+    func `request-aware targeted click capability preserves AX while flagging synthetic variants`() {
+        let accessibilityOnly = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 9),
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.captureScreen, .targetedClick],
+            permissions: PermissionsStatus(
+                screenRecording: true,
+                accessibility: true,
+                postEvent: false
+            ),
+            enabledOperations: [.captureScreen, .targetedClick],
+            permissionTags: [PeekabooBridgeOperation.targetedClick.rawValue: []]
+        )
+        let unavailable = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 9),
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.captureScreen, .targetedClick],
+            permissions: PermissionsStatus(
+                screenRecording: true,
+                accessibility: false,
+                postEvent: false
+            ),
+            enabledOperations: [.captureScreen],
+            permissionTags: [PeekabooBridgeOperation.targetedClick.rawValue: []]
+        )
+
+        let accessibilityAvailability = CommandRuntime.targetedClickAvailability(for: accessibilityOnly)
+        #expect(accessibilityAvailability.isEnabled)
+        #expect(accessibilityAvailability.missingPermissions == [.postEvent])
+
+        let unavailableAvailability = CommandRuntime.targetedClickAvailability(for: unavailable)
+        #expect(!unavailableAvailability.isEnabled)
+        #expect(unavailableAvailability.missingPermissions.isEmpty)
+        #expect(unavailableAvailability.unavailableReason?.contains("Accessibility or Event Synthesizing") == true)
+    }
+
+    @Test
     func `post event permission request support requires advertised protocol operation`() {
         let supported = PeekabooBridgeHandshakeResponse(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 2),
@@ -360,10 +420,126 @@ struct CommandRuntimeInjectionTests {
     }
 
     @Test
-    func `implicit runtime candidates preserve the default app fallback only`() {
+    func `rejected default daemon uses a stable build-scoped auto-start socket`() {
+        let firstSocketPath = DaemonLaunchPolicy.autoStartSocketPath(
+            daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
+            defaultSocketWasOccupiedAndRejected: true,
+            runtimeBuildIdentity: "build-a"
+        )
+        let repeatedSocketPath = DaemonLaunchPolicy.autoStartSocketPath(
+            daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
+            defaultSocketWasOccupiedAndRejected: true,
+            runtimeBuildIdentity: "build-a"
+        )
+        let nextBuildSocketPath = DaemonLaunchPolicy.autoStartSocketPath(
+            daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
+            defaultSocketWasOccupiedAndRejected: true,
+            runtimeBuildIdentity: "build-b"
+        )
+
+        #expect(URL(fileURLWithPath: firstSocketPath).deletingLastPathComponent() ==
+            URL(fileURLWithPath: PeekabooBridgeConstants.daemonSocketPath).deletingLastPathComponent())
+        #expect(firstSocketPath == repeatedSocketPath)
+        #expect(firstSocketPath != nextBuildSocketPath)
+        #expect(URL(fileURLWithPath: firstSocketPath).lastPathComponent.hasPrefix("daemon-"))
+    }
+
+    @Test
+    func `runtime build identity is independent of the loaded universal slice`() {
+        let executableURL = URL(fileURLWithPath: "/tmp/peekaboo-universal")
+        let nativeIdentity = DaemonLaunchPolicy.runtimeBuildIdentity(executableURL: executableURL) { _ in
+            ["bbbbbbbb", "aaaaaaaa"]
+        }
+        let translatedIdentity = DaemonLaunchPolicy.runtimeBuildIdentity(executableURL: executableURL) { _ in
+            ["aaaaaaaa", "bbbbbbbb"]
+        }
+
+        #expect(nativeIdentity == translatedIdentity)
+        #expect(nativeIdentity.hasSuffix("aaaaaaaa,bbbbbbbb"))
+    }
+
+    @Test
+    func `runtime build identity reads UUIDs from every universal slice`() {
+        func littleEndian(_ value: UInt32) -> [UInt8] {
+            withUnsafeBytes(of: value.littleEndian, Array.init)
+        }
+
+        func bigEndian(_ value: UInt32) -> [UInt8] {
+            withUnsafeBytes(of: value.bigEndian, Array.init)
+        }
+
+        func thinMachO(uuid: [UInt8]) -> Data {
+            var data = Data(littleEndian(0xFEED_FACF))
+            for _ in 0..<3 {
+                data.append(contentsOf: littleEndian(0))
+            }
+            data.append(contentsOf: littleEndian(1))
+            data.append(contentsOf: littleEndian(24))
+            data.append(contentsOf: littleEndian(0))
+            data.append(contentsOf: littleEndian(0))
+            data.append(contentsOf: littleEndian(0x1B))
+            data.append(contentsOf: littleEndian(24))
+            data.append(contentsOf: uuid)
+            return data
+        }
+
+        let firstUUID = Array(UInt8(0)...UInt8(15))
+        let secondUUID = Array(UInt8(16)...UInt8(31))
+        let firstSlice = thinMachO(uuid: firstUUID)
+        let secondSlice = thinMachO(uuid: secondUUID)
+        let firstOffset = UInt32(48)
+        let secondOffset = firstOffset + UInt32(firstSlice.count)
+
+        var universal = Data([0xCA, 0xFE, 0xBA, 0xBE])
+        universal.append(contentsOf: bigEndian(2))
+        for (offset, size) in [
+            (firstOffset, UInt32(firstSlice.count)),
+            (secondOffset, UInt32(secondSlice.count)),
+        ] {
+            universal.append(contentsOf: bigEndian(0))
+            universal.append(contentsOf: bigEndian(0))
+            universal.append(contentsOf: bigEndian(offset))
+            universal.append(contentsOf: bigEndian(size))
+            universal.append(contentsOf: bigEndian(0))
+        }
+        universal.append(firstSlice)
+        universal.append(secondSlice)
+
+        #expect(Set(DaemonLaunchPolicy.machoUUIDs(in: universal)) == [
+            "000102030405060708090a0b0c0d0e0f",
+            "101112131415161718191a1b1c1d1e1f",
+        ])
+    }
+
+    @Test
+    func `auto-start keeps unoccupied and custom daemon sockets`() {
+        #expect(DaemonLaunchPolicy.autoStartSocketPath(
+            daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
+            defaultSocketWasOccupiedAndRejected: false,
+            runtimeBuildIdentity: "build-a"
+        ) == PeekabooBridgeConstants.daemonSocketPath)
+        #expect(DaemonLaunchPolicy.autoStartSocketPath(
+            daemonSocketPath: "/tmp/custom-daemon.sock",
+            defaultSocketWasOccupiedAndRejected: true,
+            runtimeBuildIdentity: "build-a"
+        ) == "/tmp/custom-daemon.sock")
+    }
+
+    @Test
+    func `implicit runtime candidates preserve the default app fallback only`() throws {
+        let buildScopedPath = DaemonLaunchPolicy.buildScopedDaemonSocketPath(
+            daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
+            runtimeBuildIdentity: DaemonLaunchPolicy.runtimeBuildIdentity()
+        )
         #expect(DaemonLaunchPolicy.implicitRuntimeCandidateRole(
             socketPath: PeekabooBridgeConstants.daemonSocketPath,
-            daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath
+            daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
+            buildScopedDaemonSocketPath: buildScopedPath
+        ) == .reusableDaemon)
+        #expect(try DaemonLaunchPolicy.implicitRuntimeCandidateRole(
+            socketPath: #require(buildScopedPath),
+            daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
+            buildScopedDaemonSocketPath: buildScopedPath
         ) == .reusableDaemon)
         #expect(DaemonLaunchPolicy.implicitRuntimeCandidateRole(
             socketPath: PeekabooBridgeConstants.peekabooSocketPath,
@@ -439,15 +615,75 @@ struct CommandRuntimeInjectionTests {
     }
 
     @Test
-    func `default bridge diagnostics include the legacy runtime fallback`() {
+    func `default bridge diagnostics include build-scoped and legacy runtime fallbacks`() throws {
         let runtimePaths = BridgeDiagnostics.runtimeCandidateSocketPaths(
             runtimeOptions: CommandRuntimeOptions(),
             environment: [:]
         )
+        let buildScopedPath = DaemonLaunchPolicy.buildScopedDaemonSocketPath(
+            daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
+            runtimeBuildIdentity: DaemonLaunchPolicy.runtimeBuildIdentity()
+        )
+
+        #expect(try runtimePaths == [
+            PeekabooBridgeConstants.daemonSocketPath,
+            #require(buildScopedPath),
+            PeekabooBridgeConstants.peekabooSocketPath,
+        ])
+        #expect(try DaemonControlResolver.defaultSocketPaths() == [
+            PeekabooBridgeConstants.daemonSocketPath,
+            #require(buildScopedPath),
+        ])
+    }
+
+    @Test
+    func `bridge diagnostics preserve runtime ordering for validated historical daemons`() throws {
+        let historicalPath = "/tmp/peekaboo/daemon-bbbbbbbbbbbbbbbb.sock"
+        let options = CommandRuntimeOptions()
+        let runtimePaths = BridgeDiagnostics.runtimeCandidateSocketPaths(
+            runtimeOptions: options,
+            environment: [:],
+            historicalBuildScopedDaemonSocketPaths: [historicalPath]
+        )
+        let diagnosticPaths = BridgeDiagnostics.diagnosticSocketPaths(
+            runtimeOptions: options,
+            environment: [:],
+            historicalBuildScopedDaemonSocketPaths: [historicalPath]
+        )
+        let buildScopedPath = try #require(DaemonLaunchPolicy.buildScopedDaemonSocketPath(
+            daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
+            runtimeBuildIdentity: DaemonLaunchPolicy.runtimeBuildIdentity()
+        ))
 
         #expect(runtimePaths == [
             PeekabooBridgeConstants.daemonSocketPath,
+            buildScopedPath,
+            historicalPath,
             PeekabooBridgeConstants.peekabooSocketPath,
+        ])
+        #expect(Array(diagnosticPaths.prefix(runtimePaths.count)) == runtimePaths)
+    }
+
+    @Test
+    func `bridge diagnostics use GUI-first runtime ordering for host inventory`() throws {
+        let historicalPath = "/tmp/peekaboo/daemon-bbbbbbbbbbbbbbbb.sock"
+        var options = CommandRuntimeOptions()
+        options.requiresHostApplicationInventory = true
+        let runtimePaths = BridgeDiagnostics.runtimeCandidateSocketPaths(
+            runtimeOptions: options,
+            environment: [:],
+            historicalBuildScopedDaemonSocketPaths: [historicalPath]
+        )
+        let buildScopedPath = try #require(DaemonLaunchPolicy.buildScopedDaemonSocketPath(
+            daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
+            runtimeBuildIdentity: DaemonLaunchPolicy.runtimeBuildIdentity()
+        ))
+
+        #expect(runtimePaths == [
+            PeekabooBridgeConstants.peekabooSocketPath,
+            PeekabooBridgeConstants.daemonSocketPath,
+            buildScopedPath,
+            historicalPath,
         ])
     }
 

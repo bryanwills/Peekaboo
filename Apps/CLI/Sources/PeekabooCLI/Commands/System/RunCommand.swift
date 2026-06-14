@@ -63,14 +63,28 @@ struct RunCommand: OutputFormattable {
         var didEmitJSONResponse = false
 
         do {
-            let resolvedScriptPath = self.resolvedScriptPath()
+            let resolvedScriptPath = resolvedScriptPath()
             let script = try await ProcessServiceBridge.loadScript(services: self.services, path: resolvedScriptPath)
+            switch Self.finalSnapshotEffect(in: script) {
+            case .none:
+                break
+            case .mutation, .freshObservation:
+                self.resolvedRuntime.beginInteractionMutation()
+            }
             let results = try await ProcessServiceBridge.executeScript(
                 services: self.services,
                 script,
                 failFast: !self.noFailFast,
                 verbose: self.isVerbose
             )
+            if let freshObservation = Self.terminalFreshObservation(in: script, results: results) {
+                self.resolvedRuntime.preserveFreshObservation(
+                    snapshotId: freshObservation.snapshotId,
+                    startedAt: freshObservation.confirmedMutationCompletedAt ?? freshObservation.startedAt,
+                    preservedAt: freshObservation.completedAt,
+                    preservationAllowed: freshObservation.preservationAllowed
+                )
+            }
 
             let output = ScriptExecutionResult(
                 success: results.allSatisfy(\.success),
@@ -84,7 +98,7 @@ struct RunCommand: OutputFormattable {
             )
 
             if let outputPath = self.output {
-                let resolvedOutputPath = self.resolvedOutputPath(from: outputPath)
+                let resolvedOutputPath = resolvedOutputPath(from: outputPath)
                 let data = try JSONEncoder().encode(output)
                 try data.write(to: URL(fileURLWithPath: resolvedOutputPath))
                 if !self.jsonOutput {
@@ -129,6 +143,106 @@ struct RunCommand: OutputFormattable {
 
     func resolvedOutputPath(from outputPath: String) -> String {
         PathResolver.expandPath(outputPath)
+    }
+
+    enum ScriptFinalSnapshotEffect: Equatable {
+        case none
+        case mutation
+        case freshObservation
+    }
+
+    static func finalSnapshotEffect(in script: PeekabooScript) -> ScriptFinalSnapshotEffect {
+        var effect = ScriptFinalSnapshotEffect.none
+        for step in script.steps {
+            switch step.command.lowercased() {
+            case "sleep":
+                continue
+            case "see":
+                effect = self.isFreshObservationStep(step) ? .freshObservation : .mutation
+            case "dock":
+                if self.isReadOnlyDockStep(step) {
+                    continue
+                }
+                effect = .mutation
+            case "clipboard":
+                if self.isReadOnlyClipboardStep(step) {
+                    continue
+                }
+                effect = .mutation
+            default:
+                effect = .mutation
+            }
+        }
+        return effect
+    }
+
+    private static func isFreshObservationStep(_ step: ScriptStep) -> Bool {
+        guard step.command.lowercased() == "see" else { return false }
+        let annotate: Bool? = switch step.params {
+        case let .screenshot(parameters):
+            parameters.annotate
+        case let .generic(parameters):
+            parameters["annotate"].flatMap { Bool($0) }
+        default:
+            nil
+        }
+        return annotate ?? true
+    }
+
+    private static func isReadOnlyClipboardStep(_ step: ScriptStep) -> Bool {
+        let action: String? = switch step.params {
+        case let .clipboard(parameters):
+            parameters.action
+        case let .generic(parameters):
+            parameters["action"]
+        default:
+            nil
+        }
+        guard let action else { return false }
+        return ["get", "save"].contains(action.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    }
+
+    private static func isReadOnlyDockStep(_ step: ScriptStep) -> Bool {
+        let action: String? = switch step.params {
+        case let .dock(parameters):
+            parameters.action
+        case let .generic(parameters):
+            parameters["action"]
+        default:
+            nil
+        }
+        return action?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "list"
+    }
+
+    struct TerminalFreshObservation {
+        let snapshotId: String
+        let startedAt: Date
+        let completedAt: Date
+        let confirmedMutationCompletedAt: Date?
+        let preservationAllowed: Bool
+    }
+
+    static func terminalFreshObservation(
+        in script: PeekabooScript,
+        results: [StepResult]
+    ) -> TerminalFreshObservation? {
+        guard self.finalSnapshotEffect(in: script) == .freshObservation,
+              results.count == script.steps.count,
+              results.allSatisfy(\.success),
+              let observationIndex = script.steps.lastIndex(where: { self.isFreshObservationStep($0) })
+        else { return nil }
+        let result = results[observationIndex]
+        guard result.command.lowercased() == "see",
+              let snapshotId = result.snapshotId,
+              let startedAt = result.startedAt
+        else { return nil }
+        return TerminalFreshObservation(
+            snapshotId: snapshotId,
+            startedAt: startedAt,
+            completedAt: startedAt.addingTimeInterval(result.executionTime),
+            confirmedMutationCompletedAt: result.desktopMutationCompletedAt,
+            preservationAllowed: result.desktopMutationPreservationAllowed ?? true
+        )
     }
 
     @MainActor

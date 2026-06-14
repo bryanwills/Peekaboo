@@ -163,7 +163,9 @@ extension PermissionsCommand {
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
-            let granted = runtime.services.permissions.requestScreenRecordingPermission(interactive: true)
+            let granted = await PermissionHelpers.performInteractivePermissionRequest(using: runtime) {
+                runtime.services.permissions.requestScreenRecordingPermission(interactive: true)
+            }
             let result = Result(action: "request-screen-recording", granted: granted)
 
             if self.jsonOutput {
@@ -208,7 +210,10 @@ extension PermissionsCommand {
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
             do {
-                let result = try await PermissionHelpers.requestEventSynthesizingPermission(services: runtime.services)
+                let result = try await PermissionHelpers.requestEventSynthesizingPermission(
+                    services: runtime.services,
+                    runtime: runtime
+                )
                 self.render(result)
             } catch {
                 self.handleError(error)

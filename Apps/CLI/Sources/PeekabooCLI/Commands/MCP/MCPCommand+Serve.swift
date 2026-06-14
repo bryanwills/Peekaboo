@@ -57,7 +57,12 @@ extension MCPCommand {
                     try await daemon.startChecked()
                 }
 
-                let server = try await PeekabooMCPServer()
+                let mutationCoordinator = runtime.toolSnapshotMutationCoordinator
+                let toolContext = Self.makeToolContext(
+                    services: runtime.services,
+                    snapshotMutationCoordinator: mutationCoordinator
+                )
+                let server = try await PeekabooMCPServer(toolContext: toolContext)
                 try await server.serve(transport: transportType, port: self.port)
                 await Self.stopLocalDaemon(localDaemon)
             } catch let exitCode as ExitCode {
@@ -73,6 +78,25 @@ extension MCPCommand {
         private static func stopLocalDaemon(_ daemon: PeekabooDaemon?) async {
             guard let daemon, await daemon.requestStop() else { return }
             await daemon.waitUntilStopped()
+        }
+
+        static func makeToolContext(
+            services: any PeekabooServiceProviding,
+            snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?
+        ) -> MCPToolContext {
+            let snapshotExecutionGate: MCPToolSnapshotExecutionGate
+            if let agent = services.agent as? PeekabooAgentService {
+                agent.configureSnapshotMutationCoordinator(snapshotMutationCoordinator)
+                snapshotExecutionGate = agent.snapshotExecutionGate
+            } else {
+                snapshotExecutionGate = MCPToolSnapshotExecutionGate()
+            }
+
+            return MCPToolContext(
+                services: services,
+                snapshotMutationCoordinator: snapshotMutationCoordinator,
+                snapshotExecutionGate: snapshotExecutionGate
+            )
         }
 
         static func transportType(named name: String) -> PeekabooCore.TransportType? {

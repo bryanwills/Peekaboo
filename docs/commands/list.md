@@ -12,7 +12,7 @@ read_when:
 ## Subcommands
 | Subcommand | What it does | Notable options |
 | --- | --- | --- |
-| `apps` (default) | Enumerates every running GUI app with bundle ID, PID, and focus status. | None – but it enforces screen-recording permission before scanning. |
+| `apps` (default) | Enumerates every running GUI app with bundle ID, PID, and focus status. | None. |
 | `windows` | Lists the windows owned by a specific process with optional bounds/ID metadata. | `--app <name|bundle|PID:1234>` (required), `--pid`, `--include-details bounds,ids,off_screen`. |
 | `menubar` | Dumps every status-item title/index so you can target them via `menubar click`. | Supports `--json` for scripts piping into `jq`. |
 | `screens` | Shows connected displays, resolution, scaling, and whether they are main/secondary. | None. |
@@ -20,8 +20,8 @@ read_when:
 
 ## Implementation notes
 - The root command does nothing; Commander dispatches straight to the subcommand so `peekaboo list` defaults to `list apps`.
-- Read-only inventory subcommands run locally by default to keep repeated agent inventory calls fast; pass `--bridge-socket <path>` when you explicitly want a bridge host to answer.
-- `apps` and `windows` call `requireScreenRecordingPermission` before crawling AX so macOS doesn’t silently strip metadata.
+- Application inventory prefers the GUI bridge host so sandboxed CLI callers see the GUI session’s complete process list. Other read-only inventory stays local by default unless its command needs host state or you pass `--bridge-socket <path>`.
+- `windows` calls `requireScreenRecordingPermission` before crawling AX so macOS doesn’t silently strip metadata; `apps` does not require Screen Recording.
 - `windows` accepts either user-friendly names or `PID:####` tokens and normalizes `--include-details` values by lowercasing + replacing `-` with `_`, so both `--include-details offscreen,bounds` and `off_screen` work.
 - Menu bar listing is powered by the same `MenuServiceBridge` used by `peekaboo menubar`, so indices reported here line up with what `menubar click --index` expects.
 - App/window/screen inventory uses `UnifiedToolOutput` payloads, which include `data`, `summary`, and `metadata`. `list permissions --json` mirrors `permissions status --json` with the standard `{ success, data }` envelope.

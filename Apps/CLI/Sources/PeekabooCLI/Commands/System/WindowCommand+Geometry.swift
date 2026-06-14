@@ -65,10 +65,10 @@ extension WindowCommand {
 
                 // Move the window
                 let newOrigin = CGPoint(x: x, y: y)
+                self.resolvedRuntime.beginInteractionMutation()
                 try await WindowServiceBridge.moveWindow(windows: self.services.windows, target: target, to: newOrigin)
                 await invalidateLatestSnapshotAfterWindowMutation(
-                    services: self.services,
-                    logger: self.logger,
+                    runtime: self.resolvedRuntime,
                     reason: "window move"
                 )
 
@@ -180,10 +180,10 @@ extension WindowCommand {
 
                 // Resize the window
                 let newSize = CGSize(width: width, height: height)
+                self.resolvedRuntime.beginInteractionMutation()
                 try await WindowServiceBridge.resizeWindow(windows: self.services.windows, target: target, to: newSize)
                 await invalidateLatestSnapshotAfterWindowMutation(
-                    services: self.services,
-                    logger: self.logger,
+                    runtime: self.resolvedRuntime,
                     reason: "window resize"
                 )
 
@@ -284,14 +284,14 @@ extension WindowCommand {
 
                 // Set bounds
                 let newBounds = CGRect(x: x, y: y, width: width, height: height)
+                self.resolvedRuntime.beginInteractionMutation()
                 try await WindowServiceBridge.setWindowBounds(
                     windows: self.services.windows,
                     target: target,
                     bounds: newBounds
                 )
                 await invalidateLatestSnapshotAfterWindowMutation(
-                    services: self.services,
-                    logger: self.logger,
+                    runtime: self.resolvedRuntime,
                     reason: "window set-bounds"
                 )
 

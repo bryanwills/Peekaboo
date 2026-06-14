@@ -157,7 +157,75 @@ struct SeeCommandTests {
 @Suite(.serialized, .tags(.fast))
 struct SeeCommandRuntimeTests {
     @Test
-    func `See command stores screenshot metadata and prints summary`() async throws {
+    @MainActor
+    func `Remote See publishes a host-certified observation without a caller barrier`() async throws {
+        try await self.withTempConfigEnv { tempDir in
+            let fixture = Self.makeSeeCommandRuntimeFixture()
+            let automation = StubAutomationService()
+            automation.detectElementsHandler = { _, snapshotID, _ in
+                let metadata = fixture.detectionResult.metadata
+                return try ElementDetectionResult(
+                    snapshotId: #require(snapshotID),
+                    screenshotPath: fixture.detectionResult.screenshotPath,
+                    elements: fixture.detectionResult.elements,
+                    metadata: DetectionMetadata(
+                        detectionTime: metadata.detectionTime,
+                        elementCount: metadata.elementCount,
+                        method: metadata.method,
+                        warnings: metadata.warnings,
+                        windowContext: metadata.windowContext,
+                        isDialog: metadata.isDialog,
+                        truncationInfo: metadata.truncationInfo,
+                        desktopMutationCompletedAt: Date(),
+                        desktopMutationPreservationAllowed: true
+                    )
+                )
+            }
+
+            let watermarkStore = DesktopMutationWatermarkStore(directoryURL: tempDir)
+            let snapshots = InMemorySnapshotManager(desktopMutationWatermarkStore: watermarkStore)
+            let windowsByApp = [fixture.applicationInfo.name: [fixture.windowInfo]]
+            let services = TestServicesFactory.makePeekabooServices(
+                applications: StubApplicationService(
+                    applications: [fixture.applicationInfo],
+                    windowsByApp: windowsByApp
+                ),
+                windows: StubWindowService(windowsByApp: windowsByApp),
+                snapshots: snapshots,
+                automation: automation,
+                screenCapture: fixture.screenCapture
+            )
+            let outputURL = tempDir.appendingPathComponent("remote-see.png")
+            var command = try SeeCommand.parse([
+                "--mode", "frontmost",
+                "--no-web-focus",
+                "--path", outputURL.path,
+                "--json",
+            ])
+            let runtime = CommandRuntime(
+                configuration: .init(
+                    verbose: false,
+                    jsonOutput: true,
+                    logLevel: nil,
+                    captureEnginePreference: nil,
+                    inputStrategy: nil
+                ),
+                services: services,
+                selectedRemoteSocketPath: "/tmp/selected.sock",
+                interactionMutationTracker: InteractionMutationTracker(
+                    desktopMutationWatermarkStore: watermarkStore
+                )
+            )
+
+            try await command.run(using: runtime)
+
+            #expect(await snapshots.getMostRecentSnapshot() != nil)
+            #expect(!runtime.interactionMutationTracker.hasPendingDurableMutation)
+        }
+    }
+
+    @Test
+    func `See without web focus publishes only a complete snapshot`() async throws {
         try await self.withTempConfigEnv { _ in
             let fixture = Self.makeSeeCommandRuntimeFixture()
             let automation = StubAutomationService()
@@ -175,6 +243,7 @@ struct SeeCommandRuntimeTests {
                 [
                     "see",
                     "--mode", "frontmost",
+                    "--no-web-focus",
                     "--path", outputURL.path,
                 ],
                 services: context.services
@@ -182,11 +251,309 @@ struct SeeCommandRuntimeTests {
 
             #expect(result.exitStatus == 0)
 
-            let storedScreenshots = context.snapshots.storedScreenshots[fixture.snapshotId] ?? []
+            let storedScreenshots = context.snapshots.storedScreenshots.values.flatMap(\.self)
             #expect(storedScreenshots.count == 1)
             #expect(storedScreenshots.first?.path == outputURL.path)
             #expect(storedScreenshots.first?.applicationName == fixture.applicationInfo.name)
             #expect(storedScreenshots.first?.windowTitle == fixture.windowInfo.title)
+            #expect(!context.snapshots.exposedPendingSnapshotDuringWrite)
+            let storedSnapshotID = try #require(context.snapshots.storedScreenshots.keys.first)
+            #expect(await context.snapshots.getMostRecentSnapshot() == storedSnapshotID)
+            #expect(automation.detectElementsCalls.first?.snapshotId == storedSnapshotID)
+        }
+    }
+
+    @Test
+    func `See suppresses success output when snapshot publication fails`() async throws {
+        try await self.withTempConfigEnv { _ in
+            let fixture = Self.makeSeeCommandRuntimeFixture()
+            let automation = StubAutomationService()
+            automation.nextDetectionResult = fixture.detectionResult
+
+            let (context, outputURL) = Self.makeSeeCommandRuntimeContext(
+                automation: automation,
+                screenCapture: fixture.screenCapture,
+                applicationInfo: fixture.applicationInfo,
+                windowInfo: fixture.windowInfo
+            )
+            context.snapshots.invalidationError = PeekabooError.operationError(
+                message: "invalidation unavailable"
+            )
+            defer { try? FileManager.default.removeItem(at: outputURL) }
+
+            let result = try await InProcessCommandRunner.run(
+                [
+                    "see",
+                    "--mode", "frontmost",
+                    "--no-web-focus",
+                    "--path", outputURL.path,
+                    "--json",
+                ],
+                services: context.services
+            )
+
+            #expect(result.exitStatus == 1)
+            #expect(!result.combinedOutput.contains("\"snapshot_id\""))
+            #expect(context.snapshots.invalidationCutoffs.count >= 2)
+            #expect(try await context.snapshots.listSnapshots().isEmpty)
+        }
+    }
+
+    @Test
+    func `See snapshot reservation remains inside the overall timeout`() async throws {
+        try await self.withTempConfigEnv { _ in
+            let fixture = Self.makeSeeCommandRuntimeFixture()
+            let automation = StubAutomationService()
+            automation.nextDetectionResult = fixture.detectionResult
+
+            let (context, outputURL) = Self.makeSeeCommandRuntimeContext(
+                automation: automation,
+                screenCapture: fixture.screenCapture,
+                applicationInfo: fixture.applicationInfo,
+                windowInfo: fixture.windowInfo
+            )
+            context.snapshots.snapshotCreationDelay = .seconds(4)
+            defer { try? FileManager.default.removeItem(at: outputURL) }
+
+            let startedAt = ContinuousClock.now
+            let result = try await InProcessCommandRunner.run(
+                [
+                    "see",
+                    "--mode", "frontmost",
+                    "--no-web-focus",
+                    "--timeout-seconds", "1",
+                    "--path", outputURL.path,
+                    "--json",
+                ],
+                services: context.services
+            )
+            let elapsed = startedAt.duration(to: .now)
+
+            #expect(result.exitStatus == 1)
+            #expect(elapsed < .seconds(2.5))
+            #expect(!result.combinedOutput.contains("\"snapshot_id\""))
+            #expect(try await context.snapshots.listSnapshots().isEmpty)
+        }
+    }
+
+    @Test
+    func `See publication remains inside the overall timeout`() async throws {
+        try await self.withTempConfigEnv { _ in
+            let fixture = Self.makeSeeCommandRuntimeFixture()
+            let automation = StubAutomationService()
+            automation.nextDetectionResult = fixture.detectionResult
+
+            let (context, outputURL) = Self.makeSeeCommandRuntimeContext(
+                automation: automation,
+                screenCapture: fixture.screenCapture,
+                applicationInfo: fixture.applicationInfo,
+                windowInfo: fixture.windowInfo
+            )
+            context.snapshots.preservingInvalidationDelay = .seconds(4)
+            defer { try? FileManager.default.removeItem(at: outputURL) }
+
+            let startedAt = ContinuousClock.now
+            let result = try await InProcessCommandRunner.run(
+                [
+                    "see",
+                    "--mode", "frontmost",
+                    "--no-web-focus",
+                    "--timeout-seconds", "1",
+                    "--path", outputURL.path,
+                    "--json",
+                ],
+                services: context.services
+            )
+            let elapsed = startedAt.duration(to: .now)
+
+            #expect(result.exitStatus == 1)
+            #expect(elapsed < .seconds(2.5))
+            #expect(!result.combinedOutput.contains("\"snapshot_id\""))
+            #expect(try await context.snapshots.listSnapshots().isEmpty)
+        }
+    }
+
+    @Test
+    func `Timed out See keeps late snapshot writes hidden`() async throws {
+        try await self.withTempConfigEnv { _ in
+            let fixture = Self.makeSeeCommandRuntimeFixture()
+            let automation = StubAutomationService()
+            let (context, outputURL) = Self.makeSeeCommandRuntimeContext(
+                automation: automation,
+                screenCapture: fixture.screenCapture,
+                applicationInfo: fixture.applicationInfo,
+                windowInfo: fixture.windowInfo
+            )
+            defer { try? FileManager.default.removeItem(at: outputURL) }
+            var lateWriteTask: Task<Void, Never>?
+            var lateWriteSucceeded = false
+
+            automation.detectElementsHandler = { _, snapshotID, _ in
+                let snapshotID = try #require(snapshotID)
+                let lateResult = ElementDetectionResult(
+                    snapshotId: snapshotID,
+                    screenshotPath: outputURL.path,
+                    elements: fixture.detectionResult.elements,
+                    metadata: fixture.detectionResult.metadata
+                )
+                let task = Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(1.2))
+                    do {
+                        try await context.snapshots.storeDetectionResult(
+                            snapshotId: snapshotID,
+                            result: lateResult
+                        )
+                        lateWriteSucceeded = true
+                    } catch {
+                        Issue.record("Late snapshot write failed: \(error)")
+                    }
+                }
+                lateWriteTask = task
+                await task.value
+                throw TestStubError.unimplemented(#function)
+            }
+
+            let result = try await InProcessCommandRunner.run(
+                [
+                    "see",
+                    "--mode", "frontmost",
+                    "--no-web-focus",
+                    "--timeout-seconds", "1",
+                    "--path", outputURL.path,
+                ],
+                services: context.services
+            )
+
+            #expect(result.exitStatus == 1)
+            guard let task = lateWriteTask else {
+                Issue.record("See never started detection: \(result.combinedOutput)")
+                return
+            }
+            await task.value
+            #expect(lateWriteSucceeded)
+            #expect(await context.snapshots.getMostRecentSnapshot() == nil)
+            #expect(try await context.snapshots.listSnapshots().isEmpty)
+        }
+    }
+
+    @Test
+    func `Bridge transport timeout keeps late See writes hidden`() async throws {
+        try await self.withTempConfigEnv { _ in
+            let fixture = Self.makeSeeCommandRuntimeFixture()
+            let automation = StubAutomationService()
+            let (context, outputURL) = Self.makeSeeCommandRuntimeContext(
+                automation: automation,
+                screenCapture: fixture.screenCapture,
+                applicationInfo: fixture.applicationInfo,
+                windowInfo: fixture.windowInfo
+            )
+            defer { try? FileManager.default.removeItem(at: outputURL) }
+            var lateWriteTask: Task<Void, Never>?
+
+            automation.detectElementsHandler = { _, snapshotID, _ in
+                let snapshotID = try #require(snapshotID)
+                let lateResult = ElementDetectionResult(
+                    snapshotId: snapshotID,
+                    screenshotPath: outputURL.path,
+                    elements: fixture.detectionResult.elements,
+                    metadata: fixture.detectionResult.metadata
+                )
+                let task = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(50))
+                    try? await context.snapshots.storeDetectionResult(
+                        snapshotId: snapshotID,
+                        result: lateResult
+                    )
+                }
+                lateWriteTask = task
+                throw POSIXError(.ETIMEDOUT)
+            }
+
+            let result = try await InProcessCommandRunner.run(
+                [
+                    "see",
+                    "--mode", "frontmost",
+                    "--no-web-focus",
+                    "--path", outputURL.path,
+                ],
+                services: context.services
+            )
+
+            #expect(result.exitStatus == 1)
+            let task = try #require(lateWriteTask)
+            await task.value
+            #expect(!context.snapshots.detectionResults.isEmpty)
+            #expect(await context.snapshots.getMostRecentSnapshot() == nil)
+            #expect(try await context.snapshots.listSnapshots().isEmpty)
+        }
+    }
+
+    @Test
+    func `Timed out See drops a late successful completion`() async throws {
+        try await self.withTempConfigEnv { _ in
+            let fixture = Self.makeSeeCommandRuntimeFixture()
+            let automation = StubAutomationService()
+            let (context, outputURL) = Self.makeSeeCommandRuntimeContext(
+                automation: automation,
+                screenCapture: fixture.screenCapture,
+                applicationInfo: fixture.applicationInfo,
+                windowInfo: fixture.windowInfo
+            )
+            defer {
+                CLIInstrumentation.LoggerControl.clearDebugLogs()
+                try? FileManager.default.removeItem(at: outputURL)
+            }
+            CLIInstrumentation.LoggerControl.clearDebugLogs()
+            var lateDetectionTask: Task<ElementDetectionResult, Never>?
+
+            automation.detectElementsHandler = { _, snapshotID, _ in
+                let snapshotID = try #require(snapshotID)
+                let lateResult = ElementDetectionResult(
+                    snapshotId: snapshotID,
+                    screenshotPath: outputURL.path,
+                    elements: fixture.detectionResult.elements,
+                    metadata: fixture.detectionResult.metadata
+                )
+                let task = Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(1.2))
+                    return lateResult
+                }
+                lateDetectionTask = task
+                return await task.value
+            }
+
+            let result = try await InProcessCommandRunner.run(
+                [
+                    "see",
+                    "--mode", "frontmost",
+                    "--no-web-focus",
+                    "--timeout-seconds", "1",
+                    "--path", outputURL.path,
+                    "--json",
+                ],
+                services: context.services
+            )
+
+            #expect(result.exitStatus == 1)
+            guard let task = lateDetectionTask else {
+                Issue.record("See never started detection: \(result.combinedOutput)")
+                return
+            }
+            _ = await task.value
+            for _ in 0..<100 where context.snapshots.detectionResults.isEmpty {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            try await Task.sleep(for: .milliseconds(50))
+            CLIInstrumentation.LoggerControl.flush()
+            let logs = CLIInstrumentation.LoggerControl.debugLogs()
+            #expect(!logs.contains { line in
+                line.contains("Operation completed") &&
+                    line.contains("operation=see_command") &&
+                    line.contains("success=true")
+            })
+            #expect(!context.snapshots.detectionResults.isEmpty)
+            #expect(await context.snapshots.getMostRecentSnapshot() == nil)
+            #expect(try await context.snapshots.listSnapshots().isEmpty)
         }
     }
 

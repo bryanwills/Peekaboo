@@ -58,6 +58,9 @@ extension DialogCommand {
 
             do {
                 try self.target.validate()
+                if self.focusOptions.autoFocus {
+                    self.resolvedRuntime.beginInteractionMutation()
+                }
                 try await ensureFocused(
                     snapshotId: nil,
                     target: self.target,
@@ -69,6 +72,7 @@ extension DialogCommand {
                 let appHint = try await DialogCommand.resolveDialogAppHint(target: self.target, services: self.services)
 
                 let fieldIdentifier = self.field ?? self.index.map { String($0) }
+                self.resolvedRuntime.beginInteractionMutation()
                 let result = try await self.services.dialogs.enterText(
                     text: self.text,
                     fieldIdentifier: fieldIdentifier,

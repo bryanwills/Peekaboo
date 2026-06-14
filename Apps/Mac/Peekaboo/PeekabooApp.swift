@@ -13,7 +13,9 @@ struct PeekabooApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @Environment(\.openWindow) private var openWindow
 
-    @State private var services = PeekabooServices(snapshotManager: InMemorySnapshotManager())
+    @State private var services = PeekabooServices(
+        snapshotManager: InMemorySnapshotManager(
+            desktopMutationWatermarkStore: DesktopMutationWatermarkStore()))
     // Core state - initialized together for proper dependencies
     @State private var settings = PeekabooSettings()
     @State private var sessionStore = SessionStore()

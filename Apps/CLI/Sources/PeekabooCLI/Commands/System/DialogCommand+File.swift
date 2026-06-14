@@ -62,6 +62,9 @@ extension DialogCommand {
 
             do {
                 try self.target.validate()
+                if self.focusOptions.autoFocus {
+                    self.resolvedRuntime.beginInteractionMutation()
+                }
                 try await ensureFocused(
                     snapshotId: nil,
                     target: self.target,
@@ -76,9 +79,11 @@ extension DialogCommand {
                 let select = self.select
                 let ensureExpanded = self.ensureExpanded
 
+                self.resolvedRuntime.beginInteractionMutation()
                 let result = try await withMainActorCommandTimeout(
                     seconds: self.timeoutSeconds,
-                    operationName: "dialog file"
+                    operationName: "dialog file",
+                    desktopMutationWatermarkStore: DesktopMutationWatermarkStore()
                 ) {
                     try await dialogs.handleFileDialog(
                         path: path,

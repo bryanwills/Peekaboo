@@ -43,6 +43,7 @@ extension DockCommand {
 
             do {
                 let dockItem = try await DockServiceBridge.findDockItem(dock: self.services.dock, name: self.app)
+                self.resolvedRuntime.beginInteractionMutation()
                 try await DockServiceBridge.rightClickDockItem(
                     dock: self.services.dock,
                     appName: self.app,

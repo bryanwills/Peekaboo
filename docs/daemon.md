@@ -30,6 +30,12 @@ Normal automation commands prefer the reusable daemon when it is healthy. If it 
 Peekaboo.app host with the required capability before auto-starting a daemon. If no remote host is usable, the command
 falls back to process-local services when that operation permits it.
 
+If another build owns `daemon.sock` but lacks a required capability, the current universal binary reuses a deterministic
+`daemon-<build>.sock` fallback shared by native and Rosetta invocations. Daemon status prefers the compatible host and
+warns when another daemon also exists; explicit daemon start safely promotes a compatible auto fallback to manual mode.
+After executable upgrades, implicit routing rediscovers compatible same-user fallback sockets and validates their
+daemon identity before reuse. Explicit Bridge paths and custom daemon paths do not scan sibling sockets.
+
 Explicit `--bridge-socket` or `PEEKABOO_BRIDGE_SOCKET` selects only that Bridge path and disables daemon auto-start.
 `PEEKABOO_DAEMON_SOCKET` changes the reusable daemon path without becoming an explicit Bridge override.
 `--no-remote` or `PEEKABOO_NO_REMOTE` forces local execution.

@@ -49,6 +49,9 @@ extension DialogCommand {
 
             do {
                 try self.target.validate()
+                if self.focusOptions.autoFocus {
+                    self.resolvedRuntime.beginInteractionMutation()
+                }
                 try await ensureFocused(
                     snapshotId: nil,
                     target: self.target,
@@ -56,9 +59,10 @@ extension DialogCommand {
                     services: self.services
                 )
 
-                let resolvedWindowTitle = try await self.target.resolveWindowTitleOptional(services: self.services)
+                let resolvedWindowTitle = try await target.resolveWindowTitleOptional(services: self.services)
                 let appHint = try await DialogCommand.resolveDialogAppHint(target: self.target, services: self.services)
-                let result = try await self.services.dialogs.dismissDialog(
+                self.resolvedRuntime.beginInteractionMutation()
+                let result = try await services.dialogs.dismissDialog(
                     force: self.force,
                     windowTitle: resolvedWindowTitle,
                     appName: appHint
@@ -142,6 +146,9 @@ extension DialogCommand {
 
             do {
                 try self.target.validate()
+                if self.focusOptions.autoFocus, self.target.hasAnyTarget {
+                    self.resolvedRuntime.beginInteractionMutation()
+                }
                 try await ensureFocused(
                     snapshotId: nil,
                     target: self.target,
@@ -149,10 +156,10 @@ extension DialogCommand {
                     services: self.services
                 )
 
-                let resolvedWindowTitle = try await self.target.resolveWindowTitleOptional(services: self.services)
+                let resolvedWindowTitle = try await target.resolveWindowTitleOptional(services: self.services)
                 let appHint = try await DialogCommand.resolveDialogAppHint(target: self.target, services: self.services)
                 let dialogService = self.services.dialogs
-                let timeoutSeconds = self.timeoutSeconds
+                let timeoutSeconds = timeoutSeconds
                 let elements = try await withMainActorCommandTimeout(
                     seconds: timeoutSeconds,
                     operationName: "dialog list"

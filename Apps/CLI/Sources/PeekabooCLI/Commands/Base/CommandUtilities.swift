@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import PeekabooAutomationKit
 import PeekabooCore
 import PeekabooFoundation
 
@@ -154,6 +155,8 @@ func withMainActorCommandTimeout<T: Sendable>(
     seconds: TimeInterval,
     operationName: String,
     timeoutError: (@Sendable () -> any Error)? = nil,
+    desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil,
+    interactionMutationTracker: InteractionMutationTracker? = nil,
     operation: @escaping @MainActor () async throws -> T
 ) async throws -> T {
     guard seconds > 0 else {
@@ -161,13 +164,27 @@ func withMainActorCommandTimeout<T: Sendable>(
     }
 
     let race = TimeoutRace()
-    let workTask = Task { @MainActor in
-        do {
-            let value = try await operation()
-            race.resume(with: .success(value))
-        } catch {
-            race.resume(with: Result<T, any Error>.failure(error))
+    let pendingMutation = try desktopMutationWatermarkStore?.beginMutation()
+    do {
+        try interactionMutationTracker?.retainDurableMutationLease()
+    } catch {
+        if let desktopMutationWatermarkStore, let pendingMutation {
+            try? desktopMutationWatermarkStore.cancelMutation(pendingMutation)
         }
+        throw error
+    }
+    let workTask = Task { @MainActor in
+        let result: Result<T, any Error>
+        do {
+            result = try await .success(operation())
+        } catch {
+            result = .failure(error)
+        }
+        if let desktopMutationWatermarkStore, let pendingMutation {
+            _ = try? desktopMutationWatermarkStore.completeMutation(pendingMutation)
+        }
+        _ = try? interactionMutationTracker?.completeDurableMutation(through: Date())
+        race.resume(with: result)
     }
 
     let timeoutTask = Task.detached {

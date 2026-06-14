@@ -19,6 +19,7 @@ struct WindowMovementTrackingTests {
         let original = CGPoint(x: 150, y: 150)
         let result = WindowMovementTracking.adjustPoint(original, snapshot: snapshot)
 
+        #expect(tracker.refreshCount == 0)
         switch result {
         case let .adjusted(point, delta):
             #expect(delta.x == 40)
@@ -27,6 +28,31 @@ struct WindowMovementTrackingTests {
         default:
             Issue.record("Expected adjusted point, got \(result)")
         }
+    }
+
+    @Test
+    @MainActor
+    func `Refreshes exact window after provider cache miss`() {
+        let snapshot = UIAutomationSnapshot(
+            applicationProcessId: 321,
+            windowBounds: CGRect(x: 100, y: 100, width: 200, height: 200),
+            windowID: 42)
+        let tracker = StubWindowTracker(
+            bounds: nil,
+            refreshedBounds: CGRect(x: 140, y: 150, width: 200, height: 200),
+            refreshedOwnerProcessIdentifier: 321)
+        WindowMovementTracking.provider = tracker
+        defer { WindowMovementTracking.provider = nil }
+
+        let result = WindowMovementTracking.adjustPoint(CGPoint(x: 150, y: 150), snapshot: snapshot)
+
+        #expect(tracker.refreshedWindowIDs == [42])
+        guard case let .adjusted(point, delta) = result else {
+            Issue.record("Expected adjusted point after exact-window refresh, got \(result)")
+            return
+        }
+        #expect(delta == CGPoint(x: 40, y: 50))
+        #expect(point == CGPoint(x: 190, y: 200))
     }
 
     @Test
@@ -104,6 +130,48 @@ struct WindowMovementTrackingTests {
 
     @Test
     @MainActor
+    func `Returns stale when window without snapshot bounds disappears`() {
+        let snapshot = UIAutomationSnapshot(
+            applicationProcessId: 321,
+            windowID: 100)
+
+        let tracker = StubWindowTracker(bounds: nil)
+        WindowMovementTracking.provider = tracker
+        defer { WindowMovementTracking.provider = nil }
+
+        let result = WindowMovementTracking.adjustPoint(CGPoint(x: 10, y: 10), snapshot: snapshot)
+        guard case let .stale(message) = result else {
+            Issue.record("Expected stale result, got \(result)")
+            return
+        }
+        #expect(message.contains("no longer available"))
+        #expect(message.contains("windowID: 100"))
+    }
+
+    @Test
+    @MainActor
+    func `Returns stale when window ID belongs to another process`() {
+        let snapshot = UIAutomationSnapshot(
+            applicationProcessId: 321,
+            windowID: 100)
+
+        let tracker = StubWindowTracker(
+            bounds: CGRect(x: 0, y: 0, width: 200, height: 200),
+            ownerProcessIdentifier: 654)
+        WindowMovementTracking.provider = tracker
+        defer { WindowMovementTracking.provider = nil }
+
+        let result = WindowMovementTracking.adjustPoint(CGPoint(x: 10, y: 10), snapshot: snapshot)
+        guard case let .stale(message) = result else {
+            Issue.record("Expected stale result, got \(result)")
+            return
+        }
+        #expect(message.contains("now belongs to PID 654"))
+        #expect(message.contains("not PID 321"))
+    }
+
+    @Test
+    @MainActor
     func `Adjusts points by snapshot id using snapshot manager`() async throws {
         let snapshot = UIAutomationSnapshot(
             windowBounds: CGRect(x: 10, y: 20, width: 200, height: 200),
@@ -125,15 +193,41 @@ struct WindowMovementTrackingTests {
 
 @MainActor
 private final class StubWindowTracker: WindowTrackingProviding {
-    private let bounds: CGRect?
+    private var bounds: CGRect?
+    private var ownerProcessIdentifier: pid_t?
+    private let refreshedBounds: CGRect?
+    private let refreshedOwnerProcessIdentifier: pid_t?
+    private(set) var refreshedWindowIDs: [CGWindowID] = []
 
-    init(bounds: CGRect?) {
+    var refreshCount: Int {
+        self.refreshedWindowIDs.count
+    }
+
+    init(
+        bounds: CGRect?,
+        ownerProcessIdentifier: pid_t? = nil,
+        refreshedBounds: CGRect? = nil,
+        refreshedOwnerProcessIdentifier: pid_t? = nil)
+    {
         self.bounds = bounds
+        self.ownerProcessIdentifier = ownerProcessIdentifier
+        self.refreshedBounds = refreshedBounds
+        self.refreshedOwnerProcessIdentifier = refreshedOwnerProcessIdentifier
     }
 
     func windowBounds(for windowID: CGWindowID) -> CGRect? {
         guard windowID > 0 else { return nil }
         return self.bounds
+    }
+
+    func windowOwnerProcessIdentifier(for _: CGWindowID) -> pid_t? {
+        self.ownerProcessIdentifier
+    }
+
+    func refreshWindow(for windowID: CGWindowID) {
+        self.refreshedWindowIDs.append(windowID)
+        self.bounds = self.refreshedBounds
+        self.ownerProcessIdentifier = self.refreshedOwnerProcessIdentifier
     }
 }
 
@@ -160,6 +254,10 @@ private final class PointSnapshotManager: SnapshotManagerProtocol {
     }
 
     func getMostRecentSnapshot(applicationBundleId _: String) async -> String? {
+        "snapshot-id"
+    }
+
+    func invalidateImplicitLatestSnapshot() async throws -> String? {
         "snapshot-id"
     }
 

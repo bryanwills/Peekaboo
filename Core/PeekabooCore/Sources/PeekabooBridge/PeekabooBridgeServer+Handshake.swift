@@ -61,13 +61,24 @@ extension PeekabooBridgeServer {
         let advertisedOps = Array(self.operationsCompatibleWithNegotiatedVersion(
             self.allowedOperationsToAdvertise(),
             negotiated)).sorted { $0.rawValue < $1.rawValue }
-        let enabledOps = self.operationsCompatibleWithNegotiatedVersion(
+        var enabledOps = self.operationsCompatibleWithNegotiatedVersion(
             self.effectiveAllowedOperations(permissions: permissions),
             negotiated)
-        let permissionTags = Dictionary(
+        var permissionTags = Dictionary(
             uniqueKeysWithValues: advertisedOps.map { op in
                 (op.rawValue, Array(op.requiredPermissions).sorted { $0.rawValue < $1.rawValue })
             })
+        let requestAwareTargetedClickVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 9)
+        if negotiated < requestAwareTargetedClickVersion,
+           advertisedOps.contains(.targetedClick)
+        {
+            // Protocol 1.6...1.8 exposed only synthetic targeted clicks. Preserve that
+            // permission contract for old clients even though 1.9 can use AX per request.
+            permissionTags[PeekabooBridgeOperation.targetedClick.rawValue] = [.postEvent]
+            if !permissions.postEvent {
+                enabledOps.remove(.targetedClick)
+            }
+        }
 
         self.logger.debug(
             """
@@ -91,36 +102,7 @@ extension PeekabooBridgeServer {
         _ operations: Set<PeekabooBridgeOperation>,
         _ negotiated: PeekabooBridgeProtocolVersion) -> Set<PeekabooBridgeOperation>
     {
-        var compatible = operations
-        if negotiated < PeekabooBridgeProtocolVersion(major: 1, minor: 1) {
-            compatible.remove(.targetedHotkey)
-        }
-        if negotiated < PeekabooBridgeProtocolVersion(major: 1, minor: 2) {
-            compatible.remove(.requestPostEventPermission)
-        }
-        if negotiated < PeekabooBridgeProtocolVersion(major: 1, minor: 3) {
-            compatible.remove(.setValue)
-            compatible.remove(.performAction)
-        }
-        if negotiated < PeekabooBridgeProtocolVersion(major: 1, minor: 4) {
-            compatible.remove(.browserStatus)
-            compatible.remove(.browserConnect)
-            compatible.remove(.browserDisconnect)
-            compatible.remove(.browserExecute)
-        }
-        if negotiated < PeekabooBridgeProtocolVersion(major: 1, minor: 5) {
-            compatible.remove(.desktopObservation)
-        }
-        if negotiated < PeekabooBridgeProtocolVersion(major: 1, minor: 6) {
-            compatible.remove(.targetedClick)
-        }
-        if negotiated < PeekabooBridgeProtocolVersion(major: 1, minor: 7) {
-            compatible.remove(.inspectAccessibilityTree)
-        }
-        if negotiated < PeekabooBridgeProtocolVersion(major: 1, minor: 8) {
-            compatible.remove(.targetedTypeActions)
-        }
-        return compatible
+        PeekabooBridgeOperation.compatible(operations, with: negotiated)
     }
 
     func allowedOperationsToAdvertise() -> Set<PeekabooBridgeOperation> {
@@ -128,6 +110,7 @@ extension PeekabooBridgeServer {
         if self.daemonControl == nil {
             operations.remove(.daemonStatus)
             operations.remove(.daemonStop)
+            operations.remove(.relaunchApplicationWithOptions)
         }
         if (self.services.automation as? any TargetedHotkeyServiceProtocol)?.supportsTargetedHotkeys != true {
             operations.remove(.targetedHotkey)
@@ -138,9 +121,23 @@ extension PeekabooBridgeServer {
         if (self.services.automation as? any TargetedClickServiceProtocol)?.supportsTargetedClicks != true {
             operations.remove(.targetedClick)
         }
+        if (self.services.automation as? any ExactWindowTargetedClickServiceProtocol)?
+            .supportsExactWindowTargetedClicks != true
+        {
+            operations.remove(.exactWindowTargetedClick)
+        }
         if self.services.automation as? any ElementActionAutomationServiceProtocol == nil {
             operations.remove(.setValue)
             operations.remove(.performAction)
+        }
+        if !self.services.snapshots.supportsImplicitLatestSnapshotInvalidation {
+            operations.remove(.invalidateImplicitLatestSnapshot)
+        }
+        if !self.services.applications.supportsApplicationLaunchOptions {
+            operations.remove(.launchApplicationWithOptions)
+        }
+        if !self.services.applications.supportsApplicationRelaunch {
+            operations.remove(.relaunchApplicationWithOptions)
         }
         return operations
     }
@@ -148,10 +145,18 @@ extension PeekabooBridgeServer {
     func effectiveAllowedOperations(permissions: PermissionsStatus) -> Set<PeekabooBridgeOperation> {
         let granted = Self.grantedPermissions(from: permissions)
 
-        return Set(
+        var operations = Set(
             self.allowedOperationsToAdvertise().filter { operation in
                 operation.requiredPermissions.isSubset(of: granted)
             })
+
+        // Targeted clicks support two alternative delivery paths. Permission tags model
+        // conjunctive requirements, so keep the operation enabled when either path is usable.
+        if !permissions.accessibility, !permissions.postEvent {
+            operations.remove(.targetedClick)
+            operations.remove(.exactWindowTargetedClick)
+        }
+        return operations
     }
 
     static func grantedPermissions(from permissions: PermissionsStatus) -> Set<PeekabooBridgePermissionKind> {

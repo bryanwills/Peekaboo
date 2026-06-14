@@ -48,6 +48,8 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case getFrontmostApplication
     case isApplicationRunning(PeekabooBridgeAppIdentifierRequest)
     case launchApplication(PeekabooBridgeAppIdentifierRequest)
+    case launchApplicationWithOptions(ApplicationLaunchRequest)
+    case relaunchApplicationWithOptions(ApplicationRelaunchRequest)
     case activateApplication(PeekabooBridgeAppIdentifierRequest)
     case quitApplication(PeekabooBridgeQuitAppRequest)
     case hideApplication(PeekabooBridgeAppIdentifierRequest)
@@ -84,6 +86,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case storeAnnotatedScreenshot(PeekabooBridgeStoreAnnotatedScreenshotRequest)
     case listSnapshots
     case getMostRecentSnapshot(PeekabooBridgeGetMostRecentSnapshotRequest)
+    case invalidateImplicitLatestSnapshot(PeekabooBridgeInvalidateImplicitLatestSnapshotRequest)
     case cleanSnapshot(PeekabooBridgeCleanSnapshotRequest)
     case cleanSnapshotsOlderThan(PeekabooBridgeCleanSnapshotsOlderRequest)
     case cleanAllSnapshots
@@ -119,7 +122,8 @@ extension PeekabooBridgeRequest {
         case .scroll: .scroll
         case .hotkey: .hotkey
         case .targetedHotkey: .targetedHotkey
-        case .targetedClick: .targetedClick
+        case let .targetedClick(payload):
+            payload.targetWindowID == nil ? .targetedClick : .exactWindowTargetedClick
         case .swipe: .swipe
         case .drag: .drag
         case .moveMouse: .moveMouse
@@ -138,6 +142,8 @@ extension PeekabooBridgeRequest {
         case .getFrontmostApplication: .getFrontmostApplication
         case .isApplicationRunning: .isApplicationRunning
         case .launchApplication: .launchApplication
+        case .launchApplicationWithOptions: .launchApplicationWithOptions
+        case .relaunchApplicationWithOptions: .relaunchApplicationWithOptions
         case .activateApplication: .activateApplication
         case .quitApplication: .quitApplication
         case .hideApplication: .hideApplication
@@ -174,6 +180,7 @@ extension PeekabooBridgeRequest {
         case .storeAnnotatedScreenshot: .storeAnnotatedScreenshot
         case .listSnapshots: .listSnapshots
         case .getMostRecentSnapshot: .getMostRecentSnapshot
+        case .invalidateImplicitLatestSnapshot: .invalidateImplicitLatestSnapshot
         case .cleanSnapshot: .cleanSnapshot
         case .cleanSnapshotsOlderThan: .cleanSnapshotsOlderThan
         case .cleanAllSnapshots: .cleanAllSnapshots

@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooAutomationKit
 
 @MainActor
 public enum PeekabooBridgeBootstrap {
@@ -20,7 +21,8 @@ public enum PeekabooBridgeBootstrap {
             allowlistedTeams: allowlistedTeams,
             allowlistedBundles: allowlistedBundles,
             allowedOperations: allowedOperations,
-            daemonControl: daemonControl)
+            daemonControl: daemonControl,
+            desktopMutationWatermarkStore: DesktopMutationWatermarkStore())
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -51,7 +53,8 @@ public enum PeekabooBridgeBootstrap {
             allowlistedTeams: allowlistedTeams,
             allowlistedBundles: allowlistedBundles,
             allowedOperations: allowedOperations,
-            daemonControl: daemonControl)
+            daemonControl: daemonControl,
+            desktopMutationWatermarkStore: DesktopMutationWatermarkStore())
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,

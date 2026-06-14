@@ -106,6 +106,17 @@ struct InteractionObservationContext {
 struct InteractionObservationRefreshDependencies {
     let desktopObservation: any DesktopObservationServiceProtocol
     let snapshots: any SnapshotManagerProtocol
+    let beginMutation: ((Date) -> Void)?
+
+    init(
+        desktopObservation: any DesktopObservationServiceProtocol,
+        snapshots: any SnapshotManagerProtocol,
+        beginMutation: ((Date) -> Void)? = nil
+    ) {
+        self.desktopObservation = desktopObservation
+        self.snapshots = snapshots
+        self.beginMutation = beginMutation
+    }
 }
 
 @MainActor
@@ -115,7 +126,8 @@ enum InteractionObservationRefresher {
         elementIds: [String?],
         target: InteractionTargetOptions,
         services: any PeekabooServiceProviding,
-        logger: Logger
+        logger: Logger,
+        beforeRefresh: ((Date) -> Void)? = nil
     ) async throws -> InteractionObservationContext {
         var refreshed = observation
         for elementId in elementIds.compactMap(\.self) {
@@ -124,7 +136,8 @@ enum InteractionObservationRefresher {
                 elementId: elementId,
                 target: target,
                 services: services,
-                logger: logger
+                logger: logger,
+                beforeRefresh: beforeRefresh
             )
         }
         return refreshed
@@ -135,7 +148,8 @@ enum InteractionObservationRefresher {
         query: String,
         target: InteractionTargetOptions,
         services: any PeekabooServiceProviding,
-        logger: Logger
+        logger: Logger,
+        beforeRefresh: ((Date) -> Void)? = nil
     ) async throws -> InteractionObservationContext {
         try await self.refreshForMissingQueryIfNeeded(
             observation,
@@ -143,7 +157,8 @@ enum InteractionObservationRefresher {
             target: target,
             dependencies: InteractionObservationRefreshDependencies(
                 desktopObservation: services.desktopObservation,
-                snapshots: services.snapshots
+                snapshots: services.snapshots,
+                beginMutation: beforeRefresh
             ),
             logger: logger
         )
@@ -180,7 +195,8 @@ enum InteractionObservationRefresher {
         elementId: String,
         target: InteractionTargetOptions,
         services: any PeekabooServiceProviding,
-        logger: Logger
+        logger: Logger,
+        beforeRefresh: ((Date) -> Void)? = nil
     ) async throws -> InteractionObservationContext {
         try await self.refreshForMissingElementIfNeeded(
             observation,
@@ -188,7 +204,8 @@ enum InteractionObservationRefresher {
             target: target,
             dependencies: InteractionObservationRefreshDependencies(
                 desktopObservation: services.desktopObservation,
-                snapshots: services.snapshots
+                snapshots: services.snapshots,
+                beginMutation: beforeRefresh
             ),
             logger: logger
         )
@@ -228,29 +245,85 @@ enum InteractionObservationRefresher {
         logger: Logger
     ) async throws -> InteractionObservationContext {
         let requestTarget = try target.observationTargetRequest()
-        let result = try await dependencies.desktopObservation.observe(DesktopObservationRequest(
-            target: requestTarget,
-            capture: DesktopCaptureOptions(
-                engine: .auto,
-                scale: .logical1x,
-                visualizerMode: .screenshotFlash
-            ),
-            detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: true),
-            output: DesktopObservationOutputOptions(saveSnapshot: true)
-        ))
-
-        guard let refreshedSnapshotId = result.elements?.snapshotId else {
-            return observation
+        let observationStartedAt = Date()
+        dependencies.beginMutation?(observationStartedAt)
+        let snapshotID = try await dependencies.snapshots.createSnapshot(pendingAt: observationStartedAt)
+        let result: DesktopObservationResult
+        do {
+            result = try await dependencies.desktopObservation.observe(DesktopObservationRequest(
+                target: requestTarget,
+                capture: DesktopCaptureOptions(
+                    engine: .auto,
+                    scale: .logical1x,
+                    visualizerMode: .screenshotFlash
+                ),
+                detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: true),
+                output: DesktopObservationOutputOptions(
+                    saveSnapshot: true,
+                    snapshotID: snapshotID
+                )
+            ))
+            guard result.elements != nil else {
+                try? await dependencies.snapshots.cleanSnapshot(snapshotId: snapshotID)
+                _ = try? await dependencies.snapshots.invalidateImplicitLatestSnapshot(through: Date())
+                return observation
+            }
+            let publication = try self.certifiedPublicationBoundary(
+                for: result,
+                observationStartedAt: observationStartedAt
+            )
+            _ = try await dependencies.snapshots.invalidateImplicitLatestSnapshot(
+                through: publication.cutoff,
+                preserving: snapshotID,
+                preservedAt: publication.preservedAt
+            )
+            guard await dependencies.snapshots.getMostRecentSnapshot() == snapshotID else {
+                throw PeekabooError.snapshotStale(
+                    "The refreshed observation was superseded before it could be published"
+                )
+            }
+        } catch {
+            if !PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: error) {
+                try? await dependencies.snapshots.cleanSnapshot(snapshotId: snapshotID)
+            }
+            _ = try? await dependencies.snapshots.invalidateImplicitLatestSnapshot(through: Date())
+            throw error
         }
 
         logger.debug(
-            "Refreshed implicit observation snapshot '\(refreshedSnapshotId)' for \(reason)"
+            "Refreshed implicit observation snapshot '\(snapshotID)' for \(reason)"
         )
         return InteractionObservationContext(
             explicitSnapshotId: nil,
-            snapshotId: refreshedSnapshotId,
+            snapshotId: snapshotID,
             source: .latest
         )
+    }
+
+    private static func certifiedPublicationBoundary(
+        for result: DesktopObservationResult,
+        observationStartedAt: Date
+    ) throws -> (cutoff: Date, preservedAt: Date) {
+        let completedAtValues = [
+            result.diagnostics.desktopMutationCompletedAt,
+            result.elements?.metadata.desktopMutationCompletedAt,
+        ].compactMap(\.self)
+        let preservationValues = [
+            result.diagnostics.desktopMutationPreservationAllowed,
+            result.elements?.metadata.desktopMutationPreservationAllowed,
+        ].compactMap(\.self)
+        let hasCertificate = !completedAtValues.isEmpty || !preservationValues.isEmpty
+        guard hasCertificate else { return (observationStartedAt, Date()) }
+        guard let completedAt = completedAtValues.max(),
+              !preservationValues.isEmpty,
+              preservationValues.allSatisfy(\.self)
+        else {
+            throw PeekabooError.snapshotStale(
+                "The refreshed observation overlapped another desktop mutation"
+            )
+        }
+        let cutoff = max(observationStartedAt, completedAt)
+        return (cutoff, cutoff)
     }
 
     private static func containsElement(

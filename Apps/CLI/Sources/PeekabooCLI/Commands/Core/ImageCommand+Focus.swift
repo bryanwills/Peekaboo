@@ -4,43 +4,51 @@ import PeekabooCore
 @MainActor
 extension ImageCommand {
     func focusIfNeeded(appIdentifier: String) async throws {
-        switch self.captureFocus {
+        switch captureFocus {
         case .background:
             return
         case .auto:
-            if await self.hasVisibleCaptureWindow(appIdentifier: appIdentifier) {
+            if try await self.hasVisibleCaptureWindow(appIdentifier: appIdentifier) {
                 return
             }
-            if self.windowTitle == nil, await self.isAlreadyFrontmost(appIdentifier: appIdentifier) {
+            if windowTitle == nil, try await self.isAlreadyFrontmost(appIdentifier: appIdentifier) {
                 return
             }
-            let focusIdentifier = await self.resolveFocusIdentifier(appIdentifier: appIdentifier)
+            let focusIdentifier = try await resolveFocusIdentifier(appIdentifier: appIdentifier)
             let options = FocusOptions(autoFocus: true, spaceSwitch: false, bringToCurrentSpace: false)
-            try await ensureFocused(
-                applicationName: focusIdentifier,
-                windowTitle: self.windowTitle,
-                options: options,
-                services: self.services
-            )
+            try await withCaptureFocusMutation {
+                try await ensureFocused(
+                    applicationName: focusIdentifier,
+                    windowTitle: self.windowTitle,
+                    options: options,
+                    services: self.services
+                )
+            }
         case .foreground:
-            let focusIdentifier = await self.resolveFocusIdentifier(appIdentifier: appIdentifier)
+            let focusIdentifier = try await resolveFocusIdentifier(appIdentifier: appIdentifier)
             let options = FocusOptions(autoFocus: true, spaceSwitch: true, bringToCurrentSpace: true)
-            try await ensureFocused(
-                applicationName: focusIdentifier,
-                windowTitle: self.windowTitle,
-                options: options,
-                services: self.services
-            )
+            try await withCaptureFocusMutation {
+                try await ensureFocused(
+                    applicationName: focusIdentifier,
+                    windowTitle: self.windowTitle,
+                    options: options,
+                    services: self.services
+                )
+            }
         }
     }
 
-    private func hasVisibleCaptureWindow(appIdentifier: String) async -> Bool {
-        guard let app = try? await self.services.applications.findApplication(identifier: appIdentifier) else {
+    private func hasVisibleCaptureWindow(appIdentifier: String) async throws -> Bool {
+        guard let app = try await FocusFailurePolicy.optional({
+            try await services.applications.findApplication(identifier: appIdentifier)
+        }) else {
             return false
         }
 
         let lookupIdentifier = app.bundleIdentifier ?? app.name
-        guard let response = try? await self.services.applications.listWindows(for: lookupIdentifier, timeout: 1) else {
+        guard let response = try await FocusFailurePolicy.optional({
+            try await services.applications.listWindows(for: lookupIdentifier, timeout: 1)
+        }) else {
             return false
         }
 
@@ -51,7 +59,7 @@ extension ImageCommand {
             return false
         }
 
-        guard let windowTitle = self.windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+        guard let windowTitle = windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
               !windowTitle.isEmpty
         else {
             return true
@@ -62,9 +70,13 @@ extension ImageCommand {
         }
     }
 
-    private func isAlreadyFrontmost(appIdentifier: String) async -> Bool {
-        guard let frontmost = try? await self.services.applications.getFrontmostApplication(),
-              let target = try? await self.services.applications.findApplication(identifier: appIdentifier)
+    private func isAlreadyFrontmost(appIdentifier: String) async throws -> Bool {
+        guard let frontmost = try await FocusFailurePolicy.optional({
+            try await services.applications.getFrontmostApplication()
+        }),
+            let target = try await FocusFailurePolicy.optional({
+                try await services.applications.findApplication(identifier: appIdentifier)
+            })
         else {
             return false
         }
@@ -72,8 +84,10 @@ extension ImageCommand {
         return frontmost.processIdentifier == target.processIdentifier
     }
 
-    private func resolveFocusIdentifier(appIdentifier: String) async -> String {
-        guard let app = try? await self.services.applications.findApplication(identifier: appIdentifier) else {
+    private func resolveFocusIdentifier(appIdentifier: String) async throws -> String {
+        guard let app = try await FocusFailurePolicy.optional({
+            try await services.applications.findApplication(identifier: appIdentifier)
+        }) else {
             return appIdentifier
         }
         return "PID:\(app.processIdentifier)"

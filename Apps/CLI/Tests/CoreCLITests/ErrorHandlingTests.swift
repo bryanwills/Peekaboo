@@ -62,6 +62,15 @@ struct FocusErrorMappingTests {
 
         #expect(errorMessage(for: envelope) == "Operation captureArea is not allowed with current permissions")
         #expect(!errorMessage(for: envelope).contains("PeekabooBridgeErrorEnvelope error"))
+        #expect(envelope.localizedDescription == envelope.message)
+    }
+
+    @Test
+    func `application launch maps bridge not found to app not found`() {
+        let envelope = PeekabooBridgeErrorEnvelope(code: .notFound, message: "Application not found")
+
+        #expect(applicationLaunchErrorCode(for: envelope) == .APP_NOT_FOUND)
+        #expect(applicationLaunchErrorCode(for: POSIXError(.ENOENT)) == nil)
     }
 
     @Test

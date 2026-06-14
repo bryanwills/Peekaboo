@@ -215,6 +215,25 @@ public protocol TargetedClickServiceProtocol: UIAutomationServiceProtocol {
         targetProcessIdentifier: pid_t) async throws
 }
 
+/// Optional capability for preserving an exact target window during a background click.
+@MainActor
+public protocol ExactWindowTargetedClickServiceProtocol: TargetedClickServiceProtocol {
+    var supportsExactWindowTargetedClicks: Bool { get }
+
+    func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t,
+        targetWindowID: Int) async throws
+}
+
+extension ExactWindowTargetedClickServiceProtocol {
+    public var supportsExactWindowTargetedClicks: Bool {
+        true
+    }
+}
+
 extension TargetedClickServiceProtocol {
     public var supportsTargetedClicks: Bool {
         true

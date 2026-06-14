@@ -25,17 +25,17 @@ read_when:
 | `--focus-background` | Legacy alias for the default background delivery. Use `--app`, `--pid`, `--window-id`, or a snapshot with process metadata. |
 
 ## Delivery modes
-- **Background** is the default when Peekaboo can resolve a target process from target flags or snapshot metadata. It posts a process-targeted click and skips activation/focus.
+- **Background** is the default when Peekaboo can resolve a target process from target flags or snapshot metadata. Element/query clicks invoke the matching AX action first, then fall back to a process-targeted event when needed; coordinate clicks use process-targeted events. Neither path activates or focuses the app.
 - **Foreground** (`--foreground`) focuses the target first and sends the click through the normal focused path. Use it for apps that require a key window, clicks that must move focus, or Space-switching flows.
 - Background coordinate clicks need `--app`, `--pid`, or `--window-id` so Peekaboo knows which process/window owns the coordinate. Without a target, use global coordinates with foreground delivery.
 
 ## Implementation notes
 - Validation makes sure you only provide one targeting strategy (ID/query vs. `--coords`) and that coordinate strings parse cleanly into doubles. Target-relative coordinate clicks fail if the point is outside the resolved window.
 - When no `--snapshot` is provided, the command grabs the most recent snapshot ID (if any) before waiting for elements. Coordinate clicks skip snapshot usage entirely to avoid stale caches, but targeted coordinate clicks resolve the target window before synthesizing the final screen point.
-- Background element/query clicks use cached snapshot geometry and skip foreground focus. Run `peekaboo see` first when you need fresh element IDs or target process metadata.
+- Background element/query clicks re-resolve cached elements in the target process and exact snapshot window, then invoke their AX action before falling back to snapshot geometry. Mismatched process/window selectors and unverifiable window snapshots are rejected. Run `peekaboo see` first when you need fresh element IDs or target metadata.
 - Foreground element-based clicks call `AutomationServiceBridge.waitForElement` with the supplied timeout so you don’t have to insert manual sleeps. Helpful hints are printed when timeouts expire.
 - `--foreground` enforces focus just before the click by `ensureFocused`; it will hop Spaces if necessary unless you pass `--no-auto-focus`.
-- Background delivery uses process-targeted CoreGraphics mouse events and skips foreground focus. It requires Event Synthesizing access and a resolvable target process. Element clicks can reuse snapshot process metadata.
+- Synthetic background fallback stamps CoreGraphics events with the resolved process and exact window ID, rejects vanished/reused windows or points outside current bounds, and requires Event Synthesizing access. macOS still does not report whether the target accepted a posted event; AX-action success is directly reported by Accessibility.
 - JSON output reports `clickedElement`, input coordinates, resolved screen coordinates, coordinate space, target window metadata, wait time, execution time, and `targetPoint` diagnostics. Element/query `targetPoint` includes the original snapshot midpoint, the final resolved point, the snapshot ID, and whether a moved-window adjustment was applied.
 
 ## Examples

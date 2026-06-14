@@ -10,24 +10,26 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         self.logger.debug("Set value requested - target: \(target, privacy: .public)")
         let resolved = try await self.resolveActionTarget(target, snapshotId: snapshotId)
         let oldValue = self.safeValueDescription(resolved.element.value)
-        let result = try await UIInputDispatcher.run(
-            verb: .setValue,
-            strategy: self.inputPolicy.strategy(for: .setValue, bundleIdentifier: resolved.bundleIdentifier),
-            bundleIdentifier: resolved.bundleIdentifier,
-            action: {
-                do {
-                    return try self.actionInputDriver.trySetValue(element: resolved.element, value: value)
-                } catch let error as ActionInputError where error.isUnsupportedValueMutation {
+        let result = try await self.normalizingSnapshotErrors {
+            try await UIInputDispatcher.run(
+                verb: .setValue,
+                strategy: self.inputPolicy.strategy(for: .setValue, bundleIdentifier: resolved.bundleIdentifier),
+                bundleIdentifier: resolved.bundleIdentifier,
+                action: {
+                    do {
+                        return try self.actionInputDriver.trySetValue(element: resolved.element, value: value)
+                    } catch let error as ActionInputError where error.isUnsupportedValueMutation {
+                        throw PeekabooError.invalidInput(Self.unsupportedSetValueMessage(
+                            target: resolved.description,
+                            reason: error.localizedDescription))
+                    }
+                },
+                synth: {
                     throw PeekabooError.invalidInput(Self.unsupportedSetValueMessage(
                         target: resolved.description,
-                        reason: error.localizedDescription))
-                }
-            },
-            synth: {
-                throw PeekabooError.invalidInput(Self.unsupportedSetValueMessage(
-                    target: resolved.description,
-                    reason: "Direct value setting is not supported for this element."))
-            })
+                        reason: "Direct value setting is not supported for this element."))
+                })
+        }
         let newValue = self.safeValueDescription(resolved.element.value) ?? value.displayString
 
         return ElementActionResult(
@@ -51,25 +53,27 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         }
 
         let resolved = try await self.resolveActionTarget(target, snapshotId: snapshotId)
-        let result = try await UIInputDispatcher.run(
-            verb: .performAction,
-            strategy: self.inputPolicy.strategy(for: .performAction, bundleIdentifier: resolved.bundleIdentifier),
-            bundleIdentifier: resolved.bundleIdentifier,
-            action: {
-                do {
-                    return try self.actionInputDriver.tryPerformAction(
-                        element: resolved.element,
-                        actionName: actionName)
-                } catch let error as ActionInputError where error.isUnsupportedActionInvocation {
-                    throw PeekabooError.invalidInput(Self.unsupportedActionMessage(
-                        actionName: actionName,
-                        target: resolved.description,
-                        advertisedActions: resolved.element.actionNames))
-                }
-            },
-            synth: {
-                throw ActionInputError.unsupported(.actionUnsupported)
-            })
+        let result = try await self.normalizingSnapshotErrors {
+            try await UIInputDispatcher.run(
+                verb: .performAction,
+                strategy: self.inputPolicy.strategy(for: .performAction, bundleIdentifier: resolved.bundleIdentifier),
+                bundleIdentifier: resolved.bundleIdentifier,
+                action: {
+                    do {
+                        return try self.actionInputDriver.tryPerformAction(
+                            element: resolved.element,
+                            actionName: actionName)
+                    } catch let error as ActionInputError where error.isUnsupportedActionInvocation {
+                        throw PeekabooError.invalidInput(Self.unsupportedActionMessage(
+                            actionName: actionName,
+                            target: resolved.description,
+                            advertisedActions: resolved.element.actionNames))
+                    }
+                },
+                synth: {
+                    throw ActionInputError.unsupported(.actionUnsupported)
+                })
+        }
 
         return ElementActionResult(
             target: resolved.description,
@@ -105,7 +109,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                     detectedElement: detected,
                     windowContext: detectionResult.metadata.windowContext)
                 else {
-                    throw ActionInputError.staleElement
+                    throw PeekabooError.snapshotStale("target element is no longer available")
                 }
                 return (
                     element,
@@ -116,7 +120,11 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             throw NotFoundError.element(normalized)
         }
 
-        if let element = self.automationElementResolver.resolve(query: normalized, windowContext: nil) {
+        if let element = self.automationElementResolver.resolve(
+            query: normalized,
+            windowContext: nil,
+            requireTextInput: false)
+        {
             return (element, element.name ?? normalized, nil)
         }
 

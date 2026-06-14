@@ -90,6 +90,7 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             if let targetPID,
                let text = self.resolvedText {
                 let setResult = try Self.readResult(for: request)
+                self.resolvedRuntime.beginInteractionMutation()
                 _ = try await AutomationServiceBridge.typeActions(
                     automation: self.services.automation,
                     request: TypeActionsRequest(
@@ -99,8 +100,8 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                     ),
                     targetProcessIdentifier: targetPID
                 )
-                await InteractionObservationInvalidator.invalidateLatestSnapshot(
-                    using: self.services.snapshots,
+                await InteractionObservationInvalidator.invalidateAfterMutation(
+                    targets: self.resolvedRuntime.interactionMutationTargets,
                     logger: self.logger,
                     reason: "paste"
                 )
@@ -126,6 +127,7 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 return
             }
 
+            self.resolvedRuntime.beginInteractionMutation()
             if targetPID == nil {
                 try await ensureFocused(
                     snapshotId: nil,
@@ -170,8 +172,8 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                     holdDuration: 50
                 )
             }
-            await InteractionObservationInvalidator.invalidateLatestSnapshot(
-                using: self.services.snapshots,
+            await InteractionObservationInvalidator.invalidateAfterMutation(
+                targets: self.resolvedRuntime.interactionMutationTargets,
                 logger: self.logger,
                 reason: "paste"
             )

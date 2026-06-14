@@ -19,7 +19,7 @@ peekaboo permissions grant
 peekaboo permissions request-screen-recording
 ```
 
-`grant` opens System Settings to the right pane. You need **Screen Recording** (required) and **Accessibility** (recommended). Re-run `permissions status` until both are green. Background input for `click`, `type`, `hotkey`, `press`, and `paste` also needs **Event Synthesizing** — see [permissions.md](permissions.md).
+`grant` opens System Settings to the right pane. You need **Screen Recording** (required) and **Accessibility** (recommended). Re-run `permissions status` until both are green. Background keyboard input, coordinate clicks, and synthetic click fallback also need **Event Synthesizing**; element/query clicks can use Accessibility actions alone. See [permissions.md](permissions.md).
 
 ## 2. Take a screenshot
 

@@ -42,6 +42,33 @@ struct PeekabooDaemonTests {
     }
 
     @Test
+    func `daemon status only advertises operations decodable by every supported client`() async throws {
+        let daemon = PeekabooDaemon(configuration: .init(
+            mode: .manual,
+            bridgeSocketPath: "/tmp/peekaboo-test.sock",
+            allowlistedTeams: [],
+            allowedOperations: PeekabooBridgeOperation.remoteDefaultAllowlist,
+            windowTrackingEnabled: false,
+            hostKind: .onDemand))
+
+        let bridge = try #require(await daemon.daemonStatus().bridge)
+        let operations = bridge.allowedOperations
+        #expect(operations.contains(.permissionsStatus))
+        #expect(!operations.contains(.targetedHotkey))
+        #expect(!operations.contains(.requestPostEventPermission))
+        #expect(!operations.contains(.launchApplicationWithOptions))
+        #expect(!operations.contains(.invalidateImplicitLatestSnapshot))
+        #expect(bridge.availableOperationNames?.contains(PeekabooBridgeOperation.launchApplicationWithOptions.rawValue)
+            == true)
+        #expect(bridge.availableOperationNames?.contains(
+            PeekabooBridgeOperation.invalidateImplicitLatestSnapshot.rawValue) == true)
+
+        let data = try JSONEncoder.peekabooBridgeEncoder().encode(bridge)
+        let legacy = try JSONDecoder.peekabooBridgeDecoder().decode(LegacyBridgeStatus.self, from: data)
+        #expect(legacy.allowedOperations == operations)
+    }
+
+    @Test
     func `daemon refuses stop while an operational request is active`() async {
         let daemon = PeekabooDaemon(configuration: .embeddedMCP())
 
@@ -95,4 +122,10 @@ struct PeekabooDaemonTests {
         #expect(configuration.bridgeHostingEnabled)
         #expect(configuration.exitOnStop)
     }
+}
+
+private struct LegacyBridgeStatus: Decodable {
+    let socketPath: String
+    let hostKind: PeekabooBridgeHostKind
+    let allowedOperations: [PeekabooBridgeOperation]
 }

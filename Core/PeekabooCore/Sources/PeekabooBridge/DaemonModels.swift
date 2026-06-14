@@ -38,16 +38,21 @@ public struct PeekabooDaemonActivityStatus: Codable, Sendable {
 public struct PeekabooDaemonBridgeStatus: Codable, Sendable {
     public let socketPath: String
     public let hostKind: PeekabooBridgeHostKind
+    /// Protocol-1.0-safe operation cases retained for legacy decoders.
     public let allowedOperations: [PeekabooBridgeOperation]
+    /// Complete current capability set as raw names; unknown names are safe for older clients to ignore.
+    public let availableOperationNames: [String]?
 
     public init(
         socketPath: String,
         hostKind: PeekabooBridgeHostKind,
-        allowedOperations: [PeekabooBridgeOperation])
+        allowedOperations: [PeekabooBridgeOperation],
+        availableOperationNames: [String]? = nil)
     {
         self.socketPath = socketPath
         self.hostKind = hostKind
         self.allowedOperations = allowedOperations
+        self.availableOperationNames = availableOperationNames
     }
 }
 

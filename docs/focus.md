@@ -114,7 +114,7 @@ Use cases:
 
 Currently, `click`, `type`, `hotkey`, `press`, and `paste` use background delivery by default when `--app`, `--pid`, `--window-id`, or snapshot process metadata identifies a live process. Use `--foreground` for focused foreground input.
 
-Background delivery is a delivery mode, not a focus mode. It cannot be combined with foreground focus timeout, retry, or Space-switching flags. It requires Event Synthesizing access for the process that sends the event; `peekaboo permissions request-event-synthesizing` requests it for the selected bridge host by default, or for the local CLI when used with `--no-remote`. macOS does not acknowledge whether the target app handled a process-targeted event; Peekaboo reports that the event was sent to a live process after event-posting permission preflight.
+Background delivery is a delivery mode, not a focus mode. It cannot be combined with foreground focus timeout, retry, or Space-switching flags. Element/query clicks first try Accessibility actions. Keyboard input, coordinate clicks, and synthetic click fallback require Event Synthesizing; `peekaboo permissions request-event-synthesizing` requests it for the selected bridge host by default, or for the local CLI with `--no-remote`. macOS does not acknowledge whether a target accepted a process-targeted synthetic event; Peekaboo reports only that it sent the event to a live process after permission preflight.
 
 ### `--focus-timeout-seconds <seconds>`
 Sets how long to wait for focus operations (default: 5.0).

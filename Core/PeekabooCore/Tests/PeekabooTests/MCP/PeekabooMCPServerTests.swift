@@ -36,6 +36,29 @@ struct PeekabooMCPServerTests {
         #expect(!names.contains("set_value"))
         #expect(!names.contains("perform_action"))
     }
+
+    @Test
+    @MainActor
+    func `default server context inherits the installed agent execution gate`() async throws {
+        let services = PeekabooServices()
+        services.agent = nil
+        services.installAgentRuntimeDefaults()
+        let firstFallbackContext = MCPToolContext.makeDefault()
+        let secondFallbackContext = MCPToolContext.makeDefault()
+        let gate = MCPToolSnapshotExecutionGate()
+        let agent = try PeekabooAgentService(
+            services: services,
+            snapshotExecutionGate: gate)
+        services.agent = agent
+
+        let defaultContext = MCPToolContext.makeDefault()
+        let server = try await PeekabooMCPServer()
+
+        #expect(firstFallbackContext.snapshotExecutionGate === secondFallbackContext.snapshotExecutionGate)
+        #expect(firstFallbackContext.snapshotExecutionGate !== gate)
+        #expect(defaultContext.snapshotExecutionGate === gate)
+        #expect(await server.snapshotExecutionGateForTesting() === gate)
+    }
 }
 
 @MainActor

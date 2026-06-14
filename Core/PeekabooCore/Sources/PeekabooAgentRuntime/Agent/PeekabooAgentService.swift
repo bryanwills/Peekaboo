@@ -46,6 +46,8 @@ public final class PeekabooAgentService: AgentServiceProtocol {
     let defaultLanguageModel: LanguageModel
     var currentModel: LanguageModel?
     var cachedSmartCaptureService: SmartCaptureService?
+    var snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?
+    public let snapshotExecutionGate: MCPToolSnapshotExecutionGate
     let logger = os.Logger(subsystem: "boo.peekaboo", category: "agent")
     var isVerbose: Bool = false
 
@@ -147,12 +149,22 @@ public final class PeekabooAgentService: AgentServiceProtocol {
 
     public init(
         services: any PeekabooServiceProviding,
-        defaultModel: LanguageModel = .anthropic(.opus48))
+        defaultModel: LanguageModel = .anthropic(.opus48),
+        snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
+        snapshotExecutionGate: MCPToolSnapshotExecutionGate = MCPToolSnapshotExecutionGate())
         throws
     {
         self.services = services
         self.sessionManager = try AgentSessionManager()
         self.defaultLanguageModel = defaultModel
+        self.snapshotMutationCoordinator = snapshotMutationCoordinator
+        self.snapshotExecutionGate = snapshotExecutionGate
+    }
+
+    public func configureSnapshotMutationCoordinator(
+        _ coordinator: (any MCPToolSnapshotMutationCoordinating)?)
+    {
+        self.snapshotMutationCoordinator = coordinator
     }
 
     // MARK: - AgentServiceProtocol Conformance

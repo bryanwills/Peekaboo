@@ -50,6 +50,7 @@ extension MenuCommand {
                 let verifier = MenuBarClickVerifier(services: self.services)
                 let verifyTarget = self.verify ? try await self.resolveVerificationTarget() : nil
                 let preFocus = self.verify ? try await verifier.captureFocusSnapshot() : nil
+                self.resolvedRuntime.beginInteractionMutation()
                 let clickResult = try await MenuServiceBridge
                     .clickMenuBarItem(named: self.title, menu: self.services.menu)
 

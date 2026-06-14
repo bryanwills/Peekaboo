@@ -74,6 +74,10 @@ RuntimeOptionsConfigurable {
         self.resolvedRuntime.services
     }
 
+    func withCaptureFocusMutation(_ operation: () async throws -> Void) async rethrows {
+        try await self.resolvedRuntime.withCaptureFocusMutation(operation)
+    }
+
     var jsonOutput: Bool {
         self.resolvedRuntime.configuration.jsonOutput
     }
@@ -92,16 +96,16 @@ RuntimeOptionsConfigurable {
                 throw ValidationError("Pass the action command after --")
             }
 
-            let scope = try await self.resolveScope()
-            let options = try self.buildOptions()
-            let timing = try self.resolveActionTiming(durationLimit: options.duration)
+            let scope = try await resolveScope()
+            let options = try buildOptions()
+            let timing = try resolveActionTiming(durationLimit: options.duration)
             if scope.kind == .window, let identifier = scope.applicationIdentifier {
-                try await self.focusIfNeeded(appIdentifier: identifier)
+                try await focusIfNeeded(appIdentifier: identifier)
             }
 
-            let outputDir = try self.resolveOutputDirectory()
+            let outputDir = try resolveOutputDirectory()
             let deps = WatchCaptureDependencies(
-                screenCapture: self.services.screenCapture,
+                screenCapture: services.screenCapture,
                 screenService: self.services.screens,
                 frameSource: nil
             )
@@ -109,7 +113,7 @@ RuntimeOptionsConfigurable {
                 scope: scope,
                 options: options,
                 outputRoot: outputDir,
-                autoclean: WatchAutocleanConfig(minutes: self.autocleanMinutes ?? 120, managed: self.path == nil),
+                autoclean: WatchAutocleanConfig(minutes: autocleanMinutes ?? 120, managed: path == nil),
                 sourceKind: .live,
                 videoIn: nil,
                 videoOut: CaptureCommandPathResolver.filePath(from: self.videoOut),
@@ -125,6 +129,7 @@ RuntimeOptionsConfigurable {
                 ) != nil {
                     throw ValidationError("Capture ended before action started")
                 }
+                self.resolvedRuntime.beginInteractionMutation()
                 let action = try await CaptureActionProcessRunner.run(
                     command: self.command,
                     timeoutSeconds: timing.actionTimeout
@@ -133,7 +138,7 @@ RuntimeOptionsConfigurable {
                 session.requestStop()
 
                 let capture = try await captureTask.value
-                let validation = self.validateArtifacts(capture)
+                let validation = validateArtifacts(capture)
                 let result = CaptureActionCommandResult(
                     success: action.succeeded && validation.ok,
                     action: action,
@@ -158,7 +163,7 @@ RuntimeOptionsConfigurable {
         } catch let exit as ExitCode {
             throw exit
         } catch {
-            self.handleError(error)
+            handleError(error)
             self.logger.operationComplete(
                 "capture_action",
                 success: false,
@@ -175,9 +180,9 @@ RuntimeOptionsConfigurable {
         let runSession: @MainActor @Sendable () async throws -> CaptureSessionResult = {
             try await session.run()
         }
-        let enginePreference = self.liveCaptureEnginePreference(for: scope)
+        let enginePreference = liveCaptureEnginePreference(for: scope)
         return Task { @MainActor in
-            if let engineAware = self.services.screenCapture as? any EngineAwareScreenCaptureServiceProtocol {
+            if let engineAware = services.screenCapture as? any EngineAwareScreenCaptureServiceProtocol {
                 try await engineAware.withCaptureEngine(enginePreference, operation: runSession)
             } else {
                 try await runSession()
@@ -220,17 +225,17 @@ RuntimeOptionsConfigurable {
     }
 
     private func buildOptions() throws -> CaptureOptions {
-        let duration = max(1, min(self.durationLimit ?? 60, 180))
-        let idle = min(max(self.idleFps ?? 2, 0.1), 5)
-        let active = min(max(self.activeFps ?? 8, 0.5), 15)
-        let threshold = min(max(self.threshold ?? 2.5, 0), 100)
-        let heartbeat = max(self.heartbeatSec ?? 5, 0)
-        let quiet = max(self.quietMs ?? 1000, 0)
-        let maxFrames = max(self.maxFrames ?? 800, 1)
-        let resolutionCap = self.resolutionCap ?? 1440
-        let diffStrategy = try CaptureCommandOptionParser.diffStrategy(self.diffStrategy)
-        let diffBudgetMs = self.diffBudgetMs ?? (diffStrategy == .quality ? 30 : nil)
-        let maxMb = self.maxMb.flatMap { $0 > 0 ? $0 : nil }
+        let duration = max(1, min(durationLimit ?? 60, 180))
+        let idle = min(max(idleFps ?? 2, 0.1), 5)
+        let active = min(max(activeFps ?? 8, 0.5), 15)
+        let threshold = min(max(threshold ?? 2.5, 0), 100)
+        let heartbeat = max(heartbeatSec ?? 5, 0)
+        let quiet = max(quietMs ?? 1000, 0)
+        let maxFrames = max(maxFrames ?? 800, 1)
+        let resolutionCap = resolutionCap ?? 1440
+        let diffStrategy = try CaptureCommandOptionParser.diffStrategy(diffStrategy)
+        let diffBudgetMs = diffBudgetMs ?? (diffStrategy == .quality ? 30 : nil)
+        let maxMb = maxMb.flatMap { $0 > 0 ? $0 : nil }
 
         return CaptureOptions(
             duration: duration,
@@ -250,14 +255,14 @@ RuntimeOptionsConfigurable {
     }
 
     private func resolveActionTiming(durationLimit: TimeInterval) throws -> CaptureActionTiming {
-        let preRoll = max(self.preRollMs ?? 250, 0)
-        let postRoll = max(self.postRollMs ?? 500, 0)
+        let preRoll = max(preRollMs ?? 250, 0)
+        let postRoll = max(postRollMs ?? 500, 0)
         let rollSeconds = Double(preRoll + postRoll) / 1000.0
         guard rollSeconds < durationLimit else {
             throw ValidationError("--pre-roll-ms + --post-roll-ms must be less than --duration-limit")
         }
         let defaultActionTimeout = max(0.1, durationLimit - rollSeconds)
-        let actionTimeout = max(0.1, min(self.actionTimeout ?? defaultActionTimeout, durationLimit - rollSeconds))
+        let actionTimeout = max(0.1, min(actionTimeout ?? defaultActionTimeout, durationLimit - rollSeconds))
         return CaptureActionTiming(
             preRollMs: preRoll,
             postRollMs: postRoll,
@@ -371,7 +376,7 @@ extension CaptureActionCommand {
         checked.append(contentsOf: result.frames.map(\.path))
         if let videoOut = result.videoOut {
             checked.append(videoOut)
-        } else if let expectedVideoOut = CaptureCommandPathResolver.filePath(from: self.videoOut) {
+        } else if let expectedVideoOut = CaptureCommandPathResolver.filePath(from: videoOut) {
             checked.append(expectedVideoOut)
         }
 
@@ -400,10 +405,10 @@ extension CaptureActionCommand {
 @MainActor
 extension CaptureActionCommand {
     func resolveScope() async throws -> CaptureScope {
-        let mode = try self.resolveMode()
+        let mode = try resolveMode()
         switch mode {
         case .screen:
-            let displayInfo = try await self.displayInfo(for: self.screenIndex)
+            let displayInfo = try await displayInfo(for: screenIndex)
             return CaptureScope(
                 kind: .screen,
                 screenIndex: displayInfo?.index,
@@ -416,8 +421,8 @@ extension CaptureActionCommand {
         case .frontmost:
             return CaptureScope(kind: .frontmost)
         case .window:
-            let identifier = try self.resolveApplicationIdentifier()
-            let windowReference = try await self.resolveWindowReference(for: identifier)
+            let identifier = try resolveApplicationIdentifier()
+            let windowReference = try await resolveWindowReference(for: identifier)
             return CaptureScope(
                 kind: .window,
                 screenIndex: nil,
@@ -428,7 +433,7 @@ extension CaptureActionCommand {
                 region: nil
             )
         case .area:
-            let rect = try self.parseRegion()
+            let rect = try parseRegion()
             return CaptureScope(kind: .region, region: rect)
         case .multi:
             throw ValidationError("capture action does not support multi-mode captures")
@@ -436,7 +441,7 @@ extension CaptureActionCommand {
     }
 
     func resolveMode() throws -> LiveCaptureMode {
-        if let explicit = self.mode {
+        if let explicit = mode {
             let normalized = explicit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if normalized == "region" { return .area }
             guard let mode = LiveCaptureMode(rawValue: normalized) else {
@@ -452,7 +457,7 @@ extension CaptureActionCommand {
     }
 
     func parseRegion() throws -> CGRect {
-        guard let region = self.region?.trimmingCharacters(in: .whitespacesAndNewlines),
+        guard let region = region?.trimmingCharacters(in: .whitespacesAndNewlines),
               !region.isEmpty
         else {
             throw PeekabooError.invalidInput("Region must be provided when --mode area is set")
@@ -486,12 +491,14 @@ extension CaptureActionCommand {
                 spaceSwitch: false,
                 bringToCurrentSpace: false
             )
-            try await ensureFocused(
-                applicationName: appIdentifier,
-                windowTitle: self.windowTitle,
-                options: options,
-                services: self.services
-            )
+            try await withCaptureFocusMutation {
+                try await ensureFocused(
+                    applicationName: appIdentifier,
+                    windowTitle: self.windowTitle,
+                    options: options,
+                    services: self.services
+                )
+            }
         case .foreground:
             let options = FocusOptions(
                 autoFocus: true,
@@ -500,17 +507,19 @@ extension CaptureActionCommand {
                 spaceSwitch: true,
                 bringToCurrentSpace: true
             )
-            try await ensureFocused(
-                applicationName: appIdentifier,
-                windowTitle: self.windowTitle,
-                options: options,
-                services: self.services
-            )
+            try await withCaptureFocusMutation {
+                try await ensureFocused(
+                    applicationName: appIdentifier,
+                    windowTitle: self.windowTitle,
+                    options: options,
+                    services: self.services
+                )
+            }
         }
     }
 
     private func liveCaptureEnginePreference(for scope: CaptureScope) -> CaptureEnginePreference {
-        let value = (self.captureEngine ?? self.resolvedRuntime.configuration.captureEnginePreference)?
+        let value = (captureEngine ?? self.resolvedRuntime.configuration.captureEnginePreference)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
 
@@ -544,11 +553,11 @@ extension CaptureActionCommand {
         )
         let renderable = ObservationTargetResolver.captureCandidates(from: windows)
 
-        let selectedWindow: ServiceWindowInfo? = if let title = self.windowTitle?
+        let selectedWindow: ServiceWindowInfo? = if let title = windowTitle?
             .trimmingCharacters(in: .whitespacesAndNewlines),
             !title.isEmpty {
             renderable.first { $0.title.localizedCaseInsensitiveContains(title) }
-        } else if let explicitIndex = self.windowIndex {
+        } else if let explicitIndex = windowIndex {
             renderable.first { $0.index == explicitIndex }
         } else {
             nil

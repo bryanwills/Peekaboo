@@ -21,6 +21,12 @@ extension PeekabooBridgeServer {
         case let .launchApplication(payload):
             let app = try await self.services.applications.launchApplication(identifier: payload.identifier)
             return .application(app)
+        case let .launchApplicationWithOptions(payload):
+            let app = try await self.services.applications.launchApplication(request: payload)
+            return .application(app)
+        case let .relaunchApplicationWithOptions(payload):
+            let app = try await self.services.applications.relaunchApplication(request: payload)
+            return .application(app)
         case let .activateApplication(payload):
             try await self.services.applications.activateApplication(identifier: payload.identifier)
             return .ok
@@ -160,8 +166,12 @@ extension PeekabooBridgeServer {
 
     func handleSnapshotRequest(_ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeResponse {
         switch request {
-        case .createSnapshot:
-            let id = try await self.services.snapshots.createSnapshot()
+        case let .createSnapshot(payload):
+            let id = if let pendingAt = payload.pendingAt {
+                try await self.services.snapshots.createSnapshot(pendingAt: pendingAt)
+            } else {
+                try await self.services.snapshots.createSnapshot()
+            }
             return .snapshotId(id)
         case let .storeDetectionResult(payload):
             try await self.services.snapshots.storeDetectionResult(
@@ -188,6 +198,15 @@ extension PeekabooBridgeServer {
             return .snapshots(list)
         case let .getMostRecentSnapshot(payload):
             return try await self.handleMostRecentSnapshot(payload)
+        case let .invalidateImplicitLatestSnapshot(payload):
+            if let id = try await self.services.snapshots.invalidateImplicitLatestSnapshot(
+                through: payload.cutoff,
+                preserving: payload.preservingSnapshotId,
+                preservedAt: payload.preservedAt)
+            {
+                return .snapshotId(id)
+            }
+            return .ok
         case let .cleanSnapshot(payload):
             try await self.services.snapshots.cleanSnapshot(snapshotId: payload.snapshotId)
             return .ok

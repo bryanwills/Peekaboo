@@ -98,12 +98,16 @@ struct SwipeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 fallbackToLatest: needsSnapshotForElements,
                 snapshots: self.services.snapshots
             )
+            let refreshRuntime = self.resolvedRuntime
             observation = try await InteractionObservationRefresher.refreshForMissingElementsIfNeeded(
                 observation,
                 elementIds: [self.from, self.to],
                 target: self.target,
                 services: self.services,
-                logger: self.logger
+                logger: self.logger,
+                beforeRefresh: { startedAt in
+                    refreshRuntime.beginInteractionMutation(at: startedAt)
+                }
             )
 
             if needsSnapshotForElements {
@@ -112,6 +116,7 @@ struct SwipeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 try await observation.validateIfExplicit(using: self.services.snapshots)
             }
 
+            self.resolvedRuntime.beginInteractionMutation()
             try await ensureFocused(
                 snapshotId: observation.focusSnapshotId(for: self.target),
                 target: self.target,
@@ -173,13 +178,13 @@ struct SwipeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             )
 
             // Small delay to ensure swipe is processed
-            try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
             await InteractionObservationInvalidator.invalidateAfterMutation(
-                observation,
-                snapshots: self.services.snapshots,
+                targets: self.resolvedRuntime.interactionMutationTargets,
                 logger: self.logger,
                 reason: "swipe"
             )
+            try Task.checkCancellation()
 
             let outputPayload = SwipeResult(
                 success: true,

@@ -7,6 +7,38 @@ import XCTest
 @available(macOS 14.0, *)
 @MainActor
 final class ProcessServiceCaptureScriptTests: XCTestCase {
+    func testExecuteScriptReportsObservationBoundary() async throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-script-boundary-\(UUID().uuidString).png")
+        let processService = ProcessService(
+            applicationService: UnusedApplicationService(),
+            screenCaptureService: StaticScreenCaptureService(),
+            snapshotManager: InMemorySnapshotManager(),
+            uiAutomationService: UnusedUIAutomationService(),
+            windowManagementService: UnusedWindowManagementService(),
+            menuService: UnusedMenuService(),
+            dockService: UnusedDockService(),
+            clipboardService: ClipboardService(pasteboard: NSPasteboard.withUniqueName()))
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+        let beforeExecution = Date()
+
+        let results = try await processService.executeScript(
+            PeekabooScript(description: nil, steps: [
+                ScriptStep(stepId: "see", comment: nil, command: "see", params: .screenshot(.init(
+                    path: outputURL.path,
+                    mode: "frontmost",
+                    annotate: false))),
+            ]),
+            failFast: true,
+            verbose: false)
+
+        let result = try XCTUnwrap(results.first)
+        XCTAssertEqual(results.count, 1)
+        XCTAssertNotNil(result.snapshotId)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(result.startedAt), beforeExecution)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(result.startedAt), Date())
+    }
+
     func testScreenshotPathExpandsHomeDirectoryPath() async throws {
         let relativePath = "Library/Caches/peekaboo-script-shot-\(UUID().uuidString).png"
         let outputURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(relativePath)

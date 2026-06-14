@@ -89,14 +89,14 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         let startTime = Date()
 
         do {
-            try self.validate()
+            try validate()
 
             // Determine click target first to check if we need a snapshot
             let clickTarget: ClickTarget
             let waitResult: WaitForElementResult
             var activeSnapshotId: String
-            var observationForInvalidation: InteractionObservationContext?
             var coordinateResolution: InteractionCoordinateResolution?
+            var explicitWindowResolution: InteractionWindowResolution?
 
             // Check if we're clicking by coordinates (doesn't need snapshot)
             if let coordString = coords {
@@ -114,6 +114,9 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 clickTarget = .coordinates(resolvedCoordinates.screenPoint)
                 waitResult = WaitForElementResult(found: true, element: nil, waitTime: 0)
                 activeSnapshotId = "" // Not needed for coordinate clicks
+                if !self.usesBackgroundDelivery {
+                    self.resolvedRuntime.beginInteractionMutation()
+                }
                 try await self.focusApplicationIfNeeded(
                     snapshotId: nil,
                     coordinateResolution: resolvedCoordinates
@@ -124,7 +127,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 // so if the target window is not frontmost, the click will land on
                 // whatever window is at that position (see #90).
                 if !self.usesBackgroundDelivery {
-                    try await self.verifyFocusForCoordinateClick(coordinateResolution: resolvedCoordinates)
+                    try await verifyFocusForCoordinateClick(coordinateResolution: resolvedCoordinates)
                 }
 
             } else {
@@ -137,6 +140,12 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 )
                 try await observation.validateIfExplicit(using: self.services.snapshots)
 
+                explicitWindowResolution = try await self.resolveExplicitWindowSelection(
+                    observation: observation
+                )
+                if !self.usesBackgroundDelivery {
+                    self.resolvedRuntime.beginInteractionMutation()
+                }
                 try await self.focusApplicationIfNeeded(snapshotId: observation.focusSnapshotId(for: self.target))
 
                 // Use whichever element ID parameter was provided
@@ -144,20 +153,23 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
 
                 if let elementId {
                     if !self.usesBackgroundDelivery {
+                        let refreshRuntime = self.resolvedRuntime
                         observation = try await InteractionObservationRefresher.refreshForMissingElementsIfNeeded(
                             observation,
                             elementIds: [elementId],
                             target: self.target,
                             services: self.services,
-                            logger: self.logger
+                            logger: self.logger,
+                            beforeRefresh: { startedAt in
+                                refreshRuntime.beginInteractionMutation(at: startedAt)
+                            }
                         )
                     }
-                    observationForInvalidation = observation
                     activeSnapshotId = observation.snapshotId ?? ""
 
                     clickTarget = .elementId(elementId)
                     if self.usesBackgroundDelivery {
-                        let element = try await self.cachedElementById(elementId, observation: observation)
+                        let element = try await cachedElementById(elementId, observation: observation)
                         waitResult = WaitForElementResult(found: true, element: element, waitTime: 0)
                     } else {
                         // Click by element ID with auto-wait
@@ -177,11 +189,10 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                     if !self.usesBackgroundDelivery {
                         observation = try await self.refreshObservationIfQueryMissing(observation, query: searchQuery)
                     }
-                    observationForInvalidation = observation
                     activeSnapshotId = observation.snapshotId ?? ""
 
                     if self.usesBackgroundDelivery {
-                        let element = try await self.cachedElementMatching(searchQuery, observation: observation)
+                        let element = try await cachedElementMatching(searchQuery, observation: observation)
                         clickTarget = .elementId(element.id)
                         waitResult = WaitForElementResult(found: true, element: element, waitTime: 0)
                     } else {
@@ -209,24 +220,50 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 }
             }
 
+            let backgroundProcessIdentifier: pid_t? = if self.usesBackgroundDelivery {
+                try await self.resolveBackgroundClickProcessIdentifier(
+                    snapshotId: activeSnapshotId.isEmpty ? nil : activeSnapshotId,
+                    coordinateResolution: coordinateResolution,
+                    explicitWindowResolution: explicitWindowResolution
+                )
+            } else {
+                nil
+            }
+
             // Determine click type
             let clickType: ClickType = self.right ? .right : (self.double ? .double : .single)
+            self.resolvedRuntime.beginInteractionMutation()
             try await self.performClick(
                 clickTarget,
                 clickType: clickType,
                 snapshotId: activeSnapshotId,
-                coordinateResolution: coordinateResolution
+                coordinateResolution: coordinateResolution,
+                explicitWindowResolution: explicitWindowResolution,
+                backgroundProcessIdentifier: backgroundProcessIdentifier
             )
 
             // Brief delay to ensure click is processed
-            try await Task.sleep(nanoseconds: 20_000_000) // 0.02 seconds
+            try? await Task.sleep(nanoseconds: 20_000_000) // 0.02 seconds
+            // Result formatting can await bridge lookups. Freeze the mutation boundary first so
+            // observations created after the click remain eligible as the next implicit latest.
+            let snapshotInvalidationCutoff = Date()
 
-            let appName = await self.resultApplicationName(
+            // The click already happened. Advance every host watermark before diagnostics that can
+            // fail if the action closed, moved, or resized its target window.
+            await InteractionObservationInvalidator.invalidateAfterClickMutation(
+                targets: self.resolvedRuntime.interactionMutationTargets,
+                logger: self.logger,
+                reason: "click",
+                through: snapshotInvalidationCutoff
+            )
+            try Task.checkCancellation()
+
+            let appName = await resultApplicationName(
                 snapshotId: activeSnapshotId,
                 coordinateResolution: coordinateResolution
             )
 
-            let details = try await self.clickOutputDetails(
+            let details = try await clickOutputDetails(
                 clickTarget: clickTarget,
                 waitResult: waitResult,
                 snapshotId: activeSnapshotId,
@@ -241,8 +278,9 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 waitTime: waitResult.waitTime,
                 executionTime: Date().timeIntervalSince(startTime),
                 targetApp: appName,
-                targetWindowId: coordinateResolution?.targetWindowID,
-                targetWindowTitle: coordinateResolution?.targetWindowTitle,
+                targetWindowId: explicitWindowResolution?.windowInfo.windowID ?? coordinateResolution?.targetWindowID,
+                targetWindowTitle: explicitWindowResolution?.windowInfo.title ?? coordinateResolution?
+                    .targetWindowTitle,
                 coordinateSpace: coordinateResolution?.coordinateSpace.rawValue,
                 inputCoordinates: coordinateResolution?.inputPoint,
                 screenCoordinates: coordinateResolution?.screenPoint,
@@ -250,19 +288,10 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 deliveryMode: self.deliveryMode.rawValue
             )
 
-            if let observationForInvalidation {
-                await InteractionObservationInvalidator.invalidateAfterMutation(
-                    observationForInvalidation,
-                    snapshots: self.services.snapshots,
-                    logger: self.logger,
-                    reason: "click"
-                )
-            }
-
             self.outputSuccess(result)
 
         } catch {
-            self.handleError(error)
+            handleError(error)
             throw ExitCode.failure
         }
     }
@@ -279,13 +308,11 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             guard let element = waitResult.element else {
                 return (.zero, "Element ID: \(id)", nil)
             }
-            let resolution = try await InteractionTargetPointResolver.elementCenterResolution(
+            return try await self.elementOutputDetails(
                 element: element,
                 elementId: id,
-                snapshotId: snapshotId.isEmpty ? nil : snapshotId,
-                snapshots: self.services.snapshots
+                snapshotId: snapshotId
             )
-            return (resolution.point, self.formatElementInfo(element), resolution.diagnostics)
 
         case let .coordinates(point):
             let diagnostics = if let coordinateResolution {
@@ -307,13 +334,44 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             guard let element = waitResult.element else {
                 return (.zero, "Element matching: \(query)", nil)
             }
-            let resolution = try await InteractionTargetPointResolver.elementCenterResolution(
+            return try await self.elementOutputDetails(
                 element: element,
                 elementId: element.id,
-                snapshotId: snapshotId.isEmpty ? nil : snapshotId,
+                snapshotId: snapshotId
+            )
+        }
+    }
+
+    private func elementOutputDetails(
+        element: DetectedElement,
+        elementId: String,
+        snapshotId: String
+    ) async throws
+    -> (location: CGPoint, clickedElement: String?, targetPointDiagnostics: InteractionTargetPointDiagnostics?) {
+        let resolvedSnapshotId = snapshotId.isEmpty ? nil : snapshotId
+        do {
+            let resolution = try await InteractionTargetPointResolver.elementCenterResolution(
+                element: element,
+                elementId: elementId,
+                snapshotId: resolvedSnapshotId,
                 snapshots: self.services.snapshots
             )
-            return (resolution.point, self.formatElementInfo(element), resolution.diagnostics)
+            return (resolution.point, formatElementInfo(element), resolution.diagnostics)
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            // The click already succeeded; its target may have closed or moved before result formatting.
+            self.logger.debug("Post-click target diagnostics unavailable: \(error.localizedDescription)")
+            let point = CGPoint(x: element.bounds.midX, y: element.bounds.midY)
+            let diagnostics = InteractionTargetPointDiagnostics(
+                source: InteractionTargetPointSource.element.rawValue,
+                elementId: elementId,
+                snapshotId: resolvedSnapshotId,
+                original: InteractionPoint(point),
+                resolved: InteractionPoint(point),
+                windowAdjustment: nil
+            )
+            return (point, formatElementInfo(element), diagnostics)
         }
     }
 
@@ -329,7 +387,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             return targetApplicationName
         }
         if let processIdentifier = coordinateResolution?.targetProcessIdentifier {
-            return await self.applicationName(processIdentifier: processIdentifier) ?? "PID \(processIdentifier)"
+            return await applicationName(processIdentifier: processIdentifier) ?? "PID \(processIdentifier)"
         }
         if let windowID = coordinateResolution?.targetWindowID {
             return "window \(windowID)"
@@ -339,25 +397,25 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             return await self.frontmostApplicationName()
         }
 
-        if let pid = self.target.pid {
-            return await self.applicationName(processIdentifier: pid) ?? "PID \(pid)"
+        if let pid = target.pid {
+            return await applicationName(processIdentifier: pid) ?? "PID \(pid)"
         }
 
-        if let appIdentifier = self.target.app?.trimmingCharacters(in: .whitespacesAndNewlines),
+        if let appIdentifier = target.app?.trimmingCharacters(in: .whitespacesAndNewlines),
            !appIdentifier.isEmpty {
             return await (try? self.services.applications.findApplication(identifier: appIdentifier).name) ??
                 appIdentifier
         }
 
         guard !snapshotId.isEmpty,
-              let snapshot = try? await self.services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId)
+              let snapshot = try? await services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId)
         else {
-            if let detectionResult = try? await self.services.snapshots.getDetectionResult(snapshotId: snapshotId) {
+            if let detectionResult = try? await services.snapshots.getDetectionResult(snapshotId: snapshotId) {
                 if let applicationName = detectionResult.metadata.windowContext?.applicationName {
                     return applicationName
                 }
                 if let processId = detectionResult.metadata.windowContext?.applicationProcessId {
-                    return await self.applicationName(processIdentifier: processId) ?? "PID \(processId)"
+                    return await applicationName(processIdentifier: processId) ?? "PID \(processId)"
                 }
             }
             return await self.frontmostApplicationName()
@@ -368,14 +426,14 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         }
 
         if let processId = snapshot.applicationProcessId {
-            return await self.applicationName(processIdentifier: processId) ?? "PID \(processId)"
+            return await applicationName(processIdentifier: processId) ?? "PID \(processId)"
         }
 
         return await self.frontmostApplicationName()
     }
 
     private func applicationName(processIdentifier: Int32) async -> String? {
-        guard let output = try? await self.services.applications.listApplications() else {
+        guard let output = try? await services.applications.listApplications() else {
             return nil
         }
         return output.data.applications.first { $0.processIdentifier == processIdentifier }?.name
@@ -420,8 +478,35 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             query: query,
             target: self.target,
             services: self.services,
-            logger: self.logger
+            logger: self.logger,
+            beforeRefresh: { startedAt in
+                self.resolvedRuntime.beginInteractionMutation(at: startedAt)
+            }
         )
+    }
+
+    private func resolveExplicitWindowSelection(
+        observation: InteractionObservationContext
+    ) async throws -> InteractionWindowResolution? {
+        guard self.target.windowId != nil || self.target.windowTitle != nil || self.target.windowIndex != nil else {
+            return nil
+        }
+
+        let resolution = try await InteractionCoordinateResolver.resolveTargetWindow(
+            target: self.target,
+            services: self.services
+        )
+        guard self.usesBackgroundDelivery else {
+            return resolution
+        }
+        let snapshotId = try observation.requireSnapshot()
+        let detectionResult = try await observation.requireDetectionResult(using: self.services.snapshots)
+        try InteractionWindowSelectionValidator.validate(
+            resolution: resolution,
+            snapshotContext: detectionResult.metadata.windowContext,
+            snapshotId: snapshotId
+        )
+        return resolution
     }
 
     private func cachedElementById(
@@ -491,7 +576,9 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         _ target: ClickTarget,
         clickType: ClickType,
         snapshotId: String,
-        coordinateResolution: InteractionCoordinateResolution?
+        coordinateResolution: InteractionCoordinateResolution?,
+        explicitWindowResolution: InteractionWindowResolution?,
+        backgroundProcessIdentifier: pid_t?
     ) async throws {
         let effectiveSnapshotId: String? = if case .coordinates = target {
             nil
@@ -500,16 +587,16 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         }
 
         if self.usesBackgroundDelivery {
-            let pid = try await self.resolveBackgroundClickProcessIdentifier(
-                snapshotId: effectiveSnapshotId,
-                coordinateResolution: coordinateResolution
-            )
+            guard let backgroundProcessIdentifier else {
+                preconditionFailure("Background process identifier must be resolved before click delivery")
+            }
             try await AutomationServiceBridge.click(
                 automation: self.services.automation,
                 target: target,
                 clickType: clickType,
                 snapshotId: effectiveSnapshotId,
-                targetProcessIdentifier: pid
+                targetProcessIdentifier: backgroundProcessIdentifier,
+                targetWindowID: explicitWindowResolution?.windowInfo.windowID ?? coordinateResolution?.targetWindowID
             )
         } else {
             try await AutomationServiceBridge.click(
@@ -574,22 +661,27 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
 
     private func resolveBackgroundClickProcessIdentifier(
         snapshotId: String?,
-        coordinateResolution: InteractionCoordinateResolution?
+        coordinateResolution: InteractionCoordinateResolution?,
+        explicitWindowResolution: InteractionWindowResolution?
     ) async throws -> pid_t {
         if self.target.pid != nil, self.target.app != nil {
             throw ValidationError("Background click accepts one process target: use --app or --pid")
         }
 
-        if let pid = self.target.pid {
+        if let processId = explicitWindowResolution?.targetProcessIdentifier {
+            return pid_t(processId)
+        }
+
+        if let pid = target.pid {
             guard pid > 0 else {
                 throw ValidationError("--pid must be greater than 0")
             }
             return pid_t(pid)
         }
 
-        if let appIdentifier = self.target.app?.trimmingCharacters(in: .whitespacesAndNewlines),
+        if let appIdentifier = target.app?.trimmingCharacters(in: .whitespacesAndNewlines),
            !appIdentifier.isEmpty {
-            let app = try await self.services.applications.findApplication(identifier: appIdentifier)
+            let app = try await services.applications.findApplication(identifier: appIdentifier)
             return pid_t(app.processIdentifier)
         }
 
@@ -598,13 +690,13 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         }
 
         if let snapshotId,
-           let snapshot = try? await self.services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId),
+           let snapshot = try? await services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId),
            let processId = snapshot.applicationProcessId {
             return pid_t(processId)
         }
 
         if let snapshotId,
-           let detectionResult = try? await self.services.snapshots.getDetectionResult(snapshotId: snapshotId),
+           let detectionResult = try? await services.snapshots.getDetectionResult(snapshotId: snapshotId),
            let processId = detectionResult.metadata.windowContext?.applicationProcessId {
             return pid_t(processId)
         }

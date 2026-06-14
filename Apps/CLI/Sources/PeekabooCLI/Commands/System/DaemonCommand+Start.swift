@@ -49,8 +49,11 @@ extension DaemonCommand {
 
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
-            let socketPath = self.bridgeSocket ?? PeekabooBridgeConstants.daemonSocketPath
-            let client = DaemonControlClient(socketPath: socketPath)
+            let defaultSocketPath = PeekabooBridgeConstants.daemonSocketPath
+            let buildScopedSocketPath = DaemonLaunchPolicy.buildScopedDaemonSocketPath(
+                daemonSocketPath: defaultSocketPath,
+                runtimeBuildIdentity: DaemonLaunchPolicy.runtimeBuildIdentity()
+            )
             let lockHandle = DaemonPaths.openDaemonStartupLock()
             if let fileDescriptor = lockHandle?.fileDescriptor {
                 flock(fileDescriptor, LOCK_EX)
@@ -63,17 +66,29 @@ extension DaemonCommand {
             }
 
             let targets = await DaemonControlResolver.targets(explicitSocket: self.bridgeSocket)
-            if let target = targets.first(where: { !$0.isLegacyDefault }) {
-                let status = target.status
-                self.output(status) {
-                    DaemonStatusPrinter.render(status: status)
-                }
-                return
-            }
+            let action = DaemonControlPlanner.startAction(
+                targets: targets,
+                explicitSocket: self.bridgeSocket,
+                defaultSocketPath: defaultSocketPath,
+                buildScopedSocketPath: buildScopedSocketPath
+            )
+            guard let destination = try await self.resolveDestination(action: action, targets: targets) else { return }
+            let socketPath = destination.socketPath
+            let promotionTarget = destination.promotionTarget
 
-            let legacyTarget = targets.first {
-                $0.isLegacyDefault && DaemonControlClient.isReusableDaemonStatus($0.status)
-            }
+            let client = DaemonControlClient(socketPath: socketPath)
+
+            let migratesLegacyTarget = DaemonControlPlanner.shouldMigrateLegacyTarget(
+                explicitSocket: self.bridgeSocket,
+                destinationSocketPath: socketPath,
+                defaultSocketPath: defaultSocketPath,
+                targets: targets
+            )
+            let legacyTarget = migratesLegacyTarget
+                ? targets.first {
+                    $0.isLegacyDefault && DaemonControlClient.isReusableDaemonStatus($0.status)
+                }
+                : nil
             if let legacyTarget {
                 guard DaemonControlClient.supportsSafeMigration(legacyTarget.status) else {
                     throw PeekabooError.operationError(
@@ -96,6 +111,11 @@ extension DaemonCommand {
                 break
             case .reusableDaemon:
                 if let status = await client.fetchReusableDaemonStatus() {
+                    guard status.mode == .manual else {
+                        throw PeekabooError.operationError(
+                            message: "Daemon at \(socketPath) remained in auto mode; retry start when it is idle"
+                        )
+                    }
                     self.output(status) {
                         DaemonStatusPrinter.render(status: status)
                     }
@@ -108,7 +128,8 @@ extension DaemonCommand {
             let arguments = DaemonLaunchPolicy.daemonArguments(
                 socketPath: socketPath,
                 mode: .manual,
-                pollIntervalMs: self.pollIntervalMs ?? legacyTarget?.status.windowTracker?.cgPollIntervalMs,
+                pollIntervalMs: self.pollIntervalMs ?? promotionTarget?.status.windowTracker?.cgPollIntervalMs
+                    ?? legacyTarget?.status.windowTracker?.cgPollIntervalMs,
                 idleTimeoutSeconds: CommandRuntime.defaultDaemonIdleTimeoutSeconds
             )
             guard let replacement = await DaemonLaunchPolicy.launchDaemon(
@@ -156,6 +177,69 @@ extension DaemonCommand {
 }
 
 extension DaemonCommand.Start: AsyncRuntimeCommand {}
+
+private struct DaemonStartDestination {
+    let socketPath: String
+    let promotionTarget: DaemonControlTarget?
+}
+
+@MainActor
+extension DaemonCommand.Start {
+    fileprivate func resolveDestination(
+        action: DaemonStartAction,
+        targets: [DaemonControlTarget]
+    ) async throws -> DaemonStartDestination? {
+        switch action {
+        case let .useExisting(socketPath):
+            guard let target = targets.first(where: { $0.client.socketPath == socketPath }) else {
+                throw PeekabooError.operationError(message: "Selected daemon disappeared; retry start")
+            }
+            self.output(target.status) {
+                DaemonStatusPrinter.render(status: target.status)
+            }
+            return nil
+        case let .launchManual(socketPath):
+            return DaemonStartDestination(socketPath: socketPath, promotionTarget: nil)
+        case let .promoteAutoToManual(socketPath, pid):
+            guard let target = targets.first(where: { $0.client.socketPath == socketPath }) else {
+                throw PeekabooError.operationError(message: "Selected daemon disappeared; retry start")
+            }
+            do {
+                guard try await target.client.stopAndWait(
+                    waitSeconds: max(self.waitSeconds, DaemonControlClient.defaultShutdownWaitSeconds),
+                    expectedPID: pid,
+                    requireIdentityMatch: true
+                )
+                else {
+                    throw PeekabooError.operationError(
+                        message: "Daemon at \(socketPath) refused a safe stop; retry when it is idle"
+                    )
+                }
+            } catch let error as PeekabooError {
+                throw error
+            } catch {
+                throw PeekabooError.operationError(
+                    message: "Could not safely promote daemon at \(socketPath): \(error.localizedDescription)"
+                )
+            }
+            return DaemonStartDestination(socketPath: socketPath, promotionTarget: target)
+        case let .rejectBusy(socketPath):
+            throw PeekabooError.operationError(
+                message: "Daemon at \(socketPath) has active requests; retry start after they finish"
+            )
+        case let .rejectUnsafe(socketPath):
+            throw PeekabooError.operationError(
+                message: "Daemon at \(socketPath) cannot be safely promoted; " +
+                    "stop it explicitly with `peekaboo daemon stop --bridge-socket \(socketPath)`, then retry"
+            )
+        case let .rejectIncompatible(socketPath):
+            throw PeekabooError.operationError(
+                message: "Daemon at \(socketPath) is incompatible with this build; " +
+                    "stop it with `peekaboo daemon stop --bridge-socket \(socketPath)`, then retry"
+            )
+        }
+    }
+}
 
 @MainActor
 extension DaemonCommand.Start: CommanderBindableCommand {

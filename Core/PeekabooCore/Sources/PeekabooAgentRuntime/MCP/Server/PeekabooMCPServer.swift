@@ -38,7 +38,7 @@ public actor PeekabooMCPServer {
         await self.registerAllTools()
     }
 
-    init(toolContext: MCPToolContext) async throws {
+    public init(toolContext: MCPToolContext) async throws {
         self.logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "server")
         self.toolRegistry = await MCPToolRegistry()
         self.toolContext = toolContext
@@ -81,7 +81,7 @@ public actor PeekabooMCPServer {
             let arguments = ToolArguments(value: .object(params.arguments ?? [:]))
 
             // Execute tool on main thread
-            let response = try await tool.execute(arguments: arguments)
+            let response = try await self.toolContext.execute(tool: tool, arguments: arguments)
 
             return CallTool.Result(
                 content: response.content,
@@ -169,6 +169,10 @@ public actor PeekabooMCPServer {
 
     func registeredToolNamesForTesting() async -> [String] {
         await self.toolRegistry.allTools().map(\.name).sorted()
+    }
+
+    func snapshotExecutionGateForTesting() -> MCPToolSnapshotExecutionGate {
+        self.toolContext.snapshotExecutionGate
     }
 
     public func serve(transport: TransportType, port: Int = 8080) async throws {

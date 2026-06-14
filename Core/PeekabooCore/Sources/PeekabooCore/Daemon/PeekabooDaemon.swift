@@ -117,7 +117,9 @@ public final class PeekabooDaemon: PeekabooConditionalDaemonControlProviding {
 
     public init(configuration: Configuration) {
         self.configuration = configuration
-        self.services = PeekabooServices(snapshotManager: InMemorySnapshotManager())
+        self.services = PeekabooServices(
+            snapshotManager: InMemorySnapshotManager(
+                desktopMutationWatermarkStore: DesktopMutationWatermarkStore()))
         self.startTime = Date()
     }
 
@@ -202,7 +204,13 @@ public final class PeekabooDaemon: PeekabooConditionalDaemonControlProviding {
             ? PeekabooDaemonBridgeStatus(
                 socketPath: self.configuration.bridgeSocketPath,
                 hostKind: self.configuration.hostKind,
-                allowedOperations: Array(self.configuration.allowedOperations).sorted { $0.rawValue < $1.rawValue })
+                allowedOperations: Array(PeekabooBridgeOperation.compatible(
+                    self.configuration.allowedOperations,
+                    with: PeekabooBridgeConstants.minimumProtocolVersion))
+                    .sorted { $0.rawValue < $1.rawValue },
+                availableOperationNames: self.configuration.allowedOperations
+                    .map(\.rawValue)
+                    .sorted())
             : nil
 
         let windowStatus = trackerStatus.map { status in

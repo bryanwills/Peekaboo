@@ -4,16 +4,17 @@ import PeekabooCore
 @available(macOS 14.0, *)
 @MainActor
 extension SeeCommand {
-    func renderResults(context: SeeCommandRenderContext) async {
+    func renderResults(context: SeeCommandRenderContext) throws {
+        try Task.checkCancellation()
         if self.jsonOutput {
-            await self.outputJSONResults(context: context)
+            try self.outputJSONResults(context: context)
         } else {
-            await self.outputTextResults(context: context)
+            try self.outputTextResults(context: context)
         }
     }
 
     /// Fetches the menu bar summary only when verbose output is requested, with a short timeout.
-    private func fetchMenuBarSummaryIfEnabled() async -> MenuBarSummary? {
+    func fetchMenuBarSummaryIfEnabled() async -> MenuBarSummary? {
         guard self.verbose else { return nil }
 
         do {
@@ -35,15 +36,17 @@ extension SeeCommand {
     /// Synchronous MainActor calls cannot be preempted.
     static func withWallClockTimeout<T: Sendable>(
         seconds: TimeInterval,
+        timeoutErrorSeconds: TimeInterval? = nil,
+        interactionMutationTracker: InteractionMutationTracker? = nil,
         operation: @escaping @MainActor @Sendable () async throws -> T
     ) async throws -> T {
         try await withMainActorCommandTimeout(
             seconds: seconds,
             operationName: "see",
-            timeoutError: { CaptureError.detectionTimedOut(seconds) }
-        ) {
-            try await operation()
-        }
+            timeoutError: { CaptureError.detectionTimedOut(timeoutErrorSeconds ?? seconds) },
+            interactionMutationTracker: interactionMutationTracker,
+            operation: { try await operation() }
+        )
     }
 
     func performAnalysisDetailed(imagePath: String, prompt: String) async throws -> SeeAnalysisData {
@@ -52,12 +55,7 @@ extension SeeCommand {
         return SeeAnalysisData(provider: res.provider, model: res.model, text: res.text)
     }
 
-    private func buildMenuSummaryIfNeeded() async -> MenuBarSummary? {
-        // Placeholder for future UI summary generation; currently unused.
-        nil
-    }
-
-    private func outputJSONResults(context: SeeCommandRenderContext) async {
+    private func outputJSONResults(context: SeeCommandRenderContext) throws {
         let uiElements: [UIElementSummary] = context.elements.all.map { element in
             UIElementSummary(
                 id: element.id,
@@ -76,10 +74,6 @@ extension SeeCommand {
 
         let snapshotPaths = self.snapshotPaths(for: context)
 
-        // Menu bar enumeration can be slow or hang on some setups. Only attempt it in verbose
-        // mode and bound it with a short timeout so JSON output is responsive by default.
-        let menuSummary = await self.fetchMenuBarSummaryIfEnabled()
-
         let output = SeeResult(
             snapshot_id: context.snapshotId,
             screenshot_raw: snapshotPaths.raw,
@@ -94,7 +88,7 @@ extension SeeCommand {
             analysis: context.analysis,
             execution_time: context.executionTime,
             ui_elements: uiElements,
-            menu_bar: menuSummary,
+            menu_bar: context.menuBar,
             truncation: SeeTruncationSummary(metadata: context.metadata),
             observation: context.observation
         )
@@ -129,7 +123,8 @@ extension SeeCommand {
         return MenuBarSummary(menus: menus)
     }
 
-    private func outputTextResults(context: SeeCommandRenderContext) async {
+    private func outputTextResults(context: SeeCommandRenderContext) throws {
+        try Task.checkCancellation()
         print("🖼️  Screenshot saved to: \(context.screenshotPath)")
         if let annotatedPath = context.annotatedPath {
             print("📝 Annotated screenshot: \(annotatedPath)")
@@ -170,17 +165,6 @@ extension SeeCommand {
 
         if self.annotate, context.annotatedPath != nil {
             print("\n📝 Annotated screenshot created")
-        }
-
-        if let menuSummary = await self.buildMenuSummaryIfNeeded() {
-            print("\n🧭 Menu Bar Summary")
-            for menu in menuSummary.menus {
-                print("- \(menu.title) (\(menu.enabled ? "Enabled" : "Disabled"))")
-                for item in menu.items.prefix(5) {
-                    let shortcut = item.keyboard_shortcut.map { " [\($0)]" } ?? ""
-                    print("    • \(item.title)\(shortcut)")
-                }
-            }
         }
 
         print("\nSnapshot ID: \(context.snapshotId)")

@@ -77,7 +77,11 @@ enum PermissionHelpers {
                 if resolvedOverride == nil {
                     guard let role = DaemonLaunchPolicy.implicitRuntimeCandidateRole(
                         socketPath: socketPath,
-                        daemonSocketPath: DaemonLaunchPolicy.daemonSocketPath(environment: environment)
+                        daemonSocketPath: DaemonLaunchPolicy.daemonSocketPath(environment: environment),
+                        buildScopedDaemonSocketPath: DaemonLaunchPolicy.buildScopedDaemonSocketPath(
+                            daemonSocketPath: DaemonLaunchPolicy.daemonSocketPath(environment: environment),
+                            runtimeBuildIdentity: DaemonLaunchPolicy.runtimeBuildIdentity()
+                        )
                     ) else {
                         continue
                     }
@@ -112,7 +116,11 @@ enum PermissionHelpers {
         guard DaemonLaunchPolicy.shouldMigrateLegacyDaemon(targetSocketPath: daemonPath) else {
             return [daemonPath]
         }
-        return [daemonPath, PeekabooBridgeConstants.peekabooSocketPath]
+        let buildScopedPath = DaemonLaunchPolicy.buildScopedDaemonSocketPath(
+            daemonSocketPath: daemonPath,
+            runtimeBuildIdentity: DaemonLaunchPolicy.runtimeBuildIdentity()
+        )
+        return [daemonPath, buildScopedPath, PeekabooBridgeConstants.peekabooSocketPath].compactMap(\.self)
     }
 
     /// Get current permission status for all Peekaboo permissions
@@ -121,7 +129,7 @@ enum PermissionHelpers {
         allowRemote: Bool = true,
         socketPath: String? = nil
     ) async -> [PermissionInfo] {
-        let response = await self.getCurrentPermissionsWithSource(
+        let response = await getCurrentPermissionsWithSource(
             services: services,
             allowRemote: allowRemote,
             socketPath: socketPath
@@ -137,7 +145,7 @@ enum PermissionHelpers {
     ) async -> PermissionStatusResponse {
         // Prefer remote host when available so sandboxes can reuse existing TCC grants.
         let remoteStatus = allowRemote
-            ? await self.remotePermissionsStatus(services: services, socketPath: socketPath)
+            ? await remotePermissionsStatus(services: services, socketPath: socketPath)
             : nil
 
         let status: PermissionsStatus
@@ -158,9 +166,9 @@ enum PermissionHelpers {
         socketPath: String? = nil
     ) async -> PermissionSourcesResponse {
         let remoteStatus = allowRemote
-            ? await self.remotePermissionsStatus(services: services, socketPath: socketPath)
+            ? await remotePermissionsStatus(services: services, socketPath: socketPath)
             : nil
-        let localStatus = await self.localPermissionsStatus(services: services)
+        let localStatus = await localPermissionsStatus(services: services)
         let selectedSource = remoteStatus != nil ? "bridge" : "local"
         var sources: [PermissionSourceStatus] = []
 
@@ -224,7 +232,8 @@ enum PermissionHelpers {
 
     @MainActor
     static func requestEventSynthesizingPermission(
-        services: any PeekabooServiceProviding
+        services: any PeekabooServiceProviding,
+        runtime: CommandRuntime
     ) async throws -> EventSynthesizingPermissionRequestResult {
         if let remoteServices = services as? RemotePeekabooServices {
             let status = try await remoteServices.permissionsStatus()
@@ -239,7 +248,9 @@ enum PermissionHelpers {
             }
 
             do {
-                let granted = try await remoteServices.requestPostEventPermission()
+                let granted = try await self.performInteractivePermissionRequest(using: runtime) {
+                    try await remoteServices.requestPostEventPermission()
+                }
                 return .init(
                     action: "request-event-synthesizing",
                     source: "bridge",
@@ -263,7 +274,9 @@ enum PermissionHelpers {
             )
         }
 
-        let granted = permissions.requestPostEventPermission(interactive: true)
+        let granted = await self.performInteractivePermissionRequest(using: runtime) {
+            permissions.requestPostEventPermission(interactive: true)
+        }
         return .init(
             action: "request-event-synthesizing",
             source: "local",
@@ -271,6 +284,15 @@ enum PermissionHelpers {
             prompt_triggered: true,
             granted: granted
         )
+    }
+
+    @MainActor
+    static func performInteractivePermissionRequest<T>(
+        using runtime: CommandRuntime,
+        _ request: @MainActor () async throws -> T
+    ) async rethrows -> T {
+        runtime.beginInteractionMutation()
+        return try await request()
     }
 
     /// Format permission status for display
@@ -297,7 +319,7 @@ enum PermissionHelpers {
         services: any PeekabooServiceProviding
     ) async -> String {
         // Format permissions for help display with dynamic status
-        let permissions = await self.getCurrentPermissions(services: services)
+        let permissions = await getCurrentPermissions(services: services)
         var output = ["PERMISSIONS:"]
 
         for permission in permissions {

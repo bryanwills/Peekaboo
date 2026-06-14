@@ -11,6 +11,13 @@ import PeekabooFoundation
 /// macOS delivers pid-routed CGEvents differently from hardware events, and
 /// some apps ignore background mouse events unless they also expose an AX path.
 enum BackgroundInputDriver {
+    struct MouseWindowRouteCandidate: Equatable {
+        let windowID: CGWindowID
+        let processIdentifier: pid_t
+        let layer: Int
+        let bounds: CGRect
+    }
+
     struct KeyboardEventPlan {
         let modifierKeyDownEvents: [CGEvent]
         let primaryKeyDownEvent: CGEvent
@@ -22,7 +29,8 @@ enum BackgroundInputDriver {
         at point: CGPoint,
         button: MouseButton,
         count: Int,
-        targetProcessIdentifier: pid_t) throws
+        targetProcessIdentifier: pid_t,
+        targetWindowID: CGWindowID? = nil) throws
     {
         guard CGPreflightPostEventAccess() else {
             throw PeekabooError.permissionDeniedEventSynthesizing
@@ -31,6 +39,12 @@ enum BackgroundInputDriver {
         guard targetProcessIdentifier > 0, self.isProcessAlive(targetProcessIdentifier) else {
             throw PeekabooError.invalidInput("Target process identifier is not running: \(targetProcessIdentifier)")
         }
+
+        let routedWindowID = try self.resolveTargetWindowID(
+            at: point,
+            targetProcessIdentifier: targetProcessIdentifier,
+            exactWindowID: targetWindowID,
+            candidates: self.mouseWindowRouteCandidates(exactWindowID: targetWindowID))
 
         let (downType, upType, cgButton) = Self.eventTypes(for: button)
         let source = CGEventSource(stateID: .hidSystemState)
@@ -54,8 +68,14 @@ enum BackgroundInputDriver {
 
             down.setIntegerValueField(.mouseEventClickState, value: Int64(clickIndex))
             up.setIntegerValueField(.mouseEventClickState, value: Int64(clickIndex))
-            self.stampRoutingFields(on: down, at: point, targetProcessIdentifier: targetProcessIdentifier)
-            self.stampRoutingFields(on: up, at: point, targetProcessIdentifier: targetProcessIdentifier)
+            self.stampRoutingFields(
+                on: down,
+                targetProcessIdentifier: targetProcessIdentifier,
+                targetWindowID: routedWindowID)
+            self.stampRoutingFields(
+                on: up,
+                targetProcessIdentifier: targetProcessIdentifier,
+                targetWindowID: routedWindowID)
 
             Self.post(down, to: targetProcessIdentifier)
             usleep(30000)
@@ -412,14 +432,12 @@ enum BackgroundInputDriver {
 
     private static func stampRoutingFields(
         on event: CGEvent,
-        at point: CGPoint,
-        targetProcessIdentifier: pid_t)
+        targetProcessIdentifier: pid_t,
+        targetWindowID: CGWindowID?)
     {
         event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(targetProcessIdentifier))
 
-        guard let windowID = self.windowID(containing: point, targetProcessIdentifier: targetProcessIdentifier) else {
-            return
-        }
+        guard let windowID = targetWindowID else { return }
 
         let value = Int64(windowID)
         event.setIntegerValueField(.windowID, value: value)
@@ -657,28 +675,73 @@ enum BackgroundInputDriver {
         return value as? String
     }
 
-    private static func windowID(containing point: CGPoint, targetProcessIdentifier: pid_t) -> CGWindowID? {
-        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-            as? [[String: Any]]
-        else {
-            return nil
-        }
-
-        for window in windows {
-            guard self.pid(from: window[kCGWindowOwnerPID as String]) == targetProcessIdentifier,
-                  self.intValue(from: window[kCGWindowLayer as String]) == 0,
-                  let windowNumber = self.windowID(from: window[kCGWindowNumber as String]),
-                  let boundsValue = window[kCGWindowBounds as String] as? [String: Any],
-                  let bounds = CGRect(dictionaryRepresentation: boundsValue as CFDictionary),
-                  bounds.contains(point)
-            else {
-                continue
+    static func resolveTargetWindowID(
+        at point: CGPoint,
+        targetProcessIdentifier: pid_t,
+        exactWindowID: CGWindowID?,
+        candidates: [MouseWindowRouteCandidate]) throws -> CGWindowID?
+    {
+        if let exactWindowID {
+            guard let candidate = candidates.first(where: { $0.windowID == exactWindowID }) else {
+                throw PeekabooError.snapshotStale("Target window \(exactWindowID) no longer exists")
             }
-
-            return windowNumber
+            guard candidate.processIdentifier == targetProcessIdentifier else {
+                throw PeekabooError.snapshotStale(
+                    "Target window \(exactWindowID) is now owned by another process")
+            }
+            guard candidate.layer == 0 else {
+                throw PeekabooError.snapshotStale("Target window \(exactWindowID) is no longer interactive")
+            }
+            guard candidate.bounds.contains(point) else {
+                throw PeekabooError.snapshotStale(
+                    "Resolved click point is outside target window \(exactWindowID); capture a fresh snapshot")
+            }
+            return exactWindowID
         }
 
-        return nil
+        return candidates.first {
+            $0.processIdentifier == targetProcessIdentifier &&
+                $0.layer == 0 &&
+                $0.bounds.contains(point)
+        }?.windowID
+    }
+
+    static func mouseWindowRouteCandidates(
+        exactWindowID: CGWindowID?,
+        copyWindowInfo: (CGWindowListOption, CGWindowID) -> [[String: Any]]? = { options, relativeToWindow in
+            CGWindowListCopyWindowInfo(options, relativeToWindow) as? [[String: Any]]
+        }) -> [MouseWindowRouteCandidate]
+    {
+        let options: CGWindowListOption
+        let relativeToWindow: CGWindowID
+        if let exactWindowID {
+            // On-screen enumeration omits live windows on other Spaces; exact routes must query by ID.
+            options = [.optionIncludingWindow, .excludeDesktopElements]
+            relativeToWindow = exactWindowID
+        } else {
+            options = [.optionOnScreenOnly, .excludeDesktopElements]
+            relativeToWindow = kCGNullWindowID
+        }
+
+        guard let windows = copyWindowInfo(options, relativeToWindow)
+        else {
+            return []
+        }
+
+        return windows.compactMap { window in
+            guard let processIdentifier = self.pid(from: window[kCGWindowOwnerPID as String]),
+                  let layer = self.intValue(from: window[kCGWindowLayer as String]),
+                  let windowID = self.windowID(from: window[kCGWindowNumber as String]),
+                  let boundsValue = window[kCGWindowBounds as String] as? [String: Any],
+                  let bounds = CGRect(dictionaryRepresentation: boundsValue as CFDictionary)
+            else { return nil }
+
+            return MouseWindowRouteCandidate(
+                windowID: windowID,
+                processIdentifier: processIdentifier,
+                layer: layer,
+                bounds: bounds)
+        }
     }
 
     private static func windowID(from value: Any?) -> CGWindowID? {

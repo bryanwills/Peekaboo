@@ -4,6 +4,14 @@ extension InMemorySnapshotManager {
     // MARK: - Snapshot lifecycle
 
     public func createSnapshot() async throws -> String {
+        try await self.createSnapshotImpl(pendingAt: nil)
+    }
+
+    public func createSnapshot(pendingAt observationStartedAt: Date) async throws -> String {
+        try await self.createSnapshotImpl(pendingAt: observationStartedAt)
+    }
+
+    private func createSnapshotImpl(pendingAt observationStartedAt: Date?) async throws -> String {
         self.pruneIfNeeded()
 
         let timestamp = Int(Date().timeIntervalSince1970 * 1000) // milliseconds
@@ -12,9 +20,10 @@ extension InMemorySnapshotManager {
 
         let now = Date()
         self.entries[snapshotId] = Entry(
-            createdAt: now,
+            createdAt: observationStartedAt ?? now,
             lastAccessedAt: now,
             processId: getpid(),
+            isPending: observationStartedAt != nil,
             detectionResult: nil,
             snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
         self.pruneIfNeeded()
@@ -29,6 +38,7 @@ extension InMemorySnapshotManager {
             createdAt: Date(),
             lastAccessedAt: Date(),
             processId: getpid(),
+            isPending: false,
             detectionResult: nil,
             snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
 
@@ -56,29 +66,129 @@ extension InMemorySnapshotManager {
         self.pruneIfNeeded()
 
         let cutoff = Date().addingTimeInterval(-self.options.snapshotValidityWindow)
-        return self.entries
-            .filter { $0.value.createdAt >= cutoff }
-            .max(by: { $0.value.lastAccessedAt < $1.value.lastAccessedAt })?
-            .key
+        let effectiveWatermark = self.effectiveImplicitLatestInvalidationWatermark
+        let normalLatest = self.entries
+            .filter { _, entry in
+                !entry.isPending
+                    && entry.createdAt >= cutoff
+                    && (effectiveWatermark.map { entry.createdAt > $0 } ?? true)
+            }
+            .max(by: { $0.value.createdAt < $1.value.createdAt })
+        if let preservation = self.implicitLatestPreservation,
+           self.entries[preservation.snapshotId]?.isPending == false,
+           preservation.preservedAt >= cutoff,
+           effectiveWatermark.map({ $0 <= preservation.invalidatedThrough }) ?? true,
+           normalLatest.map({ $0.value.createdAt <= preservation.preservedAt }) ?? true
+        {
+            return preservation.snapshotId
+        }
+        return normalLatest?.key
     }
 
     public func getMostRecentSnapshot(applicationBundleId: String) async -> String? {
         self.pruneIfNeeded()
 
         let cutoff = Date().addingTimeInterval(-self.options.snapshotValidityWindow)
-        return self.entries
+        let effectiveWatermark = self.effectiveImplicitLatestInvalidationWatermark
+        let normalLatest = self.entries
             .filter { _, entry in
-                entry.createdAt >= cutoff && entry.snapshotData.applicationBundleId == applicationBundleId
+                !entry.isPending
+                    && entry.createdAt >= cutoff
+                    && (effectiveWatermark.map { entry.createdAt > $0 } ?? true)
+                    && entry.snapshotData.applicationBundleId == applicationBundleId
             }
-            .max(by: { $0.value.lastAccessedAt < $1.value.lastAccessedAt })?
-            .key
+            .max(by: { $0.value.createdAt < $1.value.createdAt })
+        if let preservation = self.implicitLatestPreservation,
+           let preservedEntry = self.entries[preservation.snapshotId],
+           !preservedEntry.isPending,
+           preservation.preservedAt >= cutoff,
+           effectiveWatermark.map({ $0 <= preservation.invalidatedThrough }) ?? true,
+           preservedEntry.snapshotData.applicationBundleId == applicationBundleId,
+           normalLatest.map({ $0.value.createdAt <= preservation.preservedAt }) ?? true
+        {
+            return preservation.snapshotId
+        }
+        return normalLatest?.key
+    }
+
+    public func invalidateImplicitLatestSnapshot(through cutoff: Date) async throws -> String? {
+        try await self.invalidateImplicitLatestSnapshot(through: cutoff, preserving: nil)
+    }
+
+    public func invalidateImplicitLatestSnapshot(
+        through cutoff: Date,
+        preserving snapshotId: String?) async throws -> String?
+    {
+        try await self.invalidateImplicitLatestSnapshot(
+            through: cutoff,
+            preserving: snapshotId,
+            preservedAt: snapshotId == nil ? nil : Date())
+    }
+
+    public func invalidateImplicitLatestSnapshot(
+        through cutoff: Date,
+        preserving snapshotId: String?,
+        preservedAt: Date?) async throws -> String?
+    {
+        self.pruneIfNeeded()
+        let validityCutoff = Date().addingTimeInterval(-self.options.snapshotValidityWindow)
+        let previousEffectiveWatermark = self.effectiveImplicitLatestInvalidationWatermark
+        let normalLatest = self.entries
+            .filter { _, entry in
+                !entry.isPending
+                    && entry.createdAt >= validityCutoff
+                    && entry.createdAt <= cutoff
+                    && (previousEffectiveWatermark.map { entry.createdAt > $0 } ?? true)
+            }
+            .max(by: { $0.value.createdAt < $1.value.createdAt })
+        let latestSnapshotId: String? = if let preservation = self.implicitLatestPreservation,
+                                           self.entries[preservation.snapshotId]?.isPending == false,
+                                           preservation.preservedAt >= validityCutoff,
+                                           preservation.preservedAt <= cutoff,
+                                           previousEffectiveWatermark.map({
+                                               $0 <= preservation.invalidatedThrough
+                                           }) ?? true,
+                                           normalLatest.map({
+                                               $0.value.createdAt <= preservation.preservedAt
+                                           }) ?? true
+        {
+            preservation.snapshotId
+        } else {
+            normalLatest?.key
+        }
+        let sharedWatermark = try self.desktopMutationWatermarkStore?.advance(through: cutoff)
+        let effectiveWatermark = max(
+            SnapshotManager.latestWatermark(
+                self.implicitLatestInvalidatedAt,
+                sharedWatermark) ?? cutoff,
+            cutoff)
+        if let snapshotId, self.entries[snapshotId]?.isPending == true {
+            self.entries[snapshotId]?.isPending = false
+        }
+        if let snapshotId,
+           let preservedAt,
+           self.entries[snapshotId] != nil,
+           effectiveWatermark <= cutoff
+        {
+            self.implicitLatestPreservation = .init(
+                snapshotId: snapshotId,
+                invalidatedThrough: cutoff,
+                preservedAt: preservedAt)
+        } else if let preservation = self.implicitLatestPreservation,
+                  effectiveWatermark > preservation.invalidatedThrough
+        {
+            self.implicitLatestPreservation = nil
+        }
+        self.implicitLatestInvalidatedAt = effectiveWatermark
+        return latestSnapshotId
     }
 
     public func listSnapshots() async throws -> [SnapshotInfo] {
         self.pruneIfNeeded()
 
-        let values = self.entries.map { id, entry in
-            SnapshotInfo(
+        let values = self.entries.compactMap { id, entry -> SnapshotInfo? in
+            guard !entry.isPending else { return nil }
+            return SnapshotInfo(
                 id: id,
                 processId: entry.processId,
                 createdAt: entry.createdAt,
@@ -111,6 +221,8 @@ extension InMemorySnapshotManager {
             }
         }
         self.entries.removeAll()
+        self.implicitLatestInvalidatedAt = nil
+        self.implicitLatestPreservation = nil
         return count
     }
 

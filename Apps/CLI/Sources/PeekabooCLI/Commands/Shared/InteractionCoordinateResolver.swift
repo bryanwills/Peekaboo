@@ -12,7 +12,7 @@ enum InteractionCoordinateResolver {
         services: any PeekabooServiceProviding,
         forceGlobal: Bool = false
     ) async throws -> InteractionCoordinateResolution {
-        guard target.hasAnyTarget, !forceGlobal else {
+        guard target.hasAnyTarget else {
             return InteractionCoordinateResolution(
                 inputPoint: inputPoint,
                 screenPoint: inputPoint,
@@ -22,8 +22,33 @@ enum InteractionCoordinateResolver {
             )
         }
 
+        let hasWindowSelector = target.windowId != nil || target.windowTitle != nil || target.windowIndex != nil
+        if forceGlobal, !hasWindowSelector {
+            return InteractionCoordinateResolution(
+                inputPoint: inputPoint,
+                screenPoint: inputPoint,
+                coordinateSpace: .global,
+                windowInfo: nil,
+                targetApplication: nil
+            )
+        }
+
+        let windowResolution = try await self.resolveTargetWindow(target: target, services: services)
+
+        return try self.resolveTargetWindowCoordinates(
+            inputPoint,
+            windowInfo: windowResolution.windowInfo,
+            targetApplication: windowResolution.targetApplication,
+            forceGlobal: forceGlobal
+        )
+    }
+
+    static func resolveTargetWindow(
+        target: InteractionTargetOptions,
+        services: any PeekabooServiceProviding
+    ) async throws -> InteractionWindowResolution {
         guard let windowTarget = try target.toWindowTarget() else {
-            throw ValidationError("Coordinate target could not be resolved from the supplied target options.")
+            throw ValidationError("Window target could not be resolved from the supplied target options.")
         }
 
         let windowInfo = try await self.resolveWindowInfo(
@@ -31,18 +56,12 @@ enum InteractionCoordinateResolver {
             target: target,
             services: services
         )
-
-        let targetApplication = await self.resolveTargetApplication(
+        let targetApplication = try await self.resolveTargetApplication(
             windowInfo: windowInfo,
             target: target,
             services: services
         )
-
-        return try self.resolveTargetWindowCoordinates(
-            inputPoint,
-            windowInfo: windowInfo,
-            targetApplication: targetApplication
-        )
+        return InteractionWindowResolution(windowInfo: windowInfo, targetApplication: targetApplication)
     }
 
     static func resolveTargetWindowCoordinates(
@@ -51,13 +70,23 @@ enum InteractionCoordinateResolver {
         targetApplication: ServiceApplicationInfo?,
         forceGlobal: Bool = false
     ) throws -> InteractionCoordinateResolution {
-        guard let windowInfo, !forceGlobal else {
+        guard let windowInfo else {
             return InteractionCoordinateResolution(
                 inputPoint: inputPoint,
                 screenPoint: inputPoint,
                 coordinateSpace: .global,
                 windowInfo: nil,
                 targetApplication: nil
+            )
+        }
+
+        if forceGlobal {
+            return InteractionCoordinateResolution(
+                inputPoint: inputPoint,
+                screenPoint: inputPoint,
+                coordinateSpace: .global,
+                windowInfo: windowInfo,
+                targetApplication: targetApplication
             )
         }
 
@@ -109,9 +138,19 @@ enum InteractionCoordinateResolver {
         windowInfo: ServiceWindowInfo,
         target: InteractionTargetOptions,
         services: any PeekabooServiceProviding
-    ) async -> ServiceApplicationInfo? {
-        if let identifier = try? target.resolveApplicationIdentifierOptional(),
-           let application = try? await services.applications.findApplication(identifier: identifier) {
+    ) async throws -> ServiceApplicationInfo? {
+        if let identifier = try target.resolveApplicationIdentifierOptional() {
+            let application = try await services.applications.findApplication(identifier: identifier)
+            if target.windowId != nil {
+                let applicationWindows = try await services.windows.listWindows(
+                    target: .application("PID:\(application.processIdentifier)")
+                )
+                try self.validateWindowOwnership(
+                    windowInfo: windowInfo,
+                    application: application,
+                    applicationWindows: applicationWindows
+                )
+            }
             return application
         }
 
@@ -135,6 +174,19 @@ enum InteractionCoordinateResolver {
         }
 
         return nil
+    }
+
+    static func validateWindowOwnership(
+        windowInfo: ServiceWindowInfo,
+        application: ServiceApplicationInfo,
+        applicationWindows: [ServiceWindowInfo]
+    ) throws {
+        guard applicationWindows.contains(where: { $0.windowID == windowInfo.windowID }) else {
+            throw ValidationError(
+                "Window \(windowInfo.windowID) does not belong to \(application.name) " +
+                    "(PID \(application.processIdentifier))"
+            )
+        }
     }
 
     private static func targetDescription(_ target: InteractionTargetOptions) -> String {
@@ -162,6 +214,46 @@ enum InteractionCoordinateResolver {
             return String(Int(doubleValue))
         }
         return String(format: "%.2f", doubleValue)
+    }
+}
+
+struct InteractionWindowResolution {
+    let windowInfo: ServiceWindowInfo
+    let targetApplication: ServiceApplicationInfo?
+
+    var targetProcessIdentifier: Int32? {
+        self.targetApplication?.processIdentifier
+    }
+}
+
+enum InteractionWindowSelectionValidator {
+    static func validate(
+        resolution: InteractionWindowResolution,
+        snapshotContext: WindowContext?,
+        snapshotId: String
+    ) throws {
+        guard let snapshotWindowID = snapshotContext?.windowID else {
+            throw ValidationError(
+                "Snapshot '\(snapshotId)' does not identify an exact window; " +
+                    "capture a fresh snapshot for the selected window"
+            )
+        }
+
+        guard snapshotWindowID == resolution.windowInfo.windowID else {
+            throw ValidationError(
+                "Snapshot '\(snapshotId)' belongs to window \(snapshotWindowID), but the explicit selector " +
+                    "resolved window \(resolution.windowInfo.windowID)"
+            )
+        }
+
+        if let snapshotPID = snapshotContext?.applicationProcessId,
+           let selectedPID = resolution.targetProcessIdentifier,
+           snapshotPID != selectedPID {
+            throw ValidationError(
+                "Snapshot '\(snapshotId)' belongs to PID \(snapshotPID), but the selected window " +
+                    "belongs to PID \(selectedPID)"
+            )
+        }
     }
 }
 

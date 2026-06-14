@@ -101,6 +101,9 @@ struct ClipboardCommand: OutputFormattable, RuntimeOptionsConfigurable {
         self.logger.setJsonOutputMode(self.jsonOutput)
 
         let action = try self.resolvedAction()
+        if Self.actionMayMutate(action) {
+            self.resolvedRuntime.beginInteractionMutation()
+        }
         switch action.lowercased() {
         case "get":
             try self.handleGet()
@@ -120,6 +123,13 @@ struct ClipboardCommand: OutputFormattable, RuntimeOptionsConfigurable {
     }
 
     // MARK: - Actions
+
+    static func actionMayMutate(_ action: String?) -> Bool {
+        guard let action = action?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+            return false
+        }
+        return ["set", "load", "clear", "restore"].contains(action)
+    }
 
     private func resolvedAction() throws -> String {
         let positionalAction = self.action?.trimmingCharacters(in: .whitespacesAndNewlines)

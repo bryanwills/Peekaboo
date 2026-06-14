@@ -1,6 +1,8 @@
 import CoreGraphics
 import Foundation
+import PeekabooAutomationKit
 import PeekabooCore
+import PeekabooFoundation
 import Testing
 @testable import PeekabooCLI
 
@@ -125,6 +127,7 @@ struct InteractionObservationContextTests {
     @Test
     func `Latest snapshot invalidates after mutation`() async throws {
         let snapshots = CoreSnapshotManagerStub()
+        _ = try await snapshots.createSnapshot(id: "older")
         let latest = try await snapshots.createSnapshot()
 
         let context = await InteractionObservationContext.resolve(
@@ -137,7 +140,7 @@ struct InteractionObservationContextTests {
 
         #expect(invalidated == latest)
         #expect(await snapshots.getMostRecentSnapshot() == nil)
-        #expect(try await snapshots.listSnapshots().isEmpty)
+        #expect(try await Set(snapshots.listSnapshots().map(\.id)) == ["older", latest])
     }
 
     @Test
@@ -162,13 +165,14 @@ struct InteractionObservationContextTests {
     @Test
     func `Latest snapshot can be invalidated after focus changes`() async throws {
         let snapshots = CoreSnapshotManagerStub()
+        _ = try await snapshots.createSnapshot(id: "older")
         let latest = try await snapshots.createSnapshot()
 
         let invalidated = try await InteractionObservationContext.invalidateLatestSnapshot(using: snapshots)
 
         #expect(invalidated == latest)
         #expect(await snapshots.getMostRecentSnapshot() == nil)
-        #expect(try await snapshots.listSnapshots().isEmpty)
+        #expect(try await Set(snapshots.listSnapshots().map(\.id)) == ["older", latest])
     }
 
     @Test
@@ -178,6 +182,246 @@ struct InteractionObservationContextTests {
         let invalidated = try await InteractionObservationContext.invalidateLatestSnapshot(using: snapshots)
 
         #expect(invalidated == nil)
+    }
+
+    @Test
+    func `Focus changes invalidate latest snapshots on every runtime host`() async throws {
+        let guiSnapshots = CoreSnapshotManagerStub()
+        let daemonSnapshots = CoreSnapshotManagerStub()
+        _ = try await guiSnapshots.createSnapshot(id: "gui-older")
+        _ = try await guiSnapshots.createSnapshot(id: "gui-latest")
+        _ = try await daemonSnapshots.createSnapshot(id: "daemon-older")
+        _ = try await daemonSnapshots.createSnapshot(id: "daemon-latest")
+
+        await InteractionObservationInvalidator.invalidateLatestSnapshots(
+            using: [guiSnapshots, daemonSnapshots],
+            logger: Logger.shared,
+            reason: "test focus"
+        )
+
+        #expect(await guiSnapshots.getMostRecentSnapshot() == nil)
+        #expect(await daemonSnapshots.getMostRecentSnapshot() == nil)
+        #expect(try await Set(guiSnapshots.listSnapshots().map(\.id)) == ["gui-older", "gui-latest"])
+        #expect(try await Set(daemonSnapshots.listSnapshots().map(\.id)) == ["daemon-older", "daemon-latest"])
+    }
+
+    @Test
+    func `Cross-host invalidation preserves snapshots created after the shared cutoff`() async throws {
+        let immediateSnapshots = CoreSnapshotManagerStub()
+        let delayedSnapshots = CoreSnapshotManagerStub()
+        _ = try await immediateSnapshots.createSnapshot(id: "immediate-old")
+        _ = try await delayedSnapshots.createSnapshot(id: "delayed-old")
+        delayedSnapshots.snapshotIdToCreateDuringInvalidation = "delayed-fresh"
+        delayedSnapshots.invalidationDelay = .milliseconds(5)
+
+        await InteractionObservationInvalidator.invalidateLatestSnapshots(
+            using: [immediateSnapshots, delayedSnapshots],
+            logger: Logger.shared,
+            reason: "test shared cutoff"
+        )
+
+        #expect(immediateSnapshots.invalidationCutoffs.count == 1)
+        #expect(delayedSnapshots.invalidationCutoffs == immediateSnapshots.invalidationCutoffs)
+        #expect(await immediateSnapshots.getMostRecentSnapshot() == nil)
+        #expect(await delayedSnapshots.getMostRecentSnapshot() == "delayed-fresh")
+        #expect(try await Set(delayedSnapshots.listSnapshots().map(\.id)) == ["delayed-old", "delayed-fresh"])
+    }
+
+    @Test
+    func `Coordinate click invalidates implicit latest while preserving explicit history`() async throws {
+        let snapshots = CoreSnapshotManagerStub()
+        let older = try await snapshots.createSnapshot(id: "older")
+        let latest = try await snapshots.createSnapshot(id: "latest")
+
+        await InteractionObservationInvalidator.invalidateAfterClickMutation(
+            targets: .init(
+                snapshots: snapshots,
+                selectedRemoteSocketPath: nil,
+                remoteSocketPaths: []
+            ),
+            logger: Logger.shared,
+            reason: "coordinate click"
+        )
+
+        #expect(await snapshots.getMostRecentSnapshot() == nil)
+        #expect(try await Set(snapshots.listSnapshots().map(\.id)) == [older, latest])
+    }
+
+    @Test
+    func `Element click invalidates latest snapshots on alternate hosts with one cutoff`() async throws {
+        let selectedSnapshots = CoreSnapshotManagerStub()
+        let alternateSnapshots = CoreSnapshotManagerStub()
+        let selectedLatest = try await selectedSnapshots.createSnapshot(id: "selected-latest")
+        let alternateLatest = try await alternateSnapshots.createSnapshot(id: "alternate-latest")
+        let observation = await InteractionObservationContext.resolve(
+            explicitSnapshot: nil,
+            fallbackToLatest: true,
+            snapshots: selectedSnapshots
+        )
+
+        await InteractionObservationInvalidator.invalidateAfterClickMutation(
+            targets: .init(
+                snapshots: selectedSnapshots,
+                selectedRemoteSocketPath: nil,
+                remoteSocketPaths: ["/tmp/alternate.sock"],
+                socketExists: { _ in true },
+                makeRemoteSnapshotManager: { _ in alternateSnapshots }
+            ),
+            logger: Logger.shared,
+            reason: "element click"
+        )
+
+        #expect(observation.source == .latest)
+        #expect(selectedSnapshots.invalidationCutoffs.count == 1)
+        #expect(alternateSnapshots.invalidationCutoffs == selectedSnapshots.invalidationCutoffs)
+        #expect(await selectedSnapshots.getMostRecentSnapshot() == nil)
+        #expect(await alternateSnapshots.getMostRecentSnapshot() == nil)
+        #expect(try await selectedSnapshots.listSnapshots().map(\.id) == [selectedLatest])
+        #expect(try await alternateSnapshots.listSnapshots().map(\.id) == [alternateLatest])
+    }
+
+    @Test
+    func `Explicit observation click preserves history while advancing every host watermark`() async throws {
+        let selectedSnapshots = CoreSnapshotManagerStub()
+        let alternateSnapshots = CoreSnapshotManagerStub()
+        let explicit = try await selectedSnapshots.createSnapshot(id: "explicit")
+        let selectedLatest = try await selectedSnapshots.createSnapshot(id: "selected-latest")
+        let alternateLatest = try await alternateSnapshots.createSnapshot(id: "alternate-latest")
+        let observation = await InteractionObservationContext.resolve(
+            explicitSnapshot: explicit,
+            fallbackToLatest: true,
+            snapshots: selectedSnapshots
+        )
+
+        await InteractionObservationInvalidator.invalidateAfterClickMutation(
+            targets: .init(
+                snapshots: selectedSnapshots,
+                selectedRemoteSocketPath: nil,
+                remoteSocketPaths: ["/tmp/alternate.sock"],
+                socketExists: { _ in true },
+                makeRemoteSnapshotManager: { _ in alternateSnapshots }
+            ),
+            logger: Logger.shared,
+            reason: "explicit element click"
+        )
+
+        #expect(observation.source == .explicit)
+        #expect(alternateSnapshots.invalidationCutoffs == selectedSnapshots.invalidationCutoffs)
+        #expect(await selectedSnapshots.getMostRecentSnapshot() == nil)
+        #expect(await alternateSnapshots.getMostRecentSnapshot() == nil)
+        #expect(try await Set(selectedSnapshots.listSnapshots().map(\.id)) == [explicit, selectedLatest])
+        #expect(try await alternateSnapshots.listSnapshots().map(\.id) == [alternateLatest])
+
+        let fresh = try await selectedSnapshots.createSnapshot(id: "fresh")
+        #expect(await selectedSnapshots.getMostRecentSnapshot() == fresh)
+    }
+
+    @Test
+    func `Snapshot-less observation click invalidates latest snapshot on alternate host`() async throws {
+        let selectedSnapshots = CoreSnapshotManagerStub()
+        let alternateSnapshots = CoreSnapshotManagerStub()
+        let alternateLatest = try await alternateSnapshots.createSnapshot(id: "alternate-latest")
+        let observation = await InteractionObservationContext.resolve(
+            explicitSnapshot: nil,
+            fallbackToLatest: true,
+            snapshots: selectedSnapshots
+        )
+
+        await InteractionObservationInvalidator.invalidateAfterClickMutation(
+            targets: .init(
+                snapshots: selectedSnapshots,
+                selectedRemoteSocketPath: nil,
+                remoteSocketPaths: ["/tmp/alternate.sock"],
+                socketExists: { _ in true },
+                makeRemoteSnapshotManager: { _ in alternateSnapshots }
+            ),
+            logger: Logger.shared,
+            reason: "snapshot-less element click"
+        )
+
+        #expect(observation.source == .none)
+        #expect(selectedSnapshots.invalidationCutoffs.count == 1)
+        #expect(alternateSnapshots.invalidationCutoffs == selectedSnapshots.invalidationCutoffs)
+        #expect(await alternateSnapshots.getMostRecentSnapshot() == nil)
+        #expect(try await alternateSnapshots.listSnapshots().map(\.id) == [alternateLatest])
+    }
+
+    @Test
+    func `Runtime hosts with matching snapshot IDs are each invalidated`() async throws {
+        let guiSnapshots = CoreSnapshotManagerStub()
+        let daemonSnapshots = CoreSnapshotManagerStub()
+        _ = try await guiSnapshots.createSnapshot(id: "shared-id")
+        _ = try await daemonSnapshots.createSnapshot(id: "shared-id")
+
+        await InteractionObservationInvalidator.invalidateLatestSnapshots(
+            using: [guiSnapshots, daemonSnapshots],
+            logger: Logger.shared,
+            reason: "test focus"
+        )
+
+        #expect(await guiSnapshots.getMostRecentSnapshot() == nil)
+        #expect(await daemonSnapshots.getMostRecentSnapshot() == nil)
+    }
+
+    @Test
+    @MainActor
+    func `Local fallback invalidates snapshots on every known remote endpoint`() async throws {
+        let localSnapshots = CoreSnapshotManagerStub()
+        let guiSnapshots = CoreSnapshotManagerStub()
+        let daemonSnapshots = CoreSnapshotManagerStub()
+        for snapshots in [localSnapshots, guiSnapshots, daemonSnapshots] {
+            _ = try await snapshots.createSnapshot(id: "shared-id")
+        }
+        var connectedPaths: [String] = []
+
+        await InteractionObservationInvalidator.invalidateLatestSnapshotsAcrossKnownHosts(
+            using: localSnapshots,
+            selectedRemoteSocketPath: nil,
+            remoteSocketPaths: ["/tmp/gui.sock", "/tmp/daemon.sock", "/tmp/daemon.sock"],
+            logger: Logger.shared,
+            reason: "test local fallback",
+            socketExists: { _ in true },
+            makeRemoteSnapshotManager: { path in
+                connectedPaths.append(path)
+                return path == "/tmp/gui.sock" ? guiSnapshots : daemonSnapshots
+            }
+        )
+
+        #expect(connectedPaths == ["/tmp/gui.sock", "/tmp/daemon.sock"])
+        #expect(await localSnapshots.getMostRecentSnapshot() == nil)
+        #expect(await guiSnapshots.getMostRecentSnapshot() == nil)
+        #expect(await daemonSnapshots.getMostRecentSnapshot() == nil)
+    }
+
+    @Test
+    @MainActor
+    func `Selected remote endpoint is not invalidated through a duplicate client`() async throws {
+        let selectedSnapshots = CoreSnapshotManagerStub()
+        let localSnapshots = CoreSnapshotManagerStub()
+        let daemonSnapshots = CoreSnapshotManagerStub()
+        _ = try await selectedSnapshots.createSnapshot(id: "selected")
+        _ = try await localSnapshots.createSnapshot(id: "local")
+        _ = try await daemonSnapshots.createSnapshot(id: "daemon")
+        var connectedPaths: [String] = []
+
+        await InteractionObservationInvalidator.invalidateLatestSnapshotsAcrossKnownHosts(
+            using: selectedSnapshots,
+            selectedRemoteSocketPath: "/tmp/gui.sock",
+            remoteSocketPaths: ["/tmp/gui.sock", "/tmp/daemon.sock"],
+            logger: Logger.shared,
+            reason: "test selected endpoint",
+            socketExists: { _ in true },
+            makeLocalSnapshotManager: { localSnapshots },
+            makeRemoteSnapshotManager: { path in
+                connectedPaths.append(path)
+                return daemonSnapshots
+            }
+        )
+
+        #expect(connectedPaths == ["/tmp/daemon.sock"])
+        #expect(await selectedSnapshots.getMostRecentSnapshot() == nil)
+        #expect(await localSnapshots.getMostRecentSnapshot() == nil)
+        #expect(await daemonSnapshots.getMostRecentSnapshot() == nil)
     }
 
     @Test
@@ -234,7 +478,7 @@ struct InteractionObservationContextTests {
             snapshotId: "fresh-snapshot",
             element: Self.buttonElement(id: "B2")
         )
-        let desktopObservation = RecordingDesktopObservationService(elements: freshDetection)
+        let desktopObservation = RecordingDesktopObservationService(elements: freshDetection, snapshots: snapshots)
         var target = InteractionTargetOptions()
         target.app = "TextEdit"
 
@@ -249,9 +493,140 @@ struct InteractionObservationContextTests {
             logger: Logger.shared
         )
 
-        #expect(refreshed.snapshotId == "fresh-snapshot")
+        let reservedSnapshotID = try #require(desktopObservation.requests.first?.output.snapshotID)
+        #expect(refreshed.snapshotId == reservedSnapshotID)
+        #expect(await snapshots.getMostRecentSnapshot() == reservedSnapshotID)
         #expect(refreshed.source == .latest)
         #expect(desktopObservation.requests.map(\.target) == [.app(identifier: "TextEdit", window: nil)])
+    }
+
+    @Test
+    func `Certified remote refresh republishes through the host completion cutoff`() async throws {
+        let snapshots = CoreSnapshotManagerStub()
+        let observation = await InteractionObservationContext.resolve(
+            explicitSnapshot: nil,
+            fallbackToLatest: true,
+            snapshots: snapshots
+        )
+        let freshDetection = Self.detectionResult(
+            snapshotId: "fresh-snapshot",
+            element: Self.buttonElement(id: "B2"),
+            desktopMutationPreservationAllowed: true
+        )
+        let desktopObservation = RecordingDesktopObservationService(
+            elements: freshDetection,
+            snapshots: snapshots
+        )
+        desktopObservation.hostPublicationCutoffProvider = { Date() }
+
+        let refreshed = try await InteractionObservationRefresher.refreshForMissingElementIfNeeded(
+            observation,
+            elementId: "B2",
+            target: InteractionTargetOptions(),
+            dependencies: InteractionObservationRefreshDependencies(
+                desktopObservation: desktopObservation,
+                snapshots: snapshots
+            ),
+            logger: Logger.shared
+        )
+
+        let reservedSnapshotID = try #require(desktopObservation.requests.first?.output.snapshotID)
+        let hostCutoff = try #require(desktopObservation.resolvedHostPublicationCutoff)
+        #expect(refreshed.snapshotId == reservedSnapshotID)
+        #expect(await snapshots.getMostRecentSnapshot() == reservedSnapshotID)
+        #expect(snapshots.invalidationCutoffs == [hostCutoff, hostCutoff])
+    }
+
+    @Test
+    func `Refresh rejected by host preservation certificate is never returned`() async throws {
+        let snapshots = CoreSnapshotManagerStub()
+        let observation = await InteractionObservationContext.resolve(
+            explicitSnapshot: nil,
+            fallbackToLatest: true,
+            snapshots: snapshots
+        )
+        let freshDetection = Self.detectionResult(
+            snapshotId: "fresh-snapshot",
+            element: Self.buttonElement(id: "B2"),
+            desktopMutationCompletedAt: Date(),
+            desktopMutationPreservationAllowed: false
+        )
+        let desktopObservation = RecordingDesktopObservationService(
+            elements: freshDetection,
+            snapshots: snapshots
+        )
+
+        do {
+            _ = try await InteractionObservationRefresher.refreshForMissingElementIfNeeded(
+                observation,
+                elementId: "B2",
+                target: InteractionTargetOptions(),
+                dependencies: InteractionObservationRefreshDependencies(
+                    desktopObservation: desktopObservation,
+                    snapshots: snapshots
+                ),
+                logger: Logger.shared
+            )
+            Issue.record("Expected rejected refresh certificate")
+        } catch let PeekabooError.snapshotStale(reason) {
+            #expect(reason.contains("overlapped another desktop mutation"))
+        }
+
+        let reservedSnapshotID = try #require(desktopObservation.requests.first?.output.snapshotID)
+        #expect(await snapshots.getMostRecentSnapshot() == nil)
+        #expect(try await snapshots.getDetectionResult(snapshotId: reservedSnapshotID) == nil)
+    }
+
+    @Test
+    func `Timed out observation refresh keeps late snapshot writes hidden`() async throws {
+        let snapshots = CoreSnapshotManagerStub()
+        let observation = await InteractionObservationContext.resolve(
+            explicitSnapshot: nil,
+            fallbackToLatest: true,
+            snapshots: snapshots
+        )
+        let template = Self.detectionResult(
+            snapshotId: "unused",
+            element: Self.buttonElement(id: "B2")
+        )
+        let desktopObservation = RecordingDesktopObservationService(elements: template)
+        var lateWriteTask: Task<Void, Never>?
+        desktopObservation.observeHandler = { request in
+            let snapshotID = try #require(request.output.snapshotID)
+            let result = ElementDetectionResult(
+                snapshotId: snapshotID,
+                screenshotPath: template.screenshotPath,
+                elements: template.elements,
+                metadata: template.metadata
+            )
+            let task = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(50))
+                try? await snapshots.storeDetectionResult(snapshotId: snapshotID, result: result)
+            }
+            lateWriteTask = task
+            throw POSIXError(.ETIMEDOUT)
+        }
+
+        do {
+            _ = try await InteractionObservationRefresher.refreshForMissingElementIfNeeded(
+                observation,
+                elementId: "B2",
+                target: InteractionTargetOptions(),
+                dependencies: InteractionObservationRefreshDependencies(
+                    desktopObservation: desktopObservation,
+                    snapshots: snapshots
+                ),
+                logger: Logger.shared
+            )
+            Issue.record("Expected observation timeout")
+        } catch let error as POSIXError {
+            #expect(error.code == .ETIMEDOUT)
+        }
+
+        let task = try #require(lateWriteTask)
+        await task.value
+        #expect(await snapshots.getMostRecentSnapshot() == nil)
+        #expect(try await snapshots.listSnapshots().isEmpty)
     }
 
     @Test
@@ -331,7 +706,7 @@ struct InteractionObservationContextTests {
             snapshotId: "fresh-snapshot",
             element: Self.buttonElement(id: "B2", label: "Save")
         )
-        let desktopObservation = RecordingDesktopObservationService(elements: freshDetection)
+        let desktopObservation = RecordingDesktopObservationService(elements: freshDetection, snapshots: snapshots)
 
         let refreshed = try await InteractionObservationRefresher.refreshForMissingQueryIfNeeded(
             observation,
@@ -344,7 +719,9 @@ struct InteractionObservationContextTests {
             logger: Logger.shared
         )
 
-        #expect(refreshed.snapshotId == "fresh-snapshot")
+        let reservedSnapshotID = try #require(desktopObservation.requests.first?.output.snapshotID)
+        #expect(refreshed.snapshotId == reservedSnapshotID)
+        #expect(await snapshots.getMostRecentSnapshot() == reservedSnapshotID)
         #expect(desktopObservation.requests.count == 1)
     }
 
@@ -487,12 +864,24 @@ struct InteractionObservationContextTests {
         )
     }
 
-    private static func detectionResult(snapshotId: String, element: DetectedElement) -> ElementDetectionResult {
+    private static func detectionResult(
+        snapshotId: String,
+        element: DetectedElement,
+        desktopMutationCompletedAt: Date? = nil,
+        desktopMutationPreservationAllowed: Bool? = nil
+    ) -> ElementDetectionResult {
         ElementDetectionResult(
             snapshotId: snapshotId,
             screenshotPath: "/tmp/\(snapshotId).png",
             elements: DetectedElements(buttons: [element]),
-            metadata: DetectionMetadata(detectionTime: 0, elementCount: 1, method: "test")
+            metadata: DetectionMetadata(
+                detectionTime: 0,
+                elementCount: 1,
+                method: "test",
+                truncationInfo: nil,
+                desktopMutationCompletedAt: desktopMutationCompletedAt,
+                desktopMutationPreservationAllowed: desktopMutationPreservationAllowed
+            )
         )
     }
 }
@@ -500,53 +889,112 @@ struct InteractionObservationContextTests {
 @MainActor
 private final class RecordingDesktopObservationService: DesktopObservationServiceProtocol {
     private let elements: ElementDetectionResult
+    private let snapshots: (any SnapshotManagerProtocol)?
     private(set) var requests: [DesktopObservationRequest] = []
+    private(set) var resolvedHostPublicationCutoff: Date?
+    var hostPublicationCutoffProvider: (() -> Date)?
+    var observeHandler: (@MainActor (DesktopObservationRequest) async throws -> DesktopObservationResult)?
 
-    init(elements: ElementDetectionResult) {
+    init(elements: ElementDetectionResult, snapshots: (any SnapshotManagerProtocol)? = nil) {
         self.elements = elements
+        self.snapshots = snapshots
     }
 
     func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
         self.requests.append(request)
+        if let observeHandler {
+            return try await observeHandler(request)
+        }
+        let snapshotID = request.output.snapshotID ?? self.elements.snapshotId
+        let boundElements = ElementDetectionResult(
+            snapshotId: snapshotID,
+            screenshotPath: self.elements.screenshotPath,
+            elements: self.elements.elements,
+            metadata: self.elements.metadata
+        )
+        if request.output.saveSnapshot, let snapshots {
+            try await snapshots.storeDetectionResult(snapshotId: snapshotID, result: boundElements)
+        }
+        let hostPublicationCutoff = self.hostPublicationCutoffProvider?()
+        self.resolvedHostPublicationCutoff = hostPublicationCutoff
+        if let hostPublicationCutoff, let snapshots {
+            _ = try await snapshots.invalidateImplicitLatestSnapshot(
+                through: hostPublicationCutoff,
+                preserving: snapshotID,
+                preservedAt: hostPublicationCutoff
+            )
+        }
         return DesktopObservationResult(
             target: ResolvedObservationTarget(kind: .frontmost),
             capture: CaptureResult(
                 imageData: Data(),
                 metadata: CaptureMetadata(size: CGSize(width: 1, height: 1), mode: .frontmost)
             ),
-            elements: self.elements
+            elements: boundElements,
+            diagnostics: DesktopObservationDiagnostics(
+                desktopMutationCompletedAt: hostPublicationCutoff ??
+                    boundElements.metadata.desktopMutationCompletedAt,
+                desktopMutationPreservationAllowed: boundElements.metadata.desktopMutationPreservationAllowed
+            )
         )
     }
 }
 
 private final class CoreSnapshotManagerStub: SnapshotManagerProtocol, @unchecked Sendable {
+    let supportsImplicitLatestSnapshotInvalidation = true
     private var snapshotInfos: [String: SnapshotInfo] = [:]
     private var detectionResults: [String: ElementDetectionResult] = [:]
     private var automationSnapshots: [String: UIAutomationSnapshot] = [:]
     private var mostRecentSnapshotId: String?
+    private var implicitLatestInvalidatedAt: Date?
+    private var pendingSnapshotIDs: Set<String> = []
+    private(set) var invalidationCutoffs: [Date] = []
+    var snapshotIdToCreateDuringInvalidation: String?
+    var invalidationDelay: Duration?
 
     func createSnapshot() async throws -> String {
         try await self.createSnapshot(id: UUID().uuidString)
     }
 
+    func createSnapshot(pendingAt observationStartedAt: Date) async throws -> String {
+        try await self.createSnapshot(
+            id: UUID().uuidString,
+            createdAt: observationStartedAt,
+            pending: true
+        )
+    }
+
     func createSnapshot(id snapshotId: String) async throws -> String {
-        let now = Date()
+        try await self.createSnapshot(id: snapshotId, createdAt: Date(), pending: false)
+    }
+
+    private func createSnapshot(
+        id snapshotId: String,
+        createdAt: Date,
+        pending: Bool
+    ) async throws -> String {
         self.snapshotInfos[snapshotId] = SnapshotInfo(
             id: snapshotId,
             processId: 0,
-            createdAt: now,
-            lastAccessedAt: now,
+            createdAt: createdAt,
+            lastAccessedAt: Date(),
             sizeInBytes: 0,
             screenshotCount: 0,
             isActive: true
         )
-        self.mostRecentSnapshotId = snapshotId
+        if pending {
+            self.pendingSnapshotIDs.insert(snapshotId)
+        } else {
+            self.mostRecentSnapshotId = snapshotId
+        }
         return snapshotId
     }
 
     func storeDetectionResult(snapshotId: String, result: ElementDetectionResult) async throws {
         self.detectionResults[snapshotId] = result
-        self.mostRecentSnapshotId = snapshotId
+        if !self.pendingSnapshotIDs.contains(snapshotId) {
+            self.mostRecentSnapshotId = snapshotId
+        }
     }
 
     func storeUIAutomationSnapshot(_ snapshot: UIAutomationSnapshot, snapshotId: String) {
@@ -565,14 +1013,77 @@ private final class CoreSnapshotManagerStub: SnapshotManagerProtocol, @unchecked
         self.mostRecentSnapshotId
     }
 
+    func invalidateImplicitLatestSnapshot(through cutoff: Date) async throws -> String? {
+        try await self.invalidateImplicitLatestSnapshot(
+            through: cutoff,
+            preserving: nil,
+            preservedAt: nil
+        )
+    }
+
+    func invalidateImplicitLatestSnapshot(
+        through cutoff: Date,
+        preserving snapshotId: String?
+    ) async throws -> String? {
+        try await self.invalidateImplicitLatestSnapshot(
+            through: cutoff,
+            preserving: snapshotId,
+            preservedAt: snapshotId == nil ? nil : Date()
+        )
+    }
+
+    func invalidateImplicitLatestSnapshot(
+        through cutoff: Date,
+        preserving snapshotId: String?,
+        preservedAt: Date?
+    ) async throws -> String? {
+        self.invalidationCutoffs.append(cutoff)
+        if let invalidationDelay {
+            try await Task.sleep(for: invalidationDelay)
+        }
+        if let snapshotIdToCreateDuringInvalidation {
+            self.snapshotIdToCreateDuringInvalidation = nil
+            _ = try await self.createSnapshot(id: snapshotIdToCreateDuringInvalidation)
+        }
+
+        let previousWatermark = self.implicitLatestInvalidatedAt
+        let invalidatedSnapshotId = self.snapshotInfos.values
+            .filter { info in
+                !self.pendingSnapshotIDs.contains(info.id) && info.createdAt <= cutoff &&
+                    (previousWatermark.map { info.createdAt > $0 } ?? true)
+            }
+            .max(by: { $0.createdAt < $1.createdAt })?
+            .id
+        let watermark = max(previousWatermark ?? cutoff, cutoff)
+        self.implicitLatestInvalidatedAt = watermark
+        if let snapshotId {
+            self.pendingSnapshotIDs.remove(snapshotId)
+        }
+        let normalLatest = self.snapshotInfos.values
+            .filter { $0.createdAt > watermark }
+            .max(by: { $0.createdAt < $1.createdAt })?
+            .id
+        if let snapshotId,
+           let preservedAt,
+           self.snapshotInfos[snapshotId] != nil,
+           previousWatermark.map({ $0 <= cutoff }) ?? true,
+           normalLatest.flatMap({ self.snapshotInfos[$0]?.createdAt }).map({ $0 <= preservedAt }) ?? true {
+            self.mostRecentSnapshotId = snapshotId
+        } else {
+            self.mostRecentSnapshotId = normalLatest
+        }
+        return invalidatedSnapshotId
+    }
+
     func listSnapshots() async throws -> [SnapshotInfo] {
-        Array(self.snapshotInfos.values)
+        self.snapshotInfos.values.filter { !self.pendingSnapshotIDs.contains($0.id) }
     }
 
     func cleanSnapshot(snapshotId: String) async throws {
         self.snapshotInfos.removeValue(forKey: snapshotId)
         self.detectionResults.removeValue(forKey: snapshotId)
         self.automationSnapshots.removeValue(forKey: snapshotId)
+        self.pendingSnapshotIDs.remove(snapshotId)
         if self.mostRecentSnapshotId == snapshotId {
             self.mostRecentSnapshotId = nil
         }
@@ -587,7 +1098,9 @@ private final class CoreSnapshotManagerStub: SnapshotManagerProtocol, @unchecked
         self.snapshotInfos.removeAll()
         self.detectionResults.removeAll()
         self.automationSnapshots.removeAll()
+        self.pendingSnapshotIDs.removeAll()
         self.mostRecentSnapshotId = nil
+        self.implicitLatestInvalidatedAt = nil
         return count
     }
 

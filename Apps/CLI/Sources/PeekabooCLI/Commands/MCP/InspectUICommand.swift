@@ -66,9 +66,15 @@ struct InspectUICommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptions
         self.logger.setJsonOutputMode(self.jsonOutput)
 
         do {
-            let context = MCPToolContext(services: self.services)
+            let context = MCPToolContext(
+                services: self.services,
+                snapshotMutationCoordinator: runtime.toolSnapshotMutationCoordinator
+            )
             let tool = InspectUITool(context: context)
-            let response = try await tool.execute(arguments: ToolArguments(raw: self.arguments()))
+            let response = try await context.execute(
+                tool: tool,
+                arguments: ToolArguments(raw: self.arguments())
+            )
             try MCPToolCommandOutput.output(
                 tool: tool.name,
                 response: response,

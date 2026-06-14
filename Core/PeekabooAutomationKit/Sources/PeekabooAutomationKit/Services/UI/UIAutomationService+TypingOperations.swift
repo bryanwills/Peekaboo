@@ -83,12 +83,14 @@ extension UIAutomationService {
         snapshotId: String?) async throws
     {
         self.logger.debug("Delegating type to TypeService")
-        _ = try await self.typeService.type(
-            text: text,
-            target: target,
-            clearExisting: clearExisting,
-            typingDelay: typingDelay,
-            snapshotId: snapshotId)
+        _ = try await self.normalizingSnapshotErrors {
+            try await self.typeService.type(
+                text: text,
+                target: target,
+                clearExisting: clearExisting,
+                typingDelay: typingDelay,
+                snapshotId: snapshotId)
+        }
 
         await self.visualizeTyping(keys: Array(text).map { String($0) }, cadence: .fixed(milliseconds: typingDelay))
     }
@@ -99,7 +101,9 @@ extension UIAutomationService {
         snapshotId: String?) async throws -> TypeResult
     {
         self.logger.debug("Delegating typeActions to TypeService")
-        let result = try await self.typeService.typeActions(actions, cadence: cadence, snapshotId: snapshotId)
+        let result = try await self.normalizingSnapshotErrors {
+            try await self.typeService.typeActions(actions, cadence: cadence, snapshotId: snapshotId)
+        }
         await self.visualizeTypeActions(actions, cadence: cadence)
         return result
     }
@@ -111,11 +115,13 @@ extension UIAutomationService {
         targetProcessIdentifier: pid_t) async throws -> TypeResult
     {
         self.logger.debug("Delegating targeted typeActions to TypeService")
-        let result = try await self.typeService.typeActions(
-            actions,
-            cadence: cadence,
-            snapshotId: snapshotId,
-            targetProcessIdentifier: targetProcessIdentifier)
+        let result = try await self.normalizingSnapshotErrors {
+            try await self.typeService.typeActions(
+                actions,
+                cadence: cadence,
+                snapshotId: snapshotId,
+                targetProcessIdentifier: targetProcessIdentifier)
+        }
         await self.visualizeTypeActions(actions, cadence: cadence)
         return result
     }

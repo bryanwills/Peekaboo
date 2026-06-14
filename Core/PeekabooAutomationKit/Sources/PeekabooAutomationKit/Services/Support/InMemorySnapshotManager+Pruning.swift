@@ -19,6 +19,9 @@ extension InMemorySnapshotManager {
 
     func removeEntry(forSnapshotId snapshotId: String) {
         guard let entry = self.entries.removeValue(forKey: snapshotId) else { return }
+        if self.implicitLatestPreservation?.snapshotId == snapshotId {
+            self.implicitLatestPreservation = nil
+        }
         if self.options.deleteArtifactsOnCleanup {
             self.deleteArtifacts(for: entry.snapshotData)
         }

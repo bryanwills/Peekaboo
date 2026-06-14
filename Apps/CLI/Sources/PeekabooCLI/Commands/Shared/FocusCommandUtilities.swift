@@ -34,7 +34,41 @@ enum FocusTargetResolver {
     }
 }
 
+enum FocusFailurePolicy {
+    static func optional<T>(_ operation: () async throws -> T) async throws -> T? {
+        do {
+            try Task.checkCancellation()
+            let result = try await operation()
+            try Task.checkCancellation()
+            return result
+        } catch {
+            try self.rethrowCancellation(error)
+            return nil
+        }
+    }
+
+    static func flatteningOptional<T>(_ operation: () async throws -> T?) async throws -> T? {
+        do {
+            try Task.checkCancellation()
+            let result = try await operation()
+            try Task.checkCancellation()
+            return result
+        } catch {
+            try self.rethrowCancellation(error)
+            return nil
+        }
+    }
+
+    static func rethrowCancellation(_ error: any Error) throws {
+        if error is CancellationError {
+            throw error
+        }
+        try Task.checkCancellation()
+    }
+}
+
 /// Ensure the target window is focused before executing a command.
+@MainActor
 func ensureFocused(
     snapshotId: String? = nil,
     windowID: CGWindowID? = nil,
@@ -43,6 +77,7 @@ func ensureFocused(
     options: any FocusOptionsProtocol,
     services: any PeekabooServiceProviding
 ) async throws {
+    try Task.checkCancellation()
     guard options.autoFocus else {
         return
     }
@@ -54,6 +89,7 @@ func ensureFocused(
     } else {
         nil as UIAutomationSnapshot?
     }
+    try Task.checkCancellation()
 
     let targetRequest = FocusTargetResolver.resolve(
         windowID: windowID,
@@ -66,7 +102,9 @@ func ensureFocused(
     case let .windowId(windowID):
         windowID
     case let .bestWindow(applicationName, windowTitle):
-        try? await focusService.findBestWindow(applicationName: applicationName, windowTitle: windowTitle)
+        try await FocusFailurePolicy.flatteningOptional {
+            try await focusService.findBestWindow(applicationName: applicationName, windowTitle: windowTitle)
+        }
     case nil:
         nil
     }
@@ -74,7 +112,9 @@ func ensureFocused(
     guard let windowID = targetWindow else {
         if case let .bestWindow(applicationName, _) = targetRequest {
             _ = try await services.applications.findApplication(identifier: applicationName)
+            try Task.checkCancellation()
             try await services.applications.activateApplication(identifier: applicationName)
+            try Task.checkCancellation()
         }
         return
     }
@@ -86,8 +126,10 @@ func ensureFocused(
         bringToCurrentSpace: options.bringToCurrentSpace
     )
 
+    try Task.checkCancellation()
     do {
         try await focusService.focusWindow(windowID: windowID, options: focusOptions)
+        try Task.checkCancellation()
     } catch let error as FocusError {
         switch error {
         case .windowNotFound, .axElementNotFound:
@@ -99,19 +141,25 @@ func ensureFocused(
             fallbackTargets.append(.frontmost)
 
             for target in fallbackTargets {
+                try Task.checkCancellation()
                 do {
                     try await WindowServiceBridge.focusWindow(windows: services.windows, target: target)
+                    try Task.checkCancellation()
                     return
                 } catch {
+                    try FocusFailurePolicy.rethrowCancellation(error)
                     fallbackErrors.append(error)
                 }
             }
 
             if let appName = applicationName {
+                try Task.checkCancellation()
                 do {
                     try await services.applications.activateApplication(identifier: appName)
+                    try Task.checkCancellation()
                     return
                 } catch {
+                    try FocusFailurePolicy.rethrowCancellation(error)
                     fallbackErrors.append(error)
                 }
             }
@@ -124,6 +172,7 @@ func ensureFocused(
 }
 
 /// Ensure focus using shared interaction target flags (`--app/--pid/--window-title/--window-index`).
+@MainActor
 func ensureFocused(
     snapshotId: String? = nil,
     target: InteractionTargetOptions,

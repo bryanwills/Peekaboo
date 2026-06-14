@@ -1,6 +1,8 @@
+import Commander
 import Foundation
 import PeekabooAgentRuntime
 import PeekabooAutomation
+import PeekabooBridge
 import PeekabooCore
 import PeekabooFoundation
 import Testing
@@ -9,50 +11,86 @@ import Testing
 @MainActor
 struct OpenCommandFlowTests {
     @Test
-    func `Open command uses launcher for default handler`() async throws {
-        let launcher = StubApplicationLauncher()
-        launcher.openResponses = [StubRunningApplication(localizedName: "Safari", readyAfterChecks: 1)]
-        let resolver = StubApplicationURLResolver()
+    func `List apps does not require screen recording permission`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 42,
+            bundleIdentifier: "com.example.Editor",
+            name: "Editor"
+        )
+        let service = RecordingApplicationService(applications: [app])
+        var command = ListCommand.AppsSubcommand()
+        let runtime = CommandRuntime(
+            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
+            services: ServicesWithApplicationStub(
+                applications: service,
+                screenCapture: DeniedScreenCaptureService()
+            )
+        )
 
-        let originalLauncher = OpenCommand.launcher
-        let originalResolver = OpenCommand.resolver
-        OpenCommand.launcher = launcher
-        OpenCommand.resolver = resolver
-        defer {
-            OpenCommand.launcher = originalLauncher
-            OpenCommand.resolver = originalResolver
-        }
+        try await command.run(using: runtime)
+
+        #expect(service.listCallCount == 1)
+    }
+
+    @Test
+    func `Open command uses runtime host for default handler`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 42,
+            bundleIdentifier: "com.apple.Safari",
+            name: "Safari",
+            isActive: true,
+            isFinishedLaunching: true
+        )
+        let service = RecordingApplicationService(applications: [app], launchResponse: app)
 
         var command = OpenCommand()
         command.target = "https://example.com"
         let runtime = CommandRuntime(
             configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
-            services: PeekabooServices()
+            services: ServicesWithApplicationStub(applications: service)
         )
         try await command.run(using: runtime)
 
-        #expect(launcher.openCalls.count == 1)
-        let call = try #require(launcher.openCalls.first)
-        #expect(call.handler == nil)
-        #expect(call.target.absoluteString == "https://example.com")
-        #expect(call.activates == true)
+        let request = try #require(service.launchRequests.first)
+        #expect(request.applicationIdentifier == nil)
+        #expect(request.openURLs.map(\.absoluteString) == ["https://example.com"])
+        #expect(request.activates)
+        #expect(!request.waitUntilReady)
     }
 
     @Test
-    func `Open command respects handler override and focus flags`() async throws {
-        let launcher = StubApplicationLauncher()
-        launcher.openResponses = [StubRunningApplication(localizedName: "Notes", readyAfterChecks: 1)]
-        let resolver = StubApplicationURLResolver()
-        resolver.applicationMap["Notes"] = URL(fileURLWithPath: "/Applications/Notes.app")
+    func `Open command preserves strict bundle identifier`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 42,
+            bundleIdentifier: "com.apple.Safari",
+            name: "Safari"
+        )
+        let service = RecordingApplicationService(applications: [app], launchResponse: app)
+        var command = OpenCommand()
+        command.target = "https://example.com"
+        command.bundleId = "com.apple.Safari"
 
-        let originalLauncher = OpenCommand.launcher
-        let originalResolver = OpenCommand.resolver
-        OpenCommand.launcher = launcher
-        OpenCommand.resolver = resolver
-        defer {
-            OpenCommand.launcher = originalLauncher
-            OpenCommand.resolver = originalResolver
-        }
+        try await command.run(using: CommandRuntime(
+            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
+            services: ServicesWithApplicationStub(applications: service)
+        ))
+
+        let request = try #require(service.launchRequests.first)
+        #expect(request.applicationIdentifier == nil)
+        #expect(request.applicationBundleIdentifier == "com.apple.Safari")
+    }
+
+    @Test
+    func `Open command preserves no focus and invalidates selected and discovered snapshots`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 43,
+            bundleIdentifier: "com.apple.Notes",
+            name: "Notes",
+            isFinishedLaunching: true
+        )
+        let service = RecordingApplicationService(applications: [app], launchResponse: app)
+        let snapshots = try await SnapshotInvalidationFixture.start()
+        defer { Task { await snapshots.host.stop() } }
 
         var command = OpenCommand()
         command.target = "~/Desktop/test.txt"
@@ -60,108 +98,138 @@ struct OpenCommandFlowTests {
         command.noFocus = true
         let runtime = CommandRuntime(
             configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
-            services: PeekabooServices()
+            services: ServicesWithApplicationStub(
+                applications: service,
+                snapshots: snapshots.selected
+            ),
+            snapshotInvalidationRemoteSocketPaths: [snapshots.discoveredSocketPath]
         )
         try await command.run(using: runtime)
 
-        let call = try #require(launcher.openCalls.first)
-        #expect(call.handler == URL(fileURLWithPath: "/Applications/Notes.app"))
-        #expect(call.activates == false)
-        #expect(call.target.path.hasSuffix("/Desktop/test.txt"))
+        let request = try #require(service.launchRequests.first)
+        #expect(request.applicationIdentifier == "Notes")
+        #expect(request.openURLs.first?.path.hasSuffix("/Desktop/test.txt") == true)
+        #expect(!request.activates)
+        #expect(await snapshots.selected.getMostRecentSnapshot() == nil)
+        #expect(await snapshots.discovered.getMostRecentSnapshot() == nil)
     }
 
     @Test
-    func `Application resolver finds Finder in CoreServices`() throws {
-        let resolver = DefaultApplicationURLResolver()
+    func `Open command resolves a relative handler path in the caller directory`() async throws {
+        let app = ServiceApplicationInfo(processIdentifier: 44, bundleIdentifier: nil, name: "Fixture")
+        let service = RecordingApplicationService(applications: [app], launchResponse: app)
 
-        let finderURL = try resolver.resolveApplication(appIdentifier: "Finder", bundleId: nil)
+        var command = OpenCommand()
+        command.target = "document.txt"
+        command.app = "./Build/Fixture.app"
+        let runtime = CommandRuntime(
+            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
+            services: ServicesWithApplicationStub(applications: service)
+        )
+        try await command.run(using: runtime)
 
-        #expect(finderURL.lastPathComponent == "Finder.app")
+        let request = try #require(service.launchRequests.first)
+        #expect(request.applicationIdentifier == ApplicationIdentifierResolver.resolve("./Build/Fixture.app"))
     }
 }
 
 @MainActor
 struct AppCommandLaunchFlowTests {
     @Test
-    func `Launch without --open activates app`() async throws {
-        let launcher = StubApplicationLauncher()
-        launcher.launchResponses = [StubRunningApplication(localizedName: "Finder", readyAfterChecks: 1)]
-        let resolver = StubApplicationURLResolver()
-        resolver.applicationMap["Finder"] = URL(fileURLWithPath: "/System/Applications/Finder.app")
-
-        let originalLauncher = AppCommand.LaunchSubcommand.launcher
-        let originalResolver = AppCommand.LaunchSubcommand.resolver
-        AppCommand.LaunchSubcommand.launcher = launcher
-        AppCommand.LaunchSubcommand.resolver = resolver
-        defer {
-            AppCommand.LaunchSubcommand.launcher = originalLauncher
-            AppCommand.LaunchSubcommand.resolver = originalResolver
-        }
+    func `Launch without --open activates through runtime host`() async throws {
+        let service = self.makeLaunchService(name: "Finder", bundleIdentifier: "com.apple.finder")
 
         var command = AppCommand.LaunchSubcommand()
         command.app = "Finder"
-        let runtime = self.makeRuntime()
+        let runtime = self.makeRuntime(applicationService: service)
         try await command.run(using: runtime)
 
-        let call = try #require(launcher.launchCalls.first)
-        #expect(call.appURL == URL(fileURLWithPath: "/System/Applications/Finder.app"))
-        #expect(call.activates == true)
+        let request = try #require(service.launchRequests.first)
+        #expect(request.applicationIdentifier == "Finder")
+        #expect(request.openURLs.isEmpty)
+        #expect(request.activates)
     }
 
     @Test
-    func `Launch with --open documents skips focus when requested`() async throws {
-        let launcher = StubApplicationLauncher()
-        launcher.launchWithDocsResponses = [StubRunningApplication(localizedName: "Preview", readyAfterChecks: 1)]
-        let resolver = StubApplicationURLResolver()
-        resolver.applicationMap["Preview"] = URL(fileURLWithPath: "/Applications/Preview.app")
-
-        let originalLauncher = AppCommand.LaunchSubcommand.launcher
-        let originalResolver = AppCommand.LaunchSubcommand.resolver
-        AppCommand.LaunchSubcommand.launcher = launcher
-        AppCommand.LaunchSubcommand.resolver = resolver
-        defer {
-            AppCommand.LaunchSubcommand.launcher = originalLauncher
-            AppCommand.LaunchSubcommand.resolver = originalResolver
-        }
+    func `Launch with --open documents skips focus through runtime host`() async throws {
+        let service = self.makeLaunchService(name: "Preview", bundleIdentifier: "com.apple.Preview")
 
         var command = AppCommand.LaunchSubcommand()
         command.app = "Preview"
         command.noFocus = true
         command.openTargets = ["~/Desktop/file1.pdf", "https://example.com"]
-        let runtime = self.makeRuntime()
+        let runtime = self.makeRuntime(applicationService: service)
         try await command.run(using: runtime)
 
-        let call = try #require(launcher.launchWithDocsCalls.first)
-        #expect(call.activates == false)
-        #expect(call.documentURLs.count == 2)
-        #expect(call.documentURLs[0].path.hasSuffix("/Desktop/file1.pdf"))
-        #expect(call.documentURLs[1].absoluteString == "https://example.com")
+        let request = try #require(service.launchRequests.first)
+        #expect(!request.activates)
+        #expect(request.openURLs.count == 2)
+        #expect(request.openURLs[0].path.hasSuffix("/Desktop/file1.pdf"))
+        #expect(request.openURLs[1].absoluteString == "https://example.com")
     }
 
     @Test
-    func `Launch without --open skips focus when requested`() async throws {
-        let launcher = StubApplicationLauncher()
-        launcher.launchResponses = [StubRunningApplication(localizedName: "Notes", readyAfterChecks: 1)]
-        let resolver = StubApplicationURLResolver()
-        resolver.applicationMap["Notes"] = URL(fileURLWithPath: "/Applications/Notes.app")
-
-        let originalLauncher = AppCommand.LaunchSubcommand.launcher
-        let originalResolver = AppCommand.LaunchSubcommand.resolver
-        AppCommand.LaunchSubcommand.launcher = launcher
-        AppCommand.LaunchSubcommand.resolver = resolver
-        defer {
-            AppCommand.LaunchSubcommand.launcher = originalLauncher
-            AppCommand.LaunchSubcommand.resolver = originalResolver
-        }
+    func `Launch without open preserves no focus and invalidates selected and discovered snapshots`() async throws {
+        let service = self.makeLaunchService(name: "Notes", bundleIdentifier: "com.apple.Notes")
+        let snapshots = try await SnapshotInvalidationFixture.start()
+        defer { Task { await snapshots.host.stop() } }
 
         var command = AppCommand.LaunchSubcommand()
         command.app = "Notes"
         command.noFocus = true
-        let runtime = self.makeRuntime()
+        let runtime = CommandRuntime(
+            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
+            services: ServicesWithApplicationStub(
+                applications: service,
+                snapshots: snapshots.selected
+            ),
+            snapshotInvalidationRemoteSocketPaths: [snapshots.discoveredSocketPath]
+        )
         try await command.run(using: runtime)
 
-        let call = try #require(launcher.launchCalls.first)
-        #expect(call.activates == false)
+        let request = try #require(service.launchRequests.first)
+        #expect(!request.activates)
+        #expect(await snapshots.selected.getMostRecentSnapshot() == nil)
+        #expect(await snapshots.discovered.getMostRecentSnapshot() == nil)
+    }
+
+    @Test
+    func `Bundle identifier takes precedence over positional name`() async throws {
+        let service = self.makeLaunchService(name: "Calculator", bundleIdentifier: "com.apple.calculator")
+        var command = AppCommand.LaunchSubcommand()
+        command.app = "Calculator"
+        command.bundleId = "com.apple.calculator"
+        command.noFocus = true
+
+        try await command.run(using: self.makeRuntime(applicationService: service))
+
+        #expect(service.launchRequests.first?.applicationIdentifier == nil)
+        #expect(service.launchRequests.first?.applicationBundleIdentifier == "com.apple.calculator")
+    }
+
+    @Test
+    func `Launch resolves a relative app path in the caller directory`() async throws {
+        let service = self.makeLaunchService(name: "Fixture", bundleIdentifier: "com.example.fixture")
+        var command = AppCommand.LaunchSubcommand()
+        command.app = "./Build/Fixture.app"
+
+        try await command.run(using: self.makeRuntime(applicationService: service))
+
+        #expect(
+            service.launchRequests.first?.applicationIdentifier ==
+                ApplicationIdentifierResolver.resolve("./Build/Fixture.app")
+        )
+    }
+
+    @Test
+    func `Application identifier resolution preserves names and absolutizes paths`() {
+        #expect(ApplicationIdentifierResolver.resolve("Calculator", cwd: "/tmp/workspace") == "Calculator")
+        #expect(
+            ApplicationIdentifierResolver.resolve("./Build/Foo.app", cwd: "/tmp/workspace") ==
+                "/tmp/workspace/Build/Foo.app"
+        )
+        #expect(ApplicationIdentifierResolver.resolve("/Applications/Foo.app", cwd: "/tmp/workspace") ==
+            "/Applications/Foo.app")
     }
 
     @Test
@@ -224,6 +292,30 @@ struct AppCommandLaunchFlowTests {
     }
 
     @Test
+    func `Quit rejects the selected daemon before terminating it`() async throws {
+        let application = ServiceApplicationInfo(
+            processIdentifier: 321,
+            bundleIdentifier: "boo.peekaboo.peekaboo",
+            name: "Peekaboo daemon"
+        )
+        let applicationService = RecordingApplicationService(applications: [application])
+
+        var command = AppCommand.QuitSubcommand()
+        command.app = "Peekaboo daemon"
+        let runtime = CommandRuntime(
+            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
+            services: ServicesWithApplicationStub(applications: applicationService),
+            selectedRemoteHostProcessIdentifier: 321
+        )
+
+        await #expect(throws: ExitCode.self) {
+            try await command.run(using: runtime)
+        }
+        #expect(applicationService.findCalls == ["Peekaboo daemon"])
+        #expect(applicationService.quitCalls.isEmpty)
+    }
+
+    @Test
     func `Quit all keeps accessory apps out of termination set`() async throws {
         let regularApplication = ServiceApplicationInfo(
             processIdentifier: 123,
@@ -254,34 +346,23 @@ struct AppCommandLaunchFlowTests {
     }
 
     @Test
-    func `Relaunch command quits through service and launches through launcher`() async throws {
-        let launcher = StubApplicationLauncher()
-        launcher.launchResponses = [
-            StubRunningApplication(
-                localizedName: "Example",
-                bundleIdentifier: "com.example.app",
-                processIdentifier: 456,
-                readyAfterChecks: 1
-            ),
-        ]
-        let resolver = StubApplicationURLResolver()
-        resolver.bundleMap["com.example.app"] = URL(fileURLWithPath: "/Applications/Example.app")
-
-        let originalLauncher = AppCommand.RelaunchSubcommand.launcher
-        let originalResolver = AppCommand.RelaunchSubcommand.resolver
-        AppCommand.RelaunchSubcommand.launcher = launcher
-        AppCommand.RelaunchSubcommand.resolver = resolver
-        defer {
-            AppCommand.RelaunchSubcommand.launcher = originalLauncher
-            AppCommand.RelaunchSubcommand.resolver = originalResolver
-        }
-
+    func `Relaunch command quits and launches through runtime host`() async throws {
         let application = ServiceApplicationInfo(
             processIdentifier: 123,
             bundleIdentifier: "com.example.app",
             name: "Example"
         )
-        let applicationService = RecordingApplicationService(applications: [application])
+        let relaunched = ServiceApplicationInfo(
+            processIdentifier: 456,
+            bundleIdentifier: "com.example.app",
+            name: "Example",
+            isActive: true,
+            isFinishedLaunching: true
+        )
+        let applicationService = RecordingApplicationService(
+            applications: [application],
+            launchResponse: relaunched
+        )
 
         var command = AppCommand.RelaunchSubcommand()
         command.app = "Example"
@@ -293,16 +374,79 @@ struct AppCommandLaunchFlowTests {
         try await command.run(using: runtime)
 
         #expect(applicationService.quitCalls == [.init(identifier: "PID:123", force: false)])
-        #expect(launcher.launchCalls == [.init(
-            appURL: URL(fileURLWithPath: "/Applications/Example.app"),
-            activates: true
-        )])
+        let relaunchRequest = try #require(applicationService.relaunchRequests.first)
+        #expect(relaunchRequest.targetIdentifier == "PID:123")
+        #expect(relaunchRequest.waitSeconds == 0)
+        let request = try #require(applicationService.launchRequests.first)
+        #expect(request.applicationIdentifier == nil)
+        #expect(request.applicationBundleIdentifier == "com.example.app")
+        #expect(request.activates)
     }
 
-    private func makeRuntime() -> CommandRuntime {
+    @Test
+    func `Relaunch rejects an unsafe host before lifecycle calls`() async throws {
+        let application = ServiceApplicationInfo(
+            processIdentifier: 123,
+            bundleIdentifier: "boo.peekaboo.mac",
+            name: "Peekaboo"
+        )
+        let applicationService = RecordingApplicationService(applications: [application])
+        var command = AppCommand.RelaunchSubcommand()
+        command.app = "Peekaboo"
+        command.wait = 0
+        let runtime = CommandRuntime(
+            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
+            services: ServicesWithApplicationStub(applications: applicationService),
+            applicationRelaunchAllowed: false
+        )
+
+        await #expect(throws: ExitCode.self) {
+            try await command.run(using: runtime)
+        }
+        #expect(applicationService.findCalls.isEmpty)
+        #expect(applicationService.quitCalls.isEmpty)
+        #expect(applicationService.launchRequests.isEmpty)
+    }
+
+    @Test
+    func `Relaunch rejects the selected daemon before quitting it`() async throws {
+        let application = ServiceApplicationInfo(
+            processIdentifier: 321,
+            bundleIdentifier: "boo.peekaboo.peekaboo",
+            name: "Peekaboo daemon"
+        )
+        let applicationService = RecordingApplicationService(applications: [application])
+        var command = AppCommand.RelaunchSubcommand()
+        command.app = "Peekaboo daemon"
+        command.wait = 0
+        let runtime = CommandRuntime(
+            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
+            services: ServicesWithApplicationStub(applications: applicationService),
+            selectedRemoteHostProcessIdentifier: 321
+        )
+
+        await #expect(throws: ExitCode.self) {
+            try await command.run(using: runtime)
+        }
+        #expect(applicationService.findCalls == ["Peekaboo daemon"])
+        #expect(applicationService.quitCalls.isEmpty)
+        #expect(applicationService.launchRequests.isEmpty)
+    }
+
+    private func makeLaunchService(name: String, bundleIdentifier: String) -> RecordingApplicationService {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 42,
+            bundleIdentifier: bundleIdentifier,
+            name: name,
+            isFinishedLaunching: true
+        )
+        return RecordingApplicationService(applications: [app], launchResponse: app)
+    }
+
+    private func makeRuntime(applicationService: RecordingApplicationService) -> CommandRuntime {
         CommandRuntime(
             configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
-            services: PeekabooServices(snapshotManager: InMemorySnapshotManager())
+            services: ServicesWithApplicationStub(applications: applicationService)
         )
     }
 }
@@ -312,13 +456,19 @@ private final class ServicesWithApplicationStub: PeekabooServiceProviding {
     private let base = PeekabooServices(snapshotManager: InMemorySnapshotManager())
     private let stubApplications: any ApplicationServiceProtocol
     private let stubAutomation: any UIAutomationServiceProtocol
+    private let stubScreenCapture: any ScreenCaptureServiceProtocol
+    private let stubSnapshots: any SnapshotManagerProtocol
 
     init(
         applications: any ApplicationServiceProtocol,
-        automation: (any UIAutomationServiceProtocol)? = nil
+        automation: (any UIAutomationServiceProtocol)? = nil,
+        screenCapture: (any ScreenCaptureServiceProtocol)? = nil,
+        snapshots: (any SnapshotManagerProtocol)? = nil
     ) {
         self.stubApplications = applications
         self.stubAutomation = automation ?? self.base.automation
+        self.stubScreenCapture = screenCapture ?? self.base.screenCapture
+        self.stubSnapshots = snapshots ?? self.base.snapshots
     }
 
     func ensureVisualizerConnection() {
@@ -330,7 +480,7 @@ private final class ServicesWithApplicationStub: PeekabooServiceProviding {
     }
 
     var screenCapture: any ScreenCaptureServiceProtocol {
-        self.base.screenCapture
+        self.stubScreenCapture
     }
 
     var applications: any ApplicationServiceProtocol {
@@ -358,7 +508,7 @@ private final class ServicesWithApplicationStub: PeekabooServiceProviding {
     }
 
     var snapshots: any SnapshotManagerProtocol {
-        self.base.snapshots
+        self.stubSnapshots
     }
 
     var files: any FileServiceProtocol {
@@ -398,6 +548,43 @@ private final class ServicesWithApplicationStub: PeekabooServiceProviding {
     }
 }
 
+@MainActor
+private struct SnapshotInvalidationFixture {
+    let selected: InMemorySnapshotManager
+    let discovered: InMemorySnapshotManager
+    let discoveredSocketPath: String
+    let host: PeekabooBridgeHost
+
+    static func start() async throws -> Self {
+        let selected = InMemorySnapshotManager()
+        let discovered = InMemorySnapshotManager()
+        _ = try await selected.createSnapshot()
+        _ = try await discovered.createSnapshot()
+
+        let discoveredSocketPath = "/tmp/peekaboo-open-snapshots-\(UUID().uuidString).sock"
+        let server = PeekabooBridgeServer(
+            services: PeekabooServices(snapshotManager: discovered),
+            hostKind: .gui,
+            allowlistedTeams: [],
+            allowlistedBundles: []
+        )
+        let host = PeekabooBridgeHost(
+            socketPath: discoveredSocketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2
+        )
+        try await host.startChecked()
+
+        return Self(
+            selected: selected,
+            discovered: discovered,
+            discoveredSocketPath: discoveredSocketPath,
+            host: host
+        )
+    }
+}
+
 private final class RecordingHotkeyAutomationService: MockAutomationService {
     struct HotkeyCall {
         let keys: String
@@ -413,13 +600,22 @@ private final class RecordingHotkeyAutomationService: MockAutomationService {
 
 @MainActor
 private final class RecordingApplicationService: ApplicationServiceProtocol {
+    let supportsApplicationLaunchOptions = true
+    let supportsApplicationRelaunch = true
+
     private let applications: [ServiceApplicationInfo]
+    private let launchResponse: ServiceApplicationInfo?
     private var runningPIDs: Set<Int32>
     private(set) var activateCalls: [String] = []
+    private(set) var launchRequests: [ApplicationLaunchRequest] = []
+    private(set) var relaunchRequests: [ApplicationRelaunchRequest] = []
     private(set) var quitCalls: [QuitCall] = []
+    private(set) var findCalls: [String] = []
+    private(set) var listCallCount = 0
 
-    init(applications: [ServiceApplicationInfo]) {
+    init(applications: [ServiceApplicationInfo], launchResponse: ServiceApplicationInfo? = nil) {
         self.applications = applications
+        self.launchResponse = launchResponse
         self.runningPIDs = Set(applications.map(\.processIdentifier))
     }
 
@@ -429,7 +625,8 @@ private final class RecordingApplicationService: ApplicationServiceProtocol {
     }
 
     func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
-        UnifiedToolOutput(
+        self.listCallCount += 1
+        return UnifiedToolOutput(
             data: ServiceApplicationListData(applications: self.applications),
             summary: .init(brief: "Stub application list", status: .success),
             metadata: .init(duration: 0)
@@ -437,12 +634,13 @@ private final class RecordingApplicationService: ApplicationServiceProtocol {
     }
 
     func findApplication(identifier: String) async throws -> ServiceApplicationInfo {
+        self.findCalls.append(identifier)
         if let pid = Self.parsePID(identifier),
-           let match = self.applications
+           let match = applications
                .first(where: { $0.processIdentifier == pid && self.runningPIDs.contains(pid) }) {
             return match
         }
-        if let match = self.applications.first(where: {
+        if let match = applications.first(where: {
             self.runningPIDs.contains($0.processIdentifier) &&
                 ($0.name == identifier || $0.bundleIdentifier == identifier)
         }) {
@@ -467,7 +665,7 @@ private final class RecordingApplicationService: ApplicationServiceProtocol {
     }
 
     func getFrontmostApplication() async throws -> ServiceApplicationInfo {
-        guard let first = self.applications.first else {
+        guard let first = applications.first else {
             throw PeekabooError.appNotFound("frontmost")
         }
         return first
@@ -478,12 +676,32 @@ private final class RecordingApplicationService: ApplicationServiceProtocol {
     }
 
     func launchApplication(identifier: String) async throws -> ServiceApplicationInfo {
-        try await self.findApplication(identifier: identifier)
+        try await self.launchApplication(request: ApplicationLaunchRequest(applicationIdentifier: identifier))
+    }
+
+    func launchApplication(request: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo {
+        self.launchRequests.append(request)
+        if let launchResponse {
+            self.runningPIDs.insert(launchResponse.processIdentifier)
+            return launchResponse
+        }
+        guard let identifier = request.applicationIdentifier else {
+            throw PeekabooError.appNotFound("default handler")
+        }
+        return try await self.findApplication(identifier: identifier)
+    }
+
+    func relaunchApplication(request: ApplicationRelaunchRequest) async throws -> ServiceApplicationInfo {
+        self.relaunchRequests.append(request)
+        guard try await self.quitApplication(identifier: request.targetIdentifier, force: request.force) else {
+            throw PeekabooError.commandFailed("Application refused to quit")
+        }
+        return try await self.launchApplication(request: request.launchRequest)
     }
 
     func quitApplication(identifier: String, force: Bool) async throws -> Bool {
         self.quitCalls.append(.init(identifier: identifier, force: force))
-        let app = try await self.findApplication(identifier: identifier)
+        let app = try await findApplication(identifier: identifier)
         self.runningPIDs.remove(app.processIdentifier)
         return true
     }
@@ -496,5 +714,44 @@ private final class RecordingApplicationService: ApplicationServiceProtocol {
     private static func parsePID(_ identifier: String) -> Int32? {
         guard identifier.uppercased().hasPrefix("PID:") else { return nil }
         return Int32(identifier.dropFirst(4))
+    }
+}
+
+@MainActor
+private final class DeniedScreenCaptureService: ScreenCaptureServiceProtocol {
+    func captureScreen(
+        displayIndex _: Int?,
+        visualizerMode _: CaptureVisualizerMode,
+        scale _: CaptureScalePreference
+    ) async throws -> CaptureResult {
+        throw CaptureError.screenRecordingPermissionDenied
+    }
+
+    func captureWindow(
+        appIdentifier _: String,
+        windowIndex _: Int?,
+        visualizerMode _: CaptureVisualizerMode,
+        scale _: CaptureScalePreference
+    ) async throws -> CaptureResult {
+        throw CaptureError.screenRecordingPermissionDenied
+    }
+
+    func captureFrontmost(
+        visualizerMode _: CaptureVisualizerMode,
+        scale _: CaptureScalePreference
+    ) async throws -> CaptureResult {
+        throw CaptureError.screenRecordingPermissionDenied
+    }
+
+    func captureArea(
+        _: CGRect,
+        visualizerMode _: CaptureVisualizerMode,
+        scale _: CaptureScalePreference
+    ) async throws -> CaptureResult {
+        throw CaptureError.screenRecordingPermissionDenied
+    }
+
+    func hasScreenRecordingPermission() async -> Bool {
+        false
     }
 }

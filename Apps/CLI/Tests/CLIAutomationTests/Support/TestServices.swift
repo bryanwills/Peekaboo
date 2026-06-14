@@ -36,7 +36,7 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
         visualizerMode _: CaptureVisualizerMode,
         scale: CaptureScalePreference
     ) async throws -> CaptureResult {
-        if let handler = self.captureScreenHandler {
+        if let handler = captureScreenHandler {
             return try await handler(displayIndex, scale)
         }
         return try await self.makeDefaultCaptureResult(function: #function)
@@ -48,7 +48,7 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
         visualizerMode _: CaptureVisualizerMode,
         scale: CaptureScalePreference
     ) async throws -> CaptureResult {
-        if let handler = self.captureWindowHandler {
+        if let handler = captureWindowHandler {
             return try await handler(appIdentifier, windowIndex, scale)
         }
         return try await self.makeDefaultCaptureResult(function: #function)
@@ -59,7 +59,7 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
         visualizerMode _: CaptureVisualizerMode,
         scale: CaptureScalePreference
     ) async throws -> CaptureResult {
-        if let handler = self.captureWindowByIdHandler {
+        if let handler = captureWindowByIdHandler {
             return try await handler(windowID, scale)
         }
         return try await self.makeDefaultCaptureResult(function: #function)
@@ -69,7 +69,7 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
         visualizerMode _: CaptureVisualizerMode,
         scale: CaptureScalePreference
     ) async throws -> CaptureResult {
-        if let handler = self.captureFrontmostHandler {
+        if let handler = captureFrontmostHandler {
             return try await handler(scale)
         }
         return try await self.makeDefaultCaptureResult(function: #function)
@@ -80,7 +80,7 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
         visualizerMode _: CaptureVisualizerMode,
         scale: CaptureScalePreference
     ) async throws -> CaptureResult {
-        if let handler = self.captureAreaHandler {
+        if let handler = captureAreaHandler {
             return try await handler(rect, scale)
         }
         return try await self.makeDefaultCaptureResult(function: #function)
@@ -91,7 +91,7 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
     }
 
     private func makeDefaultCaptureResult(function: StaticString) async throws -> CaptureResult {
-        if let result = self.defaultCaptureResult {
+        if let result = defaultCaptureResult {
             return result
         }
 
@@ -105,7 +105,7 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
 
 @MainActor
 final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceProtocol,
-TargetedClickServiceProtocol {
+ExactWindowTargetedClickServiceProtocol {
     struct ClickCall {
         let target: ClickTarget
         let clickType: ClickType
@@ -177,6 +177,7 @@ TargetedClickServiceProtocol {
         let clickType: ClickType
         let snapshotId: String?
         let targetProcessIdentifier: pid_t
+        let targetWindowID: Int?
     }
 
     struct WaitForElementCall {
@@ -213,6 +214,7 @@ TargetedClickServiceProtocol {
     var supportsTargetedClicks = true
     var targetedClickUnavailableReason: String?
     var targetedClickRequiresEventSynthesizingPermission = false
+    var clickError: (any Error)?
 
     var nextTypeActionsResult: TypeResult?
     var typeActionsResultProvider: (([TypeAction], TypingCadence, String?) -> TypeResult)?
@@ -233,7 +235,7 @@ TargetedClickServiceProtocol {
     ) async throws -> ElementDetectionResult {
         self.detectElementsCalls.append((imageData, snapshotId, windowContext))
 
-        if let handler = self.detectElementsHandler {
+        if let handler = detectElementsHandler {
             return try await handler(imageData, snapshotId, windowContext)
         }
 
@@ -246,6 +248,9 @@ TargetedClickServiceProtocol {
 
     func click(target: ClickTarget, clickType: ClickType, snapshotId: String?) async throws {
         self.clickCalls.append(ClickCall(target: target, clickType: clickType, snapshotId: snapshotId))
+        if let clickError {
+            throw clickError
+        }
     }
 
     func click(
@@ -258,8 +263,31 @@ TargetedClickServiceProtocol {
             target: target,
             clickType: clickType,
             snapshotId: snapshotId,
-            targetProcessIdentifier: targetProcessIdentifier
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetWindowID: nil
         ))
+        if let clickError {
+            throw clickError
+        }
+    }
+
+    func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t,
+        targetWindowID: Int
+    ) async throws {
+        self.targetedClickCalls.append(TargetedClickCall(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetWindowID: targetWindowID
+        ))
+        if let clickError {
+            throw clickError
+        }
     }
 
     func type(
@@ -289,11 +317,11 @@ TargetedClickServiceProtocol {
             TypeActionsCall(actions: actions, cadence: cadence, snapshotId: snapshotId)
         )
 
-        if let provider = self.typeActionsResultProvider {
+        if let provider = typeActionsResultProvider {
             return provider(actions, cadence, snapshotId)
         }
 
-        if let nextResult = self.nextTypeActionsResult {
+        if let nextResult = nextTypeActionsResult {
             return nextResult
         }
 
@@ -368,11 +396,11 @@ TargetedClickServiceProtocol {
             WaitForElementCall(target: target, timeout: timeout, snapshotId: snapshotId)
         )
 
-        if let provider = self.waitForElementProvider {
+        if let provider = waitForElementProvider {
             return provider(target, timeout, snapshotId)
         }
 
-        if let stored = self.waitForElementResults[self.key(for: target)] {
+        if let stored = waitForElementResults[key(for: target)] {
             return stored
         }
 
@@ -432,6 +460,7 @@ final class StubApplicationService: ApplicationServiceProtocol {
     var launchResults: [String: ServiceApplicationInfo]
     var launchCalls: [String] = []
     var activateCalls: [String] = []
+    var activateApplicationHandler: ((String) async throws -> Void)?
     var quitCalls: [(identifier: String, force: Bool)] = []
     var quitShouldSucceed = true
     var hideCalls: [String] = []
@@ -446,7 +475,7 @@ final class StubApplicationService: ApplicationServiceProtocol {
     }
 
     func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
-        let data = ServiceApplicationListData(applications: self.applications)
+        let data = ServiceApplicationListData(applications: applications)
         let summary = UnifiedToolOutput<ServiceApplicationListData>.Summary(
             brief: "Stub application list",
             status: .success,
@@ -461,11 +490,11 @@ final class StubApplicationService: ApplicationServiceProtocol {
 
     func findApplication(identifier: String) async throws -> ServiceApplicationInfo {
         if let pid = Self.parsePID(identifier),
-           let match = self.applications.first(where: { $0.processIdentifier == pid }) {
+           let match = applications.first(where: { $0.processIdentifier == pid }) {
             return match
         }
 
-        if let match = self.applications.first(where: { $0.name == identifier || $0.bundleIdentifier == identifier }) {
+        if let match = applications.first(where: { $0.name == identifier || $0.bundleIdentifier == identifier }) {
             return match
         }
         throw PeekabooError.appNotFound(identifier)
@@ -506,7 +535,7 @@ final class StubApplicationService: ApplicationServiceProtocol {
     }
 
     func getFrontmostApplication() async throws -> ServiceApplicationInfo {
-        guard let first = self.applications.first else {
+        guard let first = applications.first else {
             throw PeekabooError.appNotFound("frontmost")
         }
         return first
@@ -518,10 +547,10 @@ final class StubApplicationService: ApplicationServiceProtocol {
 
     func launchApplication(identifier: String) async throws -> ServiceApplicationInfo {
         self.launchCalls.append(identifier)
-        if let result = self.launchResults[identifier] {
+        if let result = launchResults[identifier] {
             return result
         }
-        if let existing = self.applications
+        if let existing = applications
             .first(where: { $0.name == identifier || $0.bundleIdentifier == identifier }) {
             return existing
         }
@@ -534,6 +563,7 @@ final class StubApplicationService: ApplicationServiceProtocol {
 
     func activateApplication(identifier: String) async throws {
         self.activateCalls.append(identifier)
+        try await self.activateApplicationHandler?(identifier)
     }
 
     func quitApplication(identifier: String, force: Bool) async throws -> Bool {
@@ -559,11 +589,20 @@ final class StubApplicationService: ApplicationServiceProtocol {
 }
 
 final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
+    let supportsImplicitLatestSnapshotInvalidation = true
+    var effectiveImplicitLatestInvalidationWatermark: Date?
     private(set) var detectionResults: [String: ElementDetectionResult] = [:]
     private(set) var snapshotInfos: [String: SnapshotInfo] = [:]
     private(set) var storedElements: [String: [String: PeekabooCore.UIElement]] = [:]
     private(set) var storedAnnotatedScreenshots: [String: [String]] = [:]
     var mostRecentSnapshotId: String?
+    var uiAutomationSnapshotError: PeekabooError?
+    var invalidationError: (any Error)?
+    var snapshotCreationDelay: Duration?
+    var preservingInvalidationDelay: Duration?
+    private(set) var invalidationCutoffs: [Date] = []
+    private var pendingSnapshotIDs: Set<String> = []
+    private(set) var exposedPendingSnapshotDuringWrite = false
     struct ScreenshotRecord {
         let path: String
         let applicationBundleId: String?
@@ -576,8 +615,22 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
     private(set) var storedScreenshots: [String: [ScreenshotRecord]] = [:]
 
     func createSnapshot() async throws -> String {
+        if let snapshotCreationDelay {
+            try await Task.sleep(for: snapshotCreationDelay)
+        }
+        return self.createSnapshotImpl(pendingAt: nil)
+    }
+
+    func createSnapshot(pendingAt observationStartedAt: Date) async throws -> String {
+        if let snapshotCreationDelay {
+            try await Task.sleep(for: snapshotCreationDelay)
+        }
+        return self.createSnapshotImpl(pendingAt: observationStartedAt)
+    }
+
+    private func createSnapshotImpl(pendingAt observationStartedAt: Date?) -> String {
         let snapshotId = UUID().uuidString
-        let now = Date()
+        let now = observationStartedAt ?? Date()
         self.snapshotInfos[snapshotId] = SnapshotInfo(
             id: snapshotId,
             processId: 0,
@@ -587,13 +640,22 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
             screenshotCount: 0,
             isActive: true
         )
-        self.mostRecentSnapshotId = snapshotId
+        if observationStartedAt != nil {
+            self.pendingSnapshotIDs.insert(snapshotId)
+        } else {
+            self.mostRecentSnapshotId = snapshotId
+        }
         return snapshotId
     }
 
     func storeDetectionResult(snapshotId: String, result: ElementDetectionResult) async throws {
+        if self.pendingSnapshotIDs.contains(snapshotId), self.mostRecentSnapshotId == snapshotId {
+            self.exposedPendingSnapshotDuringWrite = true
+        }
         self.detectionResults[snapshotId] = result
-        self.mostRecentSnapshotId = snapshotId
+        if !self.pendingSnapshotIDs.contains(snapshotId) {
+            self.mostRecentSnapshotId = snapshotId
+        }
 
         let existingInfo = self.snapshotInfos[snapshotId]
         let createdAt = existingInfo?.createdAt ?? Date()
@@ -641,14 +703,56 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
         self.mostRecentSnapshotId
     }
 
+    func invalidateImplicitLatestSnapshot(through cutoff: Date) async throws -> String? {
+        try await self.invalidateImplicitLatestSnapshot(
+            through: cutoff,
+            preserving: nil,
+            preservedAt: nil
+        )
+    }
+
+    func invalidateImplicitLatestSnapshot(
+        through cutoff: Date,
+        preserving snapshotId: String?
+    ) async throws -> String? {
+        try await self.invalidateImplicitLatestSnapshot(
+            through: cutoff,
+            preserving: snapshotId,
+            preservedAt: snapshotId == nil ? nil : Date()
+        )
+    }
+
+    func invalidateImplicitLatestSnapshot(
+        through cutoff: Date,
+        preserving snapshotId: String?,
+        preservedAt _: Date?
+    ) async throws -> String? {
+        self.invalidationCutoffs.append(cutoff)
+        if snapshotId != nil, let preservingInvalidationDelay {
+            try await Task.sleep(for: preservingInvalidationDelay)
+        }
+        if let invalidationError {
+            throw invalidationError
+        }
+        let invalidatedSnapshotID = self.mostRecentSnapshotId
+        if let snapshotId, snapshotInfos[snapshotId] != nil {
+            self.pendingSnapshotIDs.remove(snapshotId)
+            self.mostRecentSnapshotId = snapshotId
+        } else {
+            self.mostRecentSnapshotId = nil
+        }
+        return invalidatedSnapshotID
+    }
+
     func listSnapshots() async throws -> [SnapshotInfo] {
-        Array(self.snapshotInfos.values)
+        self.snapshotInfos.values.filter { !self.pendingSnapshotIDs.contains($0.id) }
     }
 
     func cleanSnapshot(snapshotId: String) async throws {
         self.detectionResults.removeValue(forKey: snapshotId)
         self.snapshotInfos.removeValue(forKey: snapshotId)
         self.storedElements.removeValue(forKey: snapshotId)
+        self.pendingSnapshotIDs.remove(snapshotId)
         if self.mostRecentSnapshotId == snapshotId {
             self.mostRecentSnapshotId = nil
         }
@@ -672,6 +776,7 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
         self.detectionResults.removeAll()
         self.snapshotInfos.removeAll()
         self.storedElements.removeAll()
+        self.pendingSnapshotIDs.removeAll()
         self.mostRecentSnapshotId = nil
         return count
     }
@@ -681,6 +786,9 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
     }
 
     func storeScreenshot(_ request: SnapshotScreenshotRequest) async throws {
+        if self.pendingSnapshotIDs.contains(request.snapshotId), self.mostRecentSnapshotId == request.snapshotId {
+            self.exposedPendingSnapshotDuringWrite = true
+        }
         let existingInfo = self.snapshotInfos[request.snapshotId]
         let createdAt = existingInfo?.createdAt ?? Date()
         let screenshotCount = (existingInfo?.screenshotCount ?? 0) + 1
@@ -725,7 +833,10 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
     }
 
     func getUIAutomationSnapshot(snapshotId _: String) async throws -> UIAutomationSnapshot? {
-        nil
+        if let uiAutomationSnapshotError {
+            throw uiAutomationSnapshotError
+        }
+        return nil
     }
 }
 
@@ -788,15 +899,15 @@ final class StubProcessService: ProcessServiceProtocol, @unchecked Sendable {
     func loadScript(from path: String) async throws -> PeekabooScript {
         self.loadScriptCalls.append(LoadScriptCall(path: path))
 
-        if let provider = self.loadScriptProvider {
+        if let provider = loadScriptProvider {
             return try await provider(path)
         }
 
-        if let script = self.scriptsByPath[path] ?? self.scriptsByPath["*"] {
+        if let script = scriptsByPath[path] ?? scriptsByPath["*"] {
             return script
         }
 
-        if let script = self.nextScript {
+        if let script = nextScript {
             return script
         }
 
@@ -810,11 +921,11 @@ final class StubProcessService: ProcessServiceProtocol, @unchecked Sendable {
     ) async throws -> [StepResult] {
         self.executeScriptCalls.append(ExecuteScriptCall(script: script, failFast: failFast, verbose: verbose))
 
-        if let provider = self.executeScriptProvider {
+        if let provider = executeScriptProvider {
             return try await provider(script, failFast, verbose)
         }
 
-        if let results = self.nextExecuteScriptResults {
+        if let results = nextExecuteScriptResults {
             return results
         }
 
@@ -827,11 +938,11 @@ final class StubProcessService: ProcessServiceProtocol, @unchecked Sendable {
     ) async throws -> StepExecutionResult {
         self.executeStepCalls.append(ExecuteStepCall(step: step, snapshotId: snapshotId))
 
-        if let provider = self.executeStepProvider {
+        if let provider = executeStepProvider {
             return try await provider(step, snapshotId)
         }
 
-        if let result = self.nextStepResult {
+        if let result = nextStepResult {
             return result
         }
 
@@ -882,7 +993,7 @@ final class StubDockService: DockServiceProtocol {
     }
 
     func findDockItem(name: String) async throws -> DockItem {
-        guard let match = self.items.first(where: { $0.title == name }) else {
+        guard let match = items.first(where: { $0.title == name }) else {
             throw PeekabooError.elementNotFound(name)
         }
         return match
@@ -919,12 +1030,14 @@ final class StubScreenService: ScreenServiceProtocol {
 final class StubClipboardService: ClipboardServiceProtocol {
     var current: ClipboardReadResult?
     var slots: [String: ClipboardReadResult] = [:]
+    var beforeMutation: (() -> Void)?
 
     func get(prefer _: UTType?) throws -> ClipboardReadResult? {
         self.current
     }
 
     func set(_ request: ClipboardWriteRequest) throws -> ClipboardReadResult {
+        self.beforeMutation?()
         guard let primary = request.representations.first else {
             throw ClipboardServiceError.writeFailed("No representations provided")
         }
@@ -938,6 +1051,7 @@ final class StubClipboardService: ClipboardServiceProtocol {
     }
 
     func clear() {
+        self.beforeMutation?()
         self.current = nil
     }
 
@@ -949,7 +1063,8 @@ final class StubClipboardService: ClipboardServiceProtocol {
     }
 
     func restore(slot: String) throws -> ClipboardReadResult {
-        guard let saved = self.slots[slot] else {
+        self.beforeMutation?()
+        guard let saved = slots[slot] else {
             throw ClipboardServiceError.slotNotFound(slot)
         }
         self.current = saved
@@ -979,14 +1094,14 @@ final class StubMenuService: MenuServiceProtocol {
 
     func listMenus(for appIdentifier: String) async throws -> MenuStructure {
         self.listMenusRequests.append(appIdentifier)
-        guard let structure = self.menusByApp[appIdentifier] else {
+        guard let structure = menusByApp[appIdentifier] else {
             throw PeekabooError.menuNotFound(appIdentifier)
         }
         return structure
     }
 
     func listFrontmostMenus() async throws -> MenuStructure {
-        guard let menus = self.frontmostMenus else {
+        guard let menus = frontmostMenus else {
             throw PeekabooError.menuNotFound("frontmost")
         }
         return menus
@@ -1054,7 +1169,7 @@ final class StubDialogService: DialogServiceProtocol {
     }
 
     func findActiveDialog(windowTitle: String?, appName: String?) async throws -> DialogInfo {
-        guard let elements = self.dialogElements else {
+        guard let elements = dialogElements else {
             throw DialogError.noActiveDialog
         }
         return elements.dialogInfo
@@ -1065,7 +1180,7 @@ final class StubDialogService: DialogServiceProtocol {
             throw DialogError.noActiveDialog
         }
         self.recordedButtonClicks.append((buttonText, windowTitle))
-        if let result = self.clickButtonResult {
+        if let result = clickButtonResult {
             return result
         }
         throw DialogError.buttonNotFound(buttonText)
@@ -1081,7 +1196,7 @@ final class StubDialogService: DialogServiceProtocol {
         guard self.dialogElements != nil else {
             throw DialogError.noActiveDialog
         }
-        if let result = self.enterTextResult {
+        if let result = enterTextResult {
             return result
         }
         throw DialogError.fieldNotFound
@@ -1094,7 +1209,7 @@ final class StubDialogService: DialogServiceProtocol {
         ensureExpanded: Bool,
         appName: String?
     ) async throws -> DialogActionResult {
-        guard let elements = self.dialogElements else {
+        guard let elements = dialogElements else {
             throw DialogError.noActiveDialog
         }
         guard elements.dialogInfo.isFileDialog else {
@@ -1103,7 +1218,7 @@ final class StubDialogService: DialogServiceProtocol {
         if let handleFileDialogDelay {
             try await Task.sleep(nanoseconds: UInt64(handleFileDialogDelay * 1_000_000_000))
         }
-        if let result = self.handleFileDialogResult {
+        if let result = handleFileDialogResult {
             return result
         }
         throw DialogError.buttonNotFound(actionButton ?? "default")
@@ -1113,14 +1228,14 @@ final class StubDialogService: DialogServiceProtocol {
         guard self.dialogElements != nil else {
             throw DialogError.noActiveDialog
         }
-        if let result = self.dismissResult {
+        if let result = dismissResult {
             return result
         }
         throw DialogError.noDismissButton
     }
 
     func listDialogElements(windowTitle: String?, appName: String?) async throws -> DialogElements {
-        guard let elements = self.dialogElements else {
+        guard let elements = dialogElements else {
             throw DialogError.noActiveDialog
         }
         return elements
@@ -1190,7 +1305,7 @@ final class StubWindowService: WindowManagementServiceProtocol {
         case let .title(title):
             return self.windowsByApp.values.flatMap(\.self).filter { $0.title.contains(title) }
         case let .index(app, index):
-            guard let windows = self.windowsByApp[app], index < windows.count else { return [] }
+            guard let windows = windowsByApp[app], index < windows.count else { return [] }
             return [windows[index]]
         }
     }
@@ -1204,7 +1319,7 @@ final class StubWindowService: WindowManagementServiceProtocol {
         target: WindowTarget,
         transform: (ServiceWindowInfo) -> ServiceWindowInfo
     ) throws {
-        let selection = try self.resolveWindowLocation(target: target)
+        let selection = try resolveWindowLocation(target: target)
         var windows = self.windowsByApp[selection.app] ?? []
         guard selection.index < windows.count else {
             throw PeekabooError.windowNotFound(criteria: selection.app)
@@ -1218,20 +1333,20 @@ final class StubWindowService: WindowManagementServiceProtocol {
     private func resolveWindowLocation(target: WindowTarget) throws -> (app: String, index: Int) {
         switch target {
         case let .application(app):
-            guard let windows = self.windowsByApp[app], !windows.isEmpty else {
+            guard let windows = windowsByApp[app], !windows.isEmpty else {
                 throw PeekabooError.windowNotFound(criteria: app)
             }
             return (app, 0)
         case let .applicationAndTitle(app, title):
             guard
-                let windows = self.windowsByApp[app],
+                let windows = windowsByApp[app],
                 let index = windows.firstIndex(where: { $0.title.localizedCaseInsensitiveContains(title) })
             else {
                 throw PeekabooError.windowNotFound(criteria: "title contains \(title)")
             }
             return (app, index)
         case .frontmost:
-            if let entry = self.windowsByApp.first(where: { !$0.value.isEmpty }) {
+            if let entry = windowsByApp.first(where: { !$0.value.isEmpty }) {
                 return (entry.key, 0)
             }
             throw PeekabooError.windowNotFound(criteria: "frontmost")
@@ -1250,7 +1365,7 @@ final class StubWindowService: WindowManagementServiceProtocol {
             }
             throw PeekabooError.windowNotFound(criteria: "title contains \(title)")
         case let .index(app, index):
-            guard let windows = self.windowsByApp[app], index < windows.count else {
+            guard let windows = windowsByApp[app], index < windows.count else {
                 throw PeekabooError.windowNotFound(criteria: "index \(index) in \(app)")
             }
             return (app, index)
@@ -1261,18 +1376,18 @@ final class StubWindowService: WindowManagementServiceProtocol {
 extension ServiceWindowInfo {
     fileprivate func withBounds(_ bounds: CGRect) -> ServiceWindowInfo {
         ServiceWindowInfo(
-            windowID: self.windowID,
-            title: self.title,
+            windowID: windowID,
+            title: title,
             bounds: bounds,
-            isMinimized: self.isMinimized,
-            isMainWindow: self.isMainWindow,
-            windowLevel: self.windowLevel,
-            alpha: self.alpha,
-            index: self.index,
-            spaceID: self.spaceID,
-            spaceName: self.spaceName,
-            screenIndex: self.screenIndex,
-            screenName: self.screenName
+            isMinimized: isMinimized,
+            isMainWindow: isMainWindow,
+            windowLevel: windowLevel,
+            alpha: alpha,
+            index: index,
+            spaceID: spaceID,
+            spaceName: spaceName,
+            screenIndex: screenIndex,
+            screenName: screenName
         )
     }
 }

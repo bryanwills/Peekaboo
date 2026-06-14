@@ -40,6 +40,7 @@ struct SeeCommandRenderContext {
     let analysis: SeeAnalysisData?
     let executionTime: TimeInterval
     let observation: SeeObservationDiagnostics?
+    let menuBar: MenuBarSummary?
 }
 
 struct UIElementSummary: Codable {

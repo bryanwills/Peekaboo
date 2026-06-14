@@ -79,15 +79,67 @@ public struct DesktopObservationDiagnostics: Sendable, Codable, Equatable {
     public let warnings: [String]
     public let stateSnapshot: DesktopStateSnapshotSummary?
     public let target: DesktopObservationTargetDiagnostics?
+    public let desktopMutationCompletedAt: Date?
+    public let desktopMutationPreservationAllowed: Bool?
+
+    private enum CodingKeys: String, CodingKey {
+        case warnings
+        case stateSnapshot
+        case target
+        case desktopMutationCompletedAt
+        case desktopMutationCompletedAtReferenceDateSeconds
+        case desktopMutationPreservationAllowed
+    }
 
     public init(
         warnings: [String] = [],
         stateSnapshot: DesktopStateSnapshotSummary? = nil,
-        target: DesktopObservationTargetDiagnostics? = nil)
+        target: DesktopObservationTargetDiagnostics? = nil,
+        desktopMutationCompletedAt: Date? = nil,
+        desktopMutationPreservationAllowed: Bool? = nil)
     {
         self.warnings = warnings
         self.stateSnapshot = stateSnapshot
         self.target = target
+        self.desktopMutationCompletedAt = desktopMutationCompletedAt
+        self.desktopMutationPreservationAllowed = desktopMutationPreservationAllowed
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.warnings = try container.decodeIfPresent([String].self, forKey: .warnings) ?? []
+        self.stateSnapshot = try container.decodeIfPresent(
+            DesktopStateSnapshotSummary.self,
+            forKey: .stateSnapshot)
+        self.target = try container.decodeIfPresent(
+            DesktopObservationTargetDiagnostics.self,
+            forKey: .target)
+        if let seconds = try container.decodeIfPresent(
+            TimeInterval.self,
+            forKey: .desktopMutationCompletedAtReferenceDateSeconds)
+        {
+            self.desktopMutationCompletedAt = Date(timeIntervalSinceReferenceDate: seconds)
+        } else {
+            self.desktopMutationCompletedAt = try container.decodeIfPresent(
+                Date.self,
+                forKey: .desktopMutationCompletedAt)
+        }
+        self.desktopMutationPreservationAllowed = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .desktopMutationPreservationAllowed)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.warnings, forKey: .warnings)
+        try container.encodeIfPresent(self.stateSnapshot, forKey: .stateSnapshot)
+        try container.encodeIfPresent(self.target, forKey: .target)
+        try container.encodeIfPresent(
+            self.desktopMutationCompletedAt?.timeIntervalSinceReferenceDate,
+            forKey: .desktopMutationCompletedAtReferenceDateSeconds)
+        try container.encodeIfPresent(
+            self.desktopMutationPreservationAllowed,
+            forKey: .desktopMutationPreservationAllowed)
     }
 }
 

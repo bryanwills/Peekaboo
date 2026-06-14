@@ -39,7 +39,10 @@ struct MenuBarElementCollector {
                 bounds: menu.frame() ?? .zero,
                 isEnabled: menu.isEnabled() ?? true,
                 isSelected: nil,
-                attributes: ["role": "AXMenu"])
+                attributes: [
+                    "role": "AXMenu",
+                    DetectedElementRootPolicy.sourceAttribute: DetectedElementRootPolicy.applicationMenuBarSource,
+                ])
 
             elements.append(menuElement)
             elementIdMap[menuId] = menuElement
@@ -137,7 +140,10 @@ struct MenuBarElementCollector {
     }
 
     private func menuItemAttributes(_ item: Element) -> [String: String] {
-        var attributes = ["role": "AXMenuItem"]
+        var attributes = [
+            "role": "AXMenuItem",
+            DetectedElementRootPolicy.sourceAttribute: DetectedElementRootPolicy.applicationMenuBarSource,
+        ]
 
         if let title = item.title() {
             attributes["title"] = title

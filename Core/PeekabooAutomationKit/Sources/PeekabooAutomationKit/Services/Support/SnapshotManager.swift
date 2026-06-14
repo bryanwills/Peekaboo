@@ -7,19 +7,38 @@ import PeekabooFoundation
 /// Migrated from the legacy CLI automation cache with a thread-safe actor-based design.
 @MainActor
 public final class SnapshotManager: SnapshotManagerProtocol {
+    public let supportsImplicitLatestSnapshotInvalidation = true
+
+    public var effectiveImplicitLatestInvalidationWatermark: Date? {
+        let shared = self.desktopMutationWatermarkStore?.effectiveWatermark()
+        let local = self.implicitLatestInvalidationWatermark()
+        return Self.latestWatermark(local, shared)
+    }
+
     let logger = Logger(subsystem: "boo.peekaboo.core", category: "SnapshotManager")
     let snapshotActor = SnapshotStorageActor()
+    let snapshotStorageURLOverride: URL?
+    let desktopMutationWatermarkStore: DesktopMutationWatermarkStore?
 
     /// Snapshot validity window (10 minutes)
     let snapshotValidityWindow: TimeInterval = 600
 
-    public init() {}
+    public init(desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil) {
+        self.snapshotStorageURLOverride = nil
+        self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
+    }
+
+    init(
+        snapshotStorageURL: URL,
+        desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil)
+    {
+        self.snapshotStorageURLOverride = snapshotStorageURL
+        self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
+    }
 
     public func createSnapshot() async throws -> String {
         // Generate timestamp-based snapshot ID for cross-process compatibility
-        let timestamp = Int(Date().timeIntervalSince1970 * 1000) // milliseconds
-        let randomSuffix = Int.random(in: 1000...9999)
-        let snapshotId = "\(timestamp)-\(randomSuffix)"
+        let snapshotId = self.makeSnapshotID()
 
         self.logger.debug("Creating new snapshot: \(snapshotId)")
 
@@ -31,6 +50,23 @@ public final class SnapshotManager: SnapshotManagerProtocol {
         let snapshotData = UIAutomationSnapshot(creatorProcessId: getpid())
         try await self.snapshotActor.saveSnapshot(snapshotId: snapshotId, data: snapshotData, at: snapshotPath)
 
+        return snapshotId
+    }
+
+    public func createSnapshot(pendingAt observationStartedAt: Date) async throws -> String {
+        let snapshotId = self.makeSnapshotID()
+        let storageURL = self.getSnapshotStorageURL()
+        let snapshotPath = self.getSnapshotPath(for: snapshotId)
+        let stagingPath = storageURL.appendingPathComponent(".pending-\(UUID().uuidString)", isDirectory: true)
+
+        self.logger.debug("Reserving pending snapshot: \(snapshotId)")
+        try FileManager.default.createDirectory(at: stagingPath, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: stagingPath) }
+
+        try self.markSnapshotPending(at: stagingPath, observationStartedAt: observationStartedAt)
+        let snapshotData = UIAutomationSnapshot(creatorProcessId: getpid())
+        try await self.snapshotActor.saveSnapshot(snapshotId: snapshotId, data: snapshotData, at: stagingPath)
+        try FileManager.default.moveItem(at: stagingPath, to: snapshotPath)
         return snapshotId
     }
 
@@ -134,27 +170,44 @@ public final class SnapshotManager: SnapshotManagerProtocol {
         await self.findLatestValidSnapshot(applicationBundleId: applicationBundleId)
     }
 
+    public func invalidateImplicitLatestSnapshot(through cutoff: Date) async throws -> String? {
+        try await self.invalidateImplicitLatestSnapshot(through: cutoff, preserving: nil)
+    }
+
+    public func invalidateImplicitLatestSnapshot(
+        through cutoff: Date,
+        preserving snapshotId: String?) async throws -> String?
+    {
+        try await self.invalidateImplicitLatestSnapshot(
+            through: cutoff,
+            preserving: snapshotId,
+            preservedAt: snapshotId == nil ? nil : Date())
+    }
+
+    public func invalidateImplicitLatestSnapshot(
+        through cutoff: Date,
+        preserving snapshotId: String?,
+        preservedAt: Date?) async throws -> String?
+    {
+        let latestSnapshotId = await self.findLatestValidSnapshot(createdAtOrBefore: cutoff)
+        try self.writeImplicitLatestInvalidationState(
+            through: cutoff,
+            preserving: snapshotId,
+            preservedAt: preservedAt)
+        return latestSnapshotId
+    }
+
     public func listSnapshots() async throws -> [SnapshotInfo] {
-        let snapshotDir = self.getSnapshotStorageURL()
-
-        guard let snapshots = try? FileManager.default.contentsOfDirectory(
-            at: snapshotDir,
-            includingPropertiesForKeys: [.creationDateKey, .fileSizeKey],
-            options: .skipsHiddenFiles)
-        else {
-            return []
-        }
-
         var snapshotInfos: [SnapshotInfo] = []
 
-        for snapshotURL in snapshots {
-            guard snapshotURL.hasDirectoryPath else { continue }
-
+        for snapshotURL in self.snapshotDirectoryURLs(includingPending: false) {
             let snapshotId = snapshotURL.lastPathComponent
 
             // Get snapshot metadata
             let resourceValues = try? snapshotURL.resourceValues(forKeys: [.creationDateKey])
-            let creationDate = resourceValues?.creationDate ?? Date()
+            let creationDate = self.snapshotCreationDate(
+                at: snapshotURL,
+                fallback: resourceValues?.creationDate) ?? Date()
 
             // Load snapshot data to get details
             let snapshotData = await self.snapshotActor.loadSnapshot(snapshotId: snapshotId, from: snapshotURL)
@@ -184,11 +237,7 @@ public final class SnapshotManager: SnapshotManagerProtocol {
     }
 
     public func cleanSnapshot(snapshotId: String) async throws {
-        let snapshotPath = self.getSnapshotPath(for: snapshotId)
-
-        // Only try to remove if the directory exists
-        if FileManager.default.fileExists(atPath: snapshotPath.path) {
-            try FileManager.default.removeItem(at: snapshotPath)
+        if try self.removeSnapshotAndPreservation(snapshotId: snapshotId) {
             self.logger.info("Cleaned snapshot: \(snapshotId)")
         } else {
             self.logger.debug("Snapshot \(snapshotId) does not exist, skipping cleanup")
@@ -197,25 +246,32 @@ public final class SnapshotManager: SnapshotManagerProtocol {
 
     public func cleanSnapshotsOlderThan(days: Int) async throws -> Int {
         let cutoffDate = Date().addingTimeInterval(-Double(days) * 24 * 3600)
-        let snapshots = try await listSnapshots()
-
-        var cleanedCount = 0
-        for snapshot in snapshots where snapshot.createdAt < cutoffDate {
-            try await cleanSnapshot(snapshotId: snapshot.id)
-            cleanedCount += 1
+        let snapshotIDs = self.snapshotDirectoryURLs(
+            includingPending: true,
+            requiringSnapshotData: false).compactMap { url -> String? in
+            guard let createdAt = self.snapshotCreationDate(at: url), createdAt < cutoffDate else { return nil }
+            return url.lastPathComponent
         }
 
-        return cleanedCount
+        for snapshotID in snapshotIDs {
+            try await self.cleanSnapshot(snapshotId: snapshotID)
+        }
+
+        return snapshotIDs.count
     }
 
     public func cleanAllSnapshots() async throws -> Int {
-        let snapshots = try await listSnapshots()
+        let snapshotIDs = self.snapshotDirectoryURLs(
+            includingPending: true,
+            requiringSnapshotData: false).map(\.lastPathComponent)
 
-        for snapshot in snapshots {
-            try await self.cleanSnapshot(snapshotId: snapshot.id)
+        for snapshotID in snapshotIDs {
+            try await self.cleanSnapshot(snapshotId: snapshotID)
         }
 
-        return snapshots.count
+        try self.clearImplicitLatestInvalidationWatermark()
+
+        return snapshotIDs.count
     }
 
     public func getSnapshotStoragePath() -> String {

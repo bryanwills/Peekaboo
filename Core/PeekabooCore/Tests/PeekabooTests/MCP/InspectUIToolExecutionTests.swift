@@ -84,6 +84,41 @@ struct InspectUIToolExecutionTests {
     }
 
     @Test
+    func `failed Inspect UI removes its pending snapshot`() async throws {
+        let automation = await MainActor.run { InspectUITestAutomationService(accessibilityGranted: true) }
+        let snapshots = await MainActor.run { InMemorySnapshotManager() }
+        let context = await Self.makeContext(automation: automation, snapshots: snapshots)
+        let tool = InspectUITool(context: context)
+
+        let response = try await context.execute(tool: tool, arguments: ToolArguments(raw: [:]))
+
+        #expect(response.isError)
+        #expect(try await snapshots.listSnapshots().isEmpty)
+        #expect(await UISnapshotManager.shared.getSnapshot(id: nil) == nil)
+    }
+
+    @Test
+    func `timed out Inspect UI retains its pending snapshot tombstone`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run {
+            InspectUITestAutomationService(
+                accessibilityGranted: true,
+                inspectError: POSIXError(.ETIMEDOUT))
+        }
+        let snapshots = await MainActor.run { InMemorySnapshotManager() }
+        let context = await Self.makeContext(automation: automation, snapshots: snapshots)
+        let tool = InspectUITool(context: context)
+
+        let response = try await context.execute(tool: tool, arguments: ToolArguments(raw: [:]))
+
+        #expect(response.isError)
+        #expect(try await snapshots.listSnapshots().isEmpty)
+        #expect(try await snapshots.cleanAllSnapshots() == 1)
+        #expect(await UISnapshotManager.shared.getSnapshot(id: nil) == nil)
+        await UISnapshotManager.shared.removeAllSnapshots()
+    }
+
+    @Test
     func `Inspect UI tool explains empty AX results`() async throws {
         let automation = await MainActor.run {
             InspectUITestAutomationService(
@@ -138,23 +173,6 @@ struct InspectUIToolExecutionTests {
     @Test
     func `Inspect UI tool reuses existing snapshot when provided`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
-        let snapshot = await UISnapshotManager.shared.createSnapshot()
-        let snapshotId = await snapshot.id
-        await snapshot.setUIElements([
-            UIElement(
-                id: "old",
-                elementId: "old",
-                role: "button",
-                title: "Old",
-                label: "Old",
-                value: nil,
-                description: nil,
-                help: nil,
-                roleDescription: nil,
-                identifier: nil,
-                frame: CGRect(x: 0, y: 0, width: 1, height: 1),
-                isActionable: true),
-        ])
         let detectionResult = ElementDetectionResult(
             snapshotId: "ignored-detection-snapshot",
             screenshotPath: "",
@@ -172,6 +190,23 @@ struct InspectUIToolExecutionTests {
                 detectionResult: detectionResult)
         }
         let context = await Self.makeContext(automation: automation)
+        let snapshotId = try await context.snapshots.createSnapshot()
+        let snapshot = await UISnapshotManager.shared.createSnapshot(id: snapshotId)
+        await snapshot.setUIElements([
+            UIElement(
+                id: "old",
+                elementId: "old",
+                role: "button",
+                title: "Old",
+                label: "Old",
+                value: nil,
+                description: nil,
+                help: nil,
+                roleDescription: nil,
+                identifier: nil,
+                frame: CGRect(x: 0, y: 0, width: 1, height: 1),
+                isActionable: true),
+        ])
         let tool = InspectUITool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -191,8 +226,6 @@ struct InspectUIToolExecutionTests {
     @Test
     func `Inspect UI tool stores detection result for follow-up automation`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
-        let snapshot = await UISnapshotManager.shared.createSnapshot()
-        let snapshotId = await snapshot.id
         let detectionResult = ElementDetectionResult(
             snapshotId: "automation-owned-snapshot",
             screenshotPath: "",
@@ -210,6 +243,8 @@ struct InspectUIToolExecutionTests {
                 detectionResult: detectionResult)
         }
         let context = await Self.makeContext(automation: automation)
+        let snapshotId = try await context.snapshots.createSnapshot()
+        _ = await UISnapshotManager.shared.createSnapshot(id: snapshotId)
         let tool = InspectUITool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -225,13 +260,6 @@ struct InspectUIToolExecutionTests {
     @Test
     func `Inspect UI tool refreshes snapshot target metadata`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
-        let snapshot = await UISnapshotManager.shared.createSnapshot()
-        let snapshotId = await snapshot.id
-        await snapshot.setTargetMetadata(from: WindowContext(
-            applicationName: "OldApp",
-            applicationProcessId: 111,
-            windowTitle: "Old Window"))
-
         let detectionResult = ElementDetectionResult(
             snapshotId: "automation-owned-snapshot",
             screenshotPath: "",
@@ -256,6 +284,12 @@ struct InspectUIToolExecutionTests {
                 detectionResult: detectionResult)
         }
         let context = await Self.makeContext(automation: automation)
+        let snapshotId = try await context.snapshots.createSnapshot()
+        let snapshot = await UISnapshotManager.shared.createSnapshot(id: snapshotId)
+        await snapshot.setTargetMetadata(from: WindowContext(
+            applicationName: "OldApp",
+            applicationProcessId: 111,
+            windowTitle: "Old Window"))
         let tool = InspectUITool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -413,6 +447,14 @@ struct InspectUIToolExecutionTests {
 
     @MainActor
     private static func makeContext(automation: any UIAutomationServiceProtocol) -> MCPToolContext {
+        self.makeContext(automation: automation, snapshots: nil)
+    }
+
+    @MainActor
+    private static func makeContext(
+        automation: any UIAutomationServiceProtocol,
+        snapshots: (any SnapshotManagerProtocol)?) -> MCPToolContext
+    {
         let services = PeekabooServices()
         return MCPToolContext(
             automation: automation,
@@ -427,7 +469,7 @@ struct InspectUIToolExecutionTests {
                 automation: automation,
                 applications: services.applications,
                 screens: services.screens),
-            snapshots: services.snapshots,
+            snapshots: snapshots ?? services.snapshots,
             screens: services.screens,
             agent: services.agent,
             permissions: services.permissions,

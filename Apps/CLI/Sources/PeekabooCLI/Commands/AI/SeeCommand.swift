@@ -79,7 +79,7 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
     @RuntimeStorage private var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
 
-    private var resolvedRuntime: CommandRuntime {
+    var resolvedRuntime: CommandRuntime {
         guard let runtime else {
             preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
         }
@@ -113,9 +113,11 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
     @MainActor
     mutating func run(using runtime: CommandRuntime) async throws {
         self.runtime = runtime
-        let startTime = Date()
+        let commandStartedAt = Date()
         let logger = self.logger
         let overallTimeout = TimeInterval(self.timeoutSeconds ?? ((self.analyze == nil) ? 20 : 60))
+        let mutationCoordinator = runtime.toolSnapshotMutationCoordinator
+        let snapshotManager = runtime.services.snapshots
 
         logger.operationStart("see_command", metadata: [
             "app": self.app ?? "none",
@@ -128,11 +130,87 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
         let commandCopy = self
 
         do {
+            runtime.beginInteractionMutation(preservingSnapshotsCreatedAfterBoundary: true)
             try await CrossProcessOperationGate.withExclusiveOperation(
                 named: CrossProcessOperationGate.desktopObservationName
             ) {
-                try await Self.withWallClockTimeout(seconds: overallTimeout) {
-                    try await commandCopy.runImpl(startTime: startTime, logger: logger)
+                let observationStartedAt = Date()
+                let observationDeadline = observationStartedAt.addingTimeInterval(overallTimeout)
+                let scope = MCPToolSnapshotMutationScope(
+                    toolName: "see",
+                    startedAt: observationStartedAt,
+                    effect: .mutationProducingFreshObservation
+                )
+                let reservationTimeout = try Self.remainingObservationTimeout(
+                    until: observationDeadline,
+                    overallTimeout: overallTimeout
+                )
+                let snapshotID = try await Self.withWallClockTimeout(
+                    seconds: reservationTimeout,
+                    timeoutErrorSeconds: overallTimeout
+                ) {
+                    try await snapshotManager.createSnapshot(pendingAt: observationStartedAt)
+                }
+                var observationCompleted = false
+                do {
+                    let preparationTimeout = try Self.remainingObservationTimeout(
+                        until: observationDeadline,
+                        overallTimeout: overallTimeout
+                    )
+                    let context = try await Self.withWallClockTimeout(
+                        seconds: preparationTimeout,
+                        timeoutErrorSeconds: overallTimeout,
+                        interactionMutationTracker: runtime.observationTimeoutMutationTracker
+                    ) {
+                        try await commandCopy.prepareResult(
+                            startTime: commandStartedAt,
+                            logger: logger,
+                            snapshotID: snapshotID
+                        )
+                    }
+                    observationCompleted = true
+
+                    let publicationTimeout = try Self.remainingObservationTimeout(
+                        until: observationDeadline,
+                        overallTimeout: overallTimeout
+                    )
+                    let published = try await Self.withWallClockTimeout(
+                        seconds: publicationTimeout,
+                        timeoutErrorSeconds: overallTimeout
+                    ) {
+                        await mutationCoordinator.completeMutation(
+                            scope.completed(
+                                at: Date(),
+                                preserving: snapshotID,
+                                confirmedMutationCompletedAt: context.metadata.desktopMutationCompletedAt,
+                                observationPreservationAllowed: context.metadata
+                                    .desktopMutationPreservationAllowed
+                            ),
+                            succeeded: true
+                        )
+                    }
+                    guard published else {
+                        throw PeekabooError.operationError(
+                            message: "Failed to publish the refreshed UI snapshot"
+                        )
+                    }
+
+                    try Task.checkCancellation()
+                    try commandCopy.renderResults(context: context)
+                    commandCopy.emitAnnotationStatus(context: context)
+                    logger.operationComplete("see_command", metadata: [
+                        "executionTimeMs": Int(Date().timeIntervalSince(commandStartedAt) * 1000),
+                        "success": true,
+                    ])
+                } catch {
+                    if observationCompleted || !PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: error) {
+                        try? await self.services.snapshots.cleanSnapshot(snapshotId: snapshotID)
+                    }
+                    _ = await mutationCoordinator.completeMutation(
+                        scope.completed(at: Date(), preserving: nil),
+                        succeeded: false
+                    )
+                    throw error
                 }
             }
         } catch {
@@ -148,13 +226,29 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
         }
     }
 
-    private func runImpl(startTime: Date, logger: Logger) async throws {
+    private static func remainingObservationTimeout(
+        until deadline: Date,
+        overallTimeout: TimeInterval
+    ) throws -> TimeInterval {
+        let remaining = deadline.timeIntervalSinceNow
+        guard remaining > 0 else {
+            throw CaptureError.detectionTimedOut(overallTimeout)
+        }
+        return remaining
+    }
+
+    private func prepareResult(
+        startTime: Date,
+        logger: Logger,
+        snapshotID: String
+    ) async throws -> SeeCommandRenderContext {
         // ScreenCaptureService performs the authoritative permission check inside each capture path.
         // Avoid duplicating that TCC probe here; `see` is often called in latency-sensitive loops.
 
         // Perform capture and element detection
         logger.verbose("Starting capture and detection phase", category: "Capture")
-        let captureResult = try await performCaptureWithDetection()
+        let captureResult = try await performCaptureWithDetection(snapshotID: snapshotID)
+        try Task.checkCancellation()
         logger.verbose("Capture completed successfully", category: "Capture", metadata: [
             "snapshotId": captureResult.snapshotId,
             "elementCount": captureResult.elements.all.count,
@@ -173,25 +267,19 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
                 snapshotId: captureResult.snapshotId,
                 originalPath: captureResult.screenshotPath
             )
+            try Task.checkCancellation()
             if let annotatedPath,
                annotatedPath != captureResult.screenshotPath {
                 try await self.services.snapshots.storeAnnotatedScreenshot(
                     snapshotId: captureResult.snapshotId,
                     annotatedScreenshotPath: annotatedPath
                 )
+                try Task.checkCancellation()
             }
             logger.operationComplete("generate_annotations", metadata: [
                 "annotatedPath": annotatedPath ?? "none",
             ])
         }
-        if self.annotate, annotationsAllowed, annotatedPath == nil, !self.jsonOutput {
-            print("\(AgentDisplayTokens.Status.warning)  No interactive UI elements found to annotate")
-        } else if self.annotate, annotationsAllowed, let annotatedPath, !self.jsonOutput {
-            let interactableElements = captureResult.elements.all.filter(\.isEnabled)
-            print("📝 Created annotated screenshot with \(interactableElements.count) interactive elements")
-            self.logger.verbose("Annotated screenshot path: \(annotatedPath)")
-        }
-
         // Perform AI analysis if requested
         var analysisResult: SeeAnalysisData?
         if let prompt = analyze {
@@ -213,6 +301,7 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
                 imagePath: captureResult.screenshotPath,
                 prompt: prompt
             )
+            try Task.checkCancellation()
             logger.stopTimer("ai_generate")
             logger.operationComplete(
                 "ai_analysis",
@@ -224,14 +313,11 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
             )
         }
 
-        // Output results
-        let executionTime = Date().timeIntervalSince(startTime)
-        logger.operationComplete("see_command", metadata: [
-            "executionTimeMs": Int(executionTime * 1000),
-            "success": true,
-        ])
+        let menuBarSummary = self.jsonOutput ? await self.fetchMenuBarSummaryIfEnabled() : nil
+        try Task.checkCancellation()
 
-        let context = SeeCommandRenderContext(
+        let executionTime = Date().timeIntervalSince(startTime)
+        return SeeCommandRenderContext(
             snapshotId: captureResult.snapshotId,
             screenshotPath: captureResult.screenshotPath,
             annotatedPath: annotatedPath,
@@ -239,9 +325,20 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
             elements: captureResult.elements,
             analysis: analysisResult,
             executionTime: executionTime,
-            observation: captureResult.observation
+            observation: captureResult.observation,
+            menuBar: menuBarSummary
         )
-        await self.renderResults(context: context)
+    }
+
+    private func emitAnnotationStatus(context: SeeCommandRenderContext) {
+        let annotationsAllowed = self.allowsAnnotationForCurrentCapture()
+        if self.annotate, annotationsAllowed, context.annotatedPath == nil, !self.jsonOutput {
+            print("\(AgentDisplayTokens.Status.warning)  No interactive UI elements found to annotate")
+        } else if self.annotate, annotationsAllowed, let annotatedPath = context.annotatedPath, !self.jsonOutput {
+            let interactableElements = context.elements.all.filter(\.isEnabled)
+            print("📝 Created annotated screenshot with \(interactableElements.count) interactive elements")
+            self.logger.verbose("Annotated screenshot path: \(annotatedPath)")
+        }
     }
 
     func getFileSize(_ path: String) -> Int? {

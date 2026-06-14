@@ -52,6 +52,7 @@ struct PerformActionCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOpt
             let observation = await self.resolveObservationContext()
             try await observation.validateIfExplicit(using: self.services.snapshots)
             let startTime = Date()
+            self.resolvedRuntime.beginInteractionMutation()
             let result = try await AutomationServiceBridge.performAction(
                 automation: self.services.automation,
                 target: target,
@@ -59,8 +60,7 @@ struct PerformActionCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOpt
                 snapshotId: observation.snapshotId
             )
             await InteractionObservationInvalidator.invalidateAfterMutation(
-                observation,
-                snapshots: self.services.snapshots,
+                targets: self.resolvedRuntime.interactionMutationTargets,
                 logger: self.logger,
                 reason: "perform-action"
             )

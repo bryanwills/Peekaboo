@@ -1,17 +1,113 @@
 import AppKit
+import ApplicationServices
 @preconcurrency import AXorcist
 import CoreGraphics
 import Foundation
 import PeekabooFoundation
 
+enum DetectedElementRootPolicy {
+    static let sourceAttribute = "source"
+    static let applicationMenuBarSource = "applicationMenuBar"
+
+    static func requiresApplicationRoot(_ element: DetectedElement) -> Bool {
+        let role = element.attributes["role"]?.lowercased()
+        if role == "axmenubar" || role == "axmenubaritem" {
+            return true
+        }
+
+        let hasLegacyMenuBarID = element.id.hasPrefix("menu_") || element.id.hasPrefix("menuitem_")
+        let isMenu = element.type == .menu || element.type == .menuItem ||
+            role == "axmenu" || role == "axmenuitem" || hasLegacyMenuBarID
+        guard isMenu else { return false }
+
+        if element.attributes[self.sourceAttribute]?.lowercased() == self.applicationMenuBarSource.lowercased() {
+            return true
+        }
+
+        // Disk-backed snapshots predate the source marker but retain collector-specific IDs.
+        return hasLegacyMenuBarID
+    }
+}
+
 /// Re-resolves snapshot/query targets to live AX elements for action invocation.
 @MainActor
-struct AutomationElementResolver {
+protocol AutomationElementResolving: Sendable {
+    func resolve(detectedElement: DetectedElement, windowContext: WindowContext?) -> AutomationElement?
+    func resolve(
+        detectedElement: DetectedElement,
+        windowContext: WindowContext?,
+        targetProcessIdentifier: pid_t?) -> AutomationElement?
+    func resolve(query: String, windowContext: WindowContext?, requireTextInput: Bool) -> AutomationElement?
+    func resolve(
+        query: String,
+        windowContext: WindowContext?,
+        targetProcessIdentifier: pid_t?,
+        requireTextInput: Bool) -> AutomationElement?
+}
+
+extension AutomationElementResolving {
+    func resolve(
+        detectedElement: DetectedElement,
+        windowContext: WindowContext?,
+        targetProcessIdentifier _: pid_t?) -> AutomationElement?
+    {
+        self.resolve(detectedElement: detectedElement, windowContext: windowContext)
+    }
+
+    func resolve(
+        query: String,
+        windowContext: WindowContext?,
+        targetProcessIdentifier _: pid_t?,
+        requireTextInput: Bool) -> AutomationElement?
+    {
+        self.resolve(query: query, windowContext: windowContext, requireTextInput: requireTextInput)
+    }
+}
+
+@MainActor
+protocol AutomationWindowRootResolving: Sendable {
+    func root(for windowID: CGWindowID, in application: NSRunningApplication) -> Element?
+}
+
+@MainActor
+private struct SystemAutomationWindowRootResolver: AutomationWindowRootResolving {
+    private let identityService = WindowIdentityService()
+
+    func root(for windowID: CGWindowID, in application: NSRunningApplication) -> Element? {
+        self.identityService.findWindow(byID: windowID, in: application)?.element
+    }
+}
+
+@MainActor
+struct AutomationElementResolver: AutomationElementResolving {
+    private let windowRootResolver: any AutomationWindowRootResolving
+
+    init(windowRootResolver: any AutomationWindowRootResolving = SystemAutomationWindowRootResolver()) {
+        self.windowRootResolver = windowRootResolver
+    }
+
     func resolve(
         detectedElement: DetectedElement,
         windowContext: WindowContext?) -> AutomationElement?
     {
-        self.bestElement(in: self.roots(windowContext: windowContext)) { element in
+        self.resolve(
+            detectedElement: detectedElement,
+            windowContext: windowContext,
+            targetProcessIdentifier: nil)
+    }
+
+    func resolve(
+        detectedElement: DetectedElement,
+        windowContext: WindowContext?,
+        targetProcessIdentifier: pid_t?) -> AutomationElement?
+    {
+        self.bestElement(
+            in: self.roots(
+                windowContext: windowContext,
+                targetProcessIdentifier: targetProcessIdentifier,
+                detectedElement: detectedElement),
+            targetProcessIdentifier: targetProcessIdentifier)
+        { element in
             guard let descriptor = AXDescriptorReader.describe(element) else { return nil }
             return self.score(descriptor: descriptor, for: detectedElement)
         }
@@ -22,10 +118,28 @@ struct AutomationElementResolver {
         windowContext: WindowContext?,
         requireTextInput: Bool = false) -> AutomationElement?
     {
+        self.resolve(
+            query: query,
+            windowContext: windowContext,
+            targetProcessIdentifier: nil,
+            requireTextInput: requireTextInput)
+    }
+
+    func resolve(
+        query: String,
+        windowContext: WindowContext?,
+        targetProcessIdentifier: pid_t?,
+        requireTextInput: Bool = false) -> AutomationElement?
+    {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !query.isEmpty else { return nil }
 
-        return self.bestElement(in: self.roots(windowContext: windowContext)) { element in
+        return self.bestElement(
+            in: self.roots(
+                windowContext: windowContext,
+                targetProcessIdentifier: targetProcessIdentifier),
+            targetProcessIdentifier: targetProcessIdentifier)
+        { element in
             guard let descriptor = AXDescriptorReader.describe(element) else { return nil }
             if requireTextInput, !self.isTextInput(role: descriptor.role) {
                 return nil
@@ -34,9 +148,32 @@ struct AutomationElementResolver {
         }
     }
 
-    private func roots(windowContext: WindowContext?) -> [Element] {
-        guard let app = self.application(windowContext: windowContext) else { return [] }
+    func roots(
+        windowContext: WindowContext?,
+        targetProcessIdentifier: pid_t?,
+        detectedElement: DetectedElement? = nil) -> [Element]
+    {
+        guard let app = self.application(
+            windowContext: windowContext,
+            targetProcessIdentifier: targetProcessIdentifier)
+        else {
+            return []
+        }
+
         let axApp = AXApp(app)
+        if let detectedElement, DetectedElementRootPolicy.requiresApplicationRoot(detectedElement) {
+            return [axApp.element]
+        }
+
+        if let rawWindowID = windowContext?.windowID {
+            guard let windowID = CGWindowID(exactly: rawWindowID),
+                  let root = self.windowRootResolver.root(for: windowID, in: app)
+            else {
+                return []
+            }
+            return [root]
+        }
+
         let windows = axApp.windows() ?? []
 
         if let title = windowContext?.windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -53,11 +190,32 @@ struct AutomationElementResolver {
         return windows + [axApp.element]
     }
 
-    private func application(windowContext: WindowContext?) -> NSRunningApplication? {
+    func application(windowContext: WindowContext?, targetProcessIdentifier: pid_t?) -> NSRunningApplication? {
+        if let targetProcessIdentifier {
+            if let contextProcessIdentifier = windowContext?.applicationProcessId,
+               contextProcessIdentifier != targetProcessIdentifier
+            {
+                return nil
+            }
+
+            guard let app = NSRunningApplication(processIdentifier: targetProcessIdentifier),
+                  !app.isTerminated
+            else {
+                return nil
+            }
+            if let expectedBundleIdentifier = windowContext?.applicationBundleId,
+               let actualBundleIdentifier = app.bundleIdentifier,
+               expectedBundleIdentifier != actualBundleIdentifier
+            {
+                return nil
+            }
+            return app
+        }
+
         if let processId = windowContext?.applicationProcessId,
            let app = NSRunningApplication(processIdentifier: processId)
         {
-            return app
+            return app.isTerminated ? nil : app
         }
 
         if let bundleIdentifier = windowContext?.applicationBundleId,
@@ -71,6 +229,7 @@ struct AutomationElementResolver {
 
     private func bestElement(
         in roots: [Element],
+        targetProcessIdentifier: pid_t? = nil,
         scorer: (Element) -> Int?) -> AutomationElement?
     {
         var visited = 0
@@ -91,7 +250,16 @@ struct AutomationElementResolver {
             }
         }
 
-        return best.map(AutomationElement.init)
+        guard let best else { return nil }
+        if let targetProcessIdentifier {
+            var resolvedProcessIdentifier: pid_t = 0
+            guard AXUIElementGetPid(best.underlyingElement, &resolvedProcessIdentifier) == .success,
+                  resolvedProcessIdentifier == targetProcessIdentifier
+            else {
+                return nil
+            }
+        }
+        return AutomationElement(best)
     }
 
     private func score(descriptor: AXDescriptorReader.Descriptor, for element: DetectedElement) -> Int? {

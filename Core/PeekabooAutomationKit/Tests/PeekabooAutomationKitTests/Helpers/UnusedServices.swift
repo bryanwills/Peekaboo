@@ -136,6 +136,10 @@ final class UnusedSnapshotManager: SnapshotManagerProtocol {
         fatalError("unused")
     }
 
+    func invalidateImplicitLatestSnapshot() async throws -> String? {
+        fatalError("unused")
+    }
+
     func listSnapshots() async throws -> [SnapshotInfo] {
         fatalError("unused")
     }

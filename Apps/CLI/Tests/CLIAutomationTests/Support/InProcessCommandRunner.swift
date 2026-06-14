@@ -4,9 +4,56 @@ import PeekabooCore
 import Testing
 @testable import PeekabooCLI
 
-private actor InProcessRunGate {
-    func run<T>(_ operation: @Sendable () async throws -> T) async rethrows -> T {
-        try await operation()
+actor InProcessRunGate {
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, any Error>
+    }
+
+    private var isLocked = false
+    private var waiters: [Waiter] = []
+
+    func run<T: Sendable>(_ operation: @Sendable () async throws -> T) async throws -> T {
+        try await self.acquire()
+        defer { self.release() }
+        try Task.checkCancellation()
+        return try await operation()
+    }
+
+    private func acquire() async throws {
+        try Task.checkCancellation()
+        guard self.isLocked else {
+            self.isLocked = true
+            return
+        }
+
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    self.waiters.append(Waiter(id: id, continuation: continuation))
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(id: id) }
+        }
+    }
+
+    private func cancelWaiter(id: UUID) {
+        guard let index = self.waiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = self.waiters.remove(at: index)
+        waiter.continuation.resume(throwing: CancellationError())
+    }
+
+    private func release() {
+        guard !self.waiters.isEmpty else {
+            self.isLocked = false
+            return
+        }
+        let waiter = self.waiters.removeFirst()
+        waiter.continuation.resume()
     }
 }
 
@@ -85,6 +132,12 @@ enum InProcessCommandRunner {
         let result = try await self.runWithSharedServices(arguments)
         try result.validateExitStatus(allowedExitCodes: allowedExitCodes, arguments: arguments)
         return result
+    }
+
+    static func withExclusiveProcessOutput<T: Sendable>(
+        _ operation: @Sendable () async throws -> T
+    ) async throws -> T {
+        try await self.gate.run(operation)
     }
 
     private static func execute(arguments: [String]) async throws -> CommandRunResult {
@@ -315,7 +368,8 @@ enum ExternalCommandRunner {
         }
 
         guard let jsonString = Self.extractFirstJSONObject(from: combinedOutput),
-              let data = jsonString.data(using: .utf8) else {
+              let data = jsonString.data(using: .utf8)
+        else {
             throw Error.jsonPayloadMissing(output: combinedOutput)
         }
 

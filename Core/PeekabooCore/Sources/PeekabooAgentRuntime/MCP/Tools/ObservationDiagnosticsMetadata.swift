@@ -26,6 +26,12 @@ enum ObservationDiagnosticsMetadata {
         if case let .object(existing) = metadata {
             payload = existing
         }
+        if let completedAt = observation.diagnostics.desktopMutationCompletedAt {
+            payload["desktop_mutation_completed_at"] = .double(completedAt.timeIntervalSinceReferenceDate)
+        }
+        if let allowed = observation.diagnostics.desktopMutationPreservationAllowed {
+            payload["desktop_mutation_preservation_allowed"] = .bool(allowed)
+        }
         payload["observation"] = self.value(for: observation)
         return .object(payload)
     }

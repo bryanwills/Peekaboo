@@ -7,7 +7,8 @@ import PeekabooFoundation
 extension SeeCommand {
     func detectElements(
         imageData: Data,
-        windowContext: WindowContext?
+        windowContext: WindowContext?,
+        snapshotID: String? = nil
     ) async throws -> ElementDetectionResult {
         self.logger.operationStart("element_detection")
         defer { self.logger.operationComplete("element_detection") }
@@ -22,7 +23,9 @@ extension SeeCommand {
                 automation: self.services.automation,
                 imageData: imageData,
                 windowContext: windowContext,
-                timeoutSeconds: timeoutSeconds
+                timeoutSeconds: timeoutSeconds,
+                snapshotID: snapshotID,
+                interactionMutationTracker: self.resolvedRuntime.observationTimeoutMutationTracker
             )
         } catch is TimeoutError {
             throw CaptureError.detectionTimedOut(timeoutSeconds)
@@ -44,13 +47,18 @@ extension SeeCommand {
         automation: any UIAutomationServiceProtocol,
         imageData: Data,
         windowContext: WindowContext?,
-        timeoutSeconds: TimeInterval
+        timeoutSeconds: TimeInterval,
+        snapshotID: String? = nil,
+        interactionMutationTracker: InteractionMutationTracker? = nil
     ) async throws -> ElementDetectionResult {
-        try await withWallClockTimeout(seconds: timeoutSeconds) {
+        try await withWallClockTimeout(
+            seconds: timeoutSeconds,
+            interactionMutationTracker: interactionMutationTracker
+        ) {
             if let timeoutAdjustingAutomation = automation as? any DetectElementsRequestTimeoutAdjusting {
                 return try await timeoutAdjustingAutomation.detectElements(
                     in: imageData,
-                    snapshotId: nil,
+                    snapshotId: snapshotID,
                     windowContext: windowContext,
                     requestTimeoutSec: Self.remoteDetectionRequestTimeoutSeconds(for: timeoutSeconds)
                 )
@@ -58,7 +66,7 @@ extension SeeCommand {
             return try await AutomationServiceBridge.detectElements(
                 automation: automation,
                 imageData: imageData,
-                snapshotId: nil,
+                snapshotId: snapshotID,
                 windowContext: windowContext
             )
         }

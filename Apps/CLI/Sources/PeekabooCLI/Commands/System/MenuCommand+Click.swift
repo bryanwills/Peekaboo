@@ -76,6 +76,9 @@ extension MenuCommand {
                 try self.target.validate()
                 let appIdentifier = try await self.resolveTargetApplicationIdentifier()
                 let windowID = try await self.target.resolveWindowID(services: self.services)
+                if self.focusOptions.autoFocus {
+                    self.resolvedRuntime.beginInteractionMutation()
+                }
                 try await ensureFocusIgnoringMissingWindows(
                     request: FocusIgnoringMissingWindowsRequest(
                         windowID: windowID,
@@ -92,6 +95,7 @@ extension MenuCommand {
                     try await self.ensureMenuItemEnabled(appIdentifier: appIdentifier, menuPath: canonicalPath)
                 }
 
+                self.resolvedRuntime.beginInteractionMutation()
                 if let itemName = normalizedItem {
                     try await MenuServiceBridge.clickMenuItemByName(
                         menu: self.services.menu,

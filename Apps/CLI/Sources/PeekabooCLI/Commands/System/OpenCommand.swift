@@ -6,11 +6,6 @@ import PeekabooFoundation
 @available(macOS 14.0, *)
 @MainActor
 struct OpenCommand: ParsableCommand, OutputFormattable, ErrorHandlingCommand, RuntimeOptionsConfigurable {
-    @MainActor
-    static var launcher: any ApplicationLaunching = ApplicationLaunchEnvironment.launcher
-    @MainActor
-    static var resolver: any ApplicationURLResolving = ApplicationURLResolverEnvironment.resolver
-
     nonisolated(unsafe) static var commandDescription: CommandDescription {
         MainActorCommandDescription.describe {
             CommandDescription(
@@ -64,6 +59,10 @@ struct OpenCommand: ParsableCommand, OutputFormattable, ErrorHandlingCommand, Ru
         self.resolvedRuntime.logger
     }
 
+    private var services: any PeekabooServiceProviding {
+        self.resolvedRuntime.services
+    }
+
     var outputLogger: Logger {
         self.logger
     }
@@ -82,13 +81,21 @@ struct OpenCommand: ParsableCommand, OutputFormattable, ErrorHandlingCommand, Ru
 
         do {
             let targetURL = try Self.resolveTarget(self.target)
-            let handlerURL = try self.resolveHandlerApplication()
-            let appInstance = try await self.openTarget(targetURL: targetURL, handlerURL: handlerURL)
-            try await self.waitIfNeeded(for: appInstance)
-            let didFocus = self.activateIfNeeded(appInstance)
-            self.renderSuccess(app: appInstance, targetURL: targetURL, didFocus: didFocus)
+            let handlerIdentifier = self.bundleId == nil
+                ? app.map { ApplicationIdentifierResolver.resolve($0) }
+                : nil
+            self.resolvedRuntime.beginInteractionMutation()
+            let app = try await services.applications.launchApplication(request: ApplicationLaunchRequest(
+                applicationIdentifier: handlerIdentifier,
+                applicationBundleIdentifier: self.bundleId,
+                openURLs: [targetURL],
+                activates: self.shouldFocus,
+                waitUntilReady: self.waitUntilReady
+            ))
+            await self.invalidateSnapshotsAfterOpen()
+            self.renderSuccess(app: app, targetURL: targetURL)
         } catch {
-            self.handleError(error)
+            handleError(error, customCode: applicationLaunchErrorCode(for: error))
             throw ExitCode.failure
         }
     }
@@ -96,6 +103,14 @@ struct OpenCommand: ParsableCommand, OutputFormattable, ErrorHandlingCommand, Ru
     private mutating func prepare(using runtime: CommandRuntime) {
         self.runtime = runtime
         self.logger.setJsonOutputMode(self.jsonOutput)
+    }
+
+    private func invalidateSnapshotsAfterOpen() async {
+        await InteractionObservationInvalidator.invalidateAfterMutation(
+            targets: self.resolvedRuntime.interactionMutationTargets,
+            logger: self.logger,
+            reason: "open"
+        )
     }
 
     static func resolveTarget(_ target: String, cwd: String = FileManager.default.currentDirectoryPath) throws -> URL {
@@ -118,52 +133,17 @@ struct OpenCommand: ParsableCommand, OutputFormattable, ErrorHandlingCommand, Ru
         return URL(fileURLWithPath: absolutePath)
     }
 
-    private func resolveHandlerApplication() throws -> URL? {
-        if let bundleId {
-            return try Self.resolver.resolveBundleIdentifier(bundleId)
-        }
-
-        if let app {
-            return try Self.resolver.resolveApplication(appIdentifier: app, bundleId: nil)
-        }
-
-        return nil
-    }
-
-    private func openTarget(targetURL: URL, handlerURL: URL?) async throws -> any RunningApplicationHandle {
-        try await Self.launcher.openTarget(targetURL, handlerURL: handlerURL, activates: self.shouldFocus)
-    }
-
-    private func waitIfNeeded(for app: any RunningApplicationHandle) async throws {
-        guard self.waitUntilReady else { return }
-        try await self.waitForApplicationReady(app)
-    }
-
-    private func activateIfNeeded(_ app: any RunningApplicationHandle) -> Bool {
-        guard self.shouldFocus else { return false }
-
-        if app.isActive {
-            return true
-        }
-
-        let activated = app.activate(options: [])
-        if !activated {
-            self.logger.warn("Open succeeded but failed to focus \(app.localizedName ?? "application")")
-        }
-        return activated
-    }
-
-    private func renderSuccess(app: any RunningApplicationHandle, targetURL: URL, didFocus: Bool) {
+    private func renderSuccess(app: ServiceApplicationInfo, targetURL: URL) {
         let result = OpenResult(
             success: true,
             action: "open",
-            target: self.target,
-            resolved_target: self.normalizedTargetString(for: targetURL),
-            handler_app: app.localizedName ?? app.bundleIdentifier ?? "unknown",
+            target: target,
+            resolved_target: normalizedTargetString(for: targetURL),
+            handler_app: app.name,
             bundle_id: app.bundleIdentifier,
             pid: app.processIdentifier,
-            is_ready: app.isFinishedLaunching,
-            focused: didFocus && self.shouldFocus
+            is_ready: app.isFinishedLaunching ?? !self.waitUntilReady,
+            focused: self.shouldFocus && app.isActive
         )
         AutomationEventLogger.log(
             .open,
@@ -172,18 +152,7 @@ struct OpenCommand: ParsableCommand, OutputFormattable, ErrorHandlingCommand, Ru
         )
 
         output(result) {
-            let handler = app.localizedName ?? app.bundleIdentifier ?? "application"
-            print("✅ Opened \(result.resolved_target) with \(handler)")
-        }
-    }
-
-    private func waitForApplicationReady(_ app: any RunningApplicationHandle, timeout: TimeInterval = 10) async throws {
-        let start = Date()
-        while !app.isFinishedLaunching {
-            if Date().timeIntervalSince(start) > timeout {
-                throw PeekabooError.timeout("Application did not become ready within \(Int(timeout)) seconds")
-            }
-            try await Task.sleep(nanoseconds: 100_000_000)
+            print("✅ Opened \(result.resolved_target) with \(app.name)")
         }
     }
 

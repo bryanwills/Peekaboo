@@ -670,6 +670,10 @@ private final class MockSnapshotManager: SnapshotManagerProtocol {
         self.storedResults.keys.first
     }
 
+    func invalidateImplicitLatestSnapshot() async throws -> String? {
+        nil
+    }
+
     func listSnapshots() async throws -> [SnapshotInfo] {
         []
     }

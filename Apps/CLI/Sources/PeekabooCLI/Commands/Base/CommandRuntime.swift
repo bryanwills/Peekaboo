@@ -20,11 +20,21 @@ struct CommandRuntimeOptions {
     var captureEnginePreference: String?
     var inputStrategy: UIInputStrategy?
     var preferRemote = true
+    var remoteIsolationRequested = false
     var autoStartDaemon = true
     var bridgeSocketPath: String?
     var requiresElementActions = false
     var requiresInspectAccessibilityTree = false
     var requiresBrowserMCP = false
+    var requiresApplicationLaunchOptions = false
+    var requiresApplicationRelaunch = false
+    var requiresSurvivingApplicationHost = false
+    var requiresHostApplicationInventory = false
+    var requiresImplicitSnapshotInvalidation = false
+    var requiresCallerDesktopMutationBarrier = false
+    var usesPerToolSnapshotInvalidation = false
+    var requiresExactWindowTargetedClicks = false
+    var requiresPostEventClickPermission = false
 
     func makeConfiguration() -> CommandRuntime.Configuration {
         CommandRuntime.Configuration(
@@ -41,7 +51,9 @@ struct CommandRuntimeOptions {
         if options.captureEnginePreference == nil,
            let captureEngine = Self.captureEnginePreference(environment: environment) {
             options.captureEnginePreference = captureEngine
-            options.preferRemote = false
+            if !options.requiresApplicationLaunchOptions && !options.requiresHostApplicationInventory {
+                options.preferRemote = false
+            }
         }
         return options
     }
@@ -73,14 +85,32 @@ struct CommandRuntime {
 
     let configuration: Configuration
     let hostDescription: String
+    let selectedRemoteSocketPath: String?
+    let selectedRemoteHostProcessIdentifier: pid_t?
+    let snapshotInvalidationRemoteSocketPaths: [String]
+    let applicationRelaunchAllowed: Bool
+    let interactionMutationTracker: InteractionMutationTracker
     @MainActor let services: any PeekabooServiceProviding
     @MainActor let logger: Logger
+
+    @MainActor
+    var observationTimeoutMutationTracker: InteractionMutationTracker? {
+        if self.selectedRemoteSocketPath == nil || self.interactionMutationTracker.hasPendingDurableMutation {
+            return self.interactionMutationTracker
+        }
+        return nil
+    }
 
     @MainActor
     init(
         configuration: Configuration,
         services: any PeekabooServiceProviding,
-        hostDescription: String = "local (in-process)"
+        hostDescription: String = "local (in-process)",
+        selectedRemoteSocketPath: String? = nil,
+        selectedRemoteHostProcessIdentifier: pid_t? = nil,
+        snapshotInvalidationRemoteSocketPaths: [String] = [],
+        applicationRelaunchAllowed: Bool = true,
+        interactionMutationTracker: InteractionMutationTracker = InteractionMutationTracker()
     ) {
         // Keep Tachikoma credential/profile resolution aligned with Peekaboo CLI storage.
         PeekabooCore.ConfigurationManager.configureTachikomaProfileDirectory()
@@ -88,6 +118,11 @@ struct CommandRuntime {
         self.configuration = configuration
         self.services = services
         self.hostDescription = hostDescription
+        self.selectedRemoteSocketPath = selectedRemoteSocketPath
+        self.selectedRemoteHostProcessIdentifier = selectedRemoteHostProcessIdentifier
+        self.snapshotInvalidationRemoteSocketPaths = snapshotInvalidationRemoteSocketPaths
+        self.applicationRelaunchAllowed = applicationRelaunchAllowed
+        self.interactionMutationTracker = interactionMutationTracker
         self.logger = Logger.shared
 
         services.installAgentRuntimeDefaults()
@@ -150,15 +185,19 @@ extension CommandRuntime {
     @MainActor
     static func makeDefaultAsync(options: CommandRuntimeOptions) async -> CommandRuntime {
         let effectiveOptions = options.applyingEnvironmentOverrides(environment: ProcessInfo.processInfo.environment)
-        if let override = self.serviceOverride {
+        if let override = serviceOverride {
             return CommandRuntime(options: effectiveOptions, services: override)
         }
 
-        let resolution = await self.resolveServices(options: effectiveOptions)
+        let resolution = await resolveServices(options: effectiveOptions)
         return CommandRuntime(
             configuration: effectiveOptions.makeConfiguration(),
             services: resolution.services,
-            hostDescription: resolution.hostDescription
+            hostDescription: resolution.hostDescription,
+            selectedRemoteSocketPath: resolution.selectedRemoteSocketPath,
+            selectedRemoteHostProcessIdentifier: resolution.selectedRemoteHostProcessIdentifier,
+            snapshotInvalidationRemoteSocketPaths: resolution.snapshotInvalidationRemoteSocketPaths,
+            applicationRelaunchAllowed: resolution.applicationRelaunchAllowed
         )
     }
 
@@ -178,8 +217,7 @@ extension CommandRuntime {
     }
 
     @MainActor
-    private static func resolveServices(options: CommandRuntimeOptions)
-    async -> (services: any PeekabooServiceProviding, hostDescription: String) {
+    private static func resolveServices(options: CommandRuntimeOptions) async -> RuntimeHostResolver.Resolution {
         await RuntimeHostResolver.resolveServices(options: options)
     }
 
@@ -241,6 +279,18 @@ extension CommandRuntime {
         BridgeCapabilityPolicy.supportsTargetedClicks(for: handshake)
     }
 
+    static func supportsApplicationLaunchOptions(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        BridgeCapabilityPolicy.supportsApplicationLaunchOptions(for: handshake)
+    }
+
+    static func supportsApplicationRelaunch(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        BridgeCapabilityPolicy.supportsApplicationRelaunch(for: handshake)
+    }
+
+    static func supportsImplicitSnapshotInvalidation(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        BridgeCapabilityPolicy.supportsImplicitSnapshotInvalidation(for: handshake)
+    }
+
     static func supportsElementActions(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         BridgeCapabilityPolicy.supportsElementActions(for: handshake)
     }
@@ -285,7 +335,7 @@ protocol RuntimeOptionsConfigurable {
 
 extension RuntimeOptionsConfigurable {
     mutating func setRuntimeOptions(_ options: CommandRuntimeOptions) {
-        self.runtimeOptions = options
+        runtimeOptions = options
     }
 }
 

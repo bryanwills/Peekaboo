@@ -10,6 +10,7 @@ extension InMemorySnapshotManager {
             createdAt: Date(),
             lastAccessedAt: Date(),
             processId: getpid(),
+            isPending: false,
             detectionResult: nil,
             snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
 
@@ -32,6 +33,7 @@ extension InMemorySnapshotManager {
             createdAt: Date(),
             lastAccessedAt: Date(),
             processId: getpid(),
+            isPending: false,
             detectionResult: nil,
             snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
 

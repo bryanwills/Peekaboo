@@ -63,6 +63,123 @@ struct RunCommandCLIHarnessTests {
     }
 
     @Test
+    func `run command preserves terminal see at its actual boundary`() async throws {
+        let scriptPath = "/tmp/boundary-script.peekaboo.json"
+        let script = PeekabooScript(description: "Boundary script", steps: [
+            ScriptStep(
+                stepId: "sleep",
+                comment: nil,
+                command: "sleep",
+                params: .sleep(.init(duration: 0.01))
+            ),
+            ScriptStep(stepId: "click", comment: nil, command: "click", params: nil),
+            ScriptStep(stepId: "see", comment: nil, command: "see", params: nil),
+            ScriptStep(
+                stepId: "clipboard-get",
+                comment: nil,
+                command: "clipboard",
+                params: .clipboard(.init(action: "get"))
+            ),
+            ScriptStep(
+                stepId: "clipboard-save",
+                comment: nil,
+                command: "clipboard",
+                params: .generic(["action": " SAVE "])
+            ),
+            ScriptStep(
+                stepId: "dock-list",
+                comment: nil,
+                command: "dock",
+                params: .generic(["action": " LIST "])
+            ),
+        ])
+        let snapshots = StubSnapshotManager()
+        let process = StubProcessService()
+        process.scriptsByPath[scriptPath] = script
+        var terminalStartedAt: Date?
+        var freshSnapshotID: String?
+        process.executeScriptProvider = { _, _, _ in
+            _ = try await snapshots.createSnapshot()
+            let observationStartedAt = Date()
+            let snapshotID = try await snapshots.createSnapshot(pendingAt: observationStartedAt)
+            terminalStartedAt = observationStartedAt
+            freshSnapshotID = snapshotID
+            return [
+                StepResult(
+                    stepId: "sleep",
+                    stepNumber: 1,
+                    command: "sleep",
+                    success: true,
+                    output: .success("Slept"),
+                    error: nil,
+                    executionTime: 0.01
+                ),
+                StepResult(
+                    stepId: "click",
+                    stepNumber: 2,
+                    command: "click",
+                    success: true,
+                    output: .success("Clicked"),
+                    error: nil,
+                    executionTime: 0.01
+                ),
+                StepResult(
+                    stepId: "see",
+                    stepNumber: 3,
+                    command: "see",
+                    success: true,
+                    output: .success("Captured"),
+                    error: nil,
+                    executionTime: 0.01,
+                    startedAt: observationStartedAt,
+                    snapshotId: snapshotID
+                ),
+                StepResult(
+                    stepId: "clipboard-get",
+                    stepNumber: 4,
+                    command: "clipboard",
+                    success: true,
+                    output: .success("Read clipboard"),
+                    error: nil,
+                    executionTime: 0.01
+                ),
+                StepResult(
+                    stepId: "clipboard-save",
+                    stepNumber: 5,
+                    command: "clipboard",
+                    success: true,
+                    output: .success("Saved clipboard"),
+                    error: nil,
+                    executionTime: 0.01
+                ),
+                StepResult(
+                    stepId: "dock-list",
+                    stepNumber: 6,
+                    command: "dock",
+                    success: true,
+                    output: .success("Listed Dock"),
+                    error: nil,
+                    executionTime: 0.01
+                ),
+            ]
+        }
+
+        let services = TestServicesFactory.makePeekabooServices(
+            snapshots: snapshots,
+            process: process
+        )
+        let result = try await InProcessCommandRunner.run([
+            "run",
+            scriptPath,
+            "--json",
+        ], services: services)
+
+        #expect(result.exitStatus == 0)
+        #expect(snapshots.invalidationCutoffs == [terminalStartedAt])
+        #expect(await snapshots.getMostRecentSnapshot() == freshSnapshotID)
+    }
+
+    @Test
     func `run command writes output file`() async throws {
         let scriptPath = "/tmp/output-script.peekaboo.json"
         let script = PeekabooScript(description: "Write output", steps: [])
@@ -175,6 +292,158 @@ struct RunCommandDataTests {
         #expect(command.scriptPath == "/tmp/automation.peekaboo.json")
         #expect(command.output == "results.json")
         #expect(command.noFailFast == true)
+    }
+
+    @Test
+    func `Run snapshot boundary follows final UI effect`() {
+        let seeThenClick = PeekabooScript(description: nil, steps: [
+            ScriptStep(stepId: "see", comment: nil, command: "see", params: nil),
+            ScriptStep(stepId: "click", comment: nil, command: "click", params: nil),
+        ])
+        let clickThenSeeAndClipboardReads = PeekabooScript(description: nil, steps: [
+            ScriptStep(stepId: "click", comment: nil, command: "click", params: nil),
+            ScriptStep(stepId: "see", comment: nil, command: "see", params: nil),
+            ScriptStep(
+                stepId: "clipboard-get",
+                comment: nil,
+                command: "clipboard",
+                params: .clipboard(.init(action: "get"))
+            ),
+            ScriptStep(
+                stepId: "clipboard-save",
+                comment: nil,
+                command: "clipboard",
+                params: .generic(["action": " SAVE "])
+            ),
+        ])
+        let seeThenClipboardWrite = PeekabooScript(description: nil, steps: [
+            ScriptStep(stepId: "see", comment: nil, command: "see", params: nil),
+            ScriptStep(
+                stepId: "clipboard-set",
+                comment: nil,
+                command: "clipboard",
+                params: .clipboard(.init(action: "set", text: "updated"))
+            ),
+        ])
+        let readOnly = PeekabooScript(description: nil, steps: [
+            ScriptStep(
+                stepId: "sleep",
+                comment: nil,
+                command: "sleep",
+                params: .sleep(.init(duration: 0.1))
+            ),
+            ScriptStep(
+                stepId: "dock",
+                comment: nil,
+                command: "dock",
+                params: .generic(["action": " list "])
+            ),
+        ])
+        let clickThenScreenshotOnly = PeekabooScript(description: nil, steps: [
+            ScriptStep(stepId: "click", comment: nil, command: "click", params: nil),
+            ScriptStep(
+                stepId: "screenshot",
+                comment: nil,
+                command: "see",
+                params: .screenshot(.init(path: "/tmp/screenshot.png", annotate: false))
+            ),
+        ])
+        let screenshotOnly = PeekabooScript(description: nil, steps: [
+            ScriptStep(
+                stepId: "screenshot",
+                comment: nil,
+                command: "see",
+                params: .generic(["path": "/tmp/screenshot.png", "annotate": "false"])
+            ),
+        ])
+        let observationThenScreenshotOnly = PeekabooScript(description: nil, steps: [
+            ScriptStep(stepId: "see", comment: nil, command: "see", params: nil),
+            ScriptStep(
+                stepId: "screenshot",
+                comment: nil,
+                command: "see",
+                params: .screenshot(.init(path: "/tmp/screenshot.png", annotate: false))
+            ),
+        ])
+
+        #expect(RunCommand.finalSnapshotEffect(in: seeThenClick) == .mutation)
+        #expect(RunCommand.finalSnapshotEffect(in: clickThenSeeAndClipboardReads) == .freshObservation)
+        #expect(RunCommand.finalSnapshotEffect(in: seeThenClipboardWrite) == .mutation)
+        #expect(RunCommand.finalSnapshotEffect(in: readOnly) == .none)
+        #expect(RunCommand.finalSnapshotEffect(in: clickThenScreenshotOnly) == .mutation)
+        #expect(RunCommand.finalSnapshotEffect(in: screenshotOnly) == .mutation)
+        #expect(RunCommand.finalSnapshotEffect(in: observationThenScreenshotOnly) == .mutation)
+    }
+
+    @Test
+    func `Screenshot-only terminal see cannot preserve stale detection`() {
+        let staleStartedAt = Date(timeIntervalSinceReferenceDate: 100)
+        let screenshotStartedAt = Date(timeIntervalSinceReferenceDate: 200)
+        let script = PeekabooScript(description: nil, steps: [
+            ScriptStep(stepId: "click", comment: nil, command: "click", params: nil),
+            ScriptStep(
+                stepId: "screenshot",
+                comment: nil,
+                command: "see",
+                params: .screenshot(.init(path: "/tmp/screenshot.png", annotate: false))
+            ),
+        ])
+        let results = [
+            StepResult(
+                stepId: "click",
+                stepNumber: 1,
+                command: "click",
+                success: true,
+                output: .success("Clicked"),
+                error: nil,
+                executionTime: 0.01,
+                startedAt: staleStartedAt,
+                snapshotId: "stale-snapshot"
+            ),
+            StepResult(
+                stepId: "screenshot",
+                stepNumber: 2,
+                command: "see",
+                success: true,
+                output: .success("Captured screenshot"),
+                error: nil,
+                executionTime: 0.01,
+                startedAt: screenshotStartedAt,
+                snapshotId: "stale-snapshot"
+            ),
+        ]
+
+        #expect(RunCommand.terminalFreshObservation(in: script, results: results) == nil)
+    }
+
+    @Test
+    func `Terminal see carries the remote host mutation certificate`() throws {
+        let startedAt = Date(timeIntervalSinceReferenceDate: 100)
+        let hostCompletedAt = Date(timeIntervalSinceReferenceDate: 200)
+        let script = PeekabooScript(description: nil, steps: [
+            ScriptStep(stepId: "see", comment: nil, command: "see", params: nil),
+        ])
+        let results = [
+            StepResult(
+                stepId: "see",
+                stepNumber: 1,
+                command: "see",
+                success: true,
+                output: .success("Captured"),
+                error: nil,
+                executionTime: 0.5,
+                startedAt: startedAt,
+                snapshotId: "fresh",
+                desktopMutationCompletedAt: hostCompletedAt,
+                desktopMutationPreservationAllowed: false
+            ),
+        ]
+
+        let observation = try #require(RunCommand.terminalFreshObservation(in: script, results: results))
+        #expect(observation.snapshotId == "fresh")
+        #expect(observation.startedAt == startedAt)
+        #expect(observation.confirmedMutationCompletedAt == hostCompletedAt)
+        #expect(!observation.preservationAllowed)
     }
 
     @Test

@@ -130,6 +130,7 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable {
             )
 
             // Perform the movement
+            self.resolvedRuntime.beginInteractionMutation()
             try await AutomationServiceBridge.moveMouse(
                 automation: self.services.automation,
                 to: targetLocation,
@@ -220,6 +221,7 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable {
     }
 
     private func focusForCoordinateTarget() async throws {
+        self.resolvedRuntime.beginInteractionMutation()
         try await ensureFocused(
             snapshotId: nil,
             target: self.target,
@@ -239,8 +241,12 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable {
             elementIds: [elementId],
             target: self.target,
             services: self.services,
-            logger: self.logger
+            logger: self.logger,
+            beforeRefresh: { startedAt in
+                self.resolvedRuntime.beginInteractionMutation(at: startedAt)
+            }
         )
+        self.resolvedRuntime.beginInteractionMutation()
         try await ensureFocused(
             snapshotId: observation.focusSnapshotId(for: self.target),
             target: self.target,
@@ -277,9 +283,13 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable {
             query: query,
             target: self.target,
             services: self.services,
-            logger: self.logger
+            logger: self.logger,
+            beforeRefresh: { startedAt in
+                self.resolvedRuntime.beginInteractionMutation(at: startedAt)
+            }
         )
         let activeSnapshotId = try observation.requireSnapshot()
+        self.resolvedRuntime.beginInteractionMutation()
         try await ensureFocused(
             snapshotId: observation.focusSnapshotId(for: self.target),
             target: self.target,

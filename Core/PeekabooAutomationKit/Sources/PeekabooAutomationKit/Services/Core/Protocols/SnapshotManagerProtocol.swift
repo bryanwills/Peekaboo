@@ -32,9 +32,19 @@ public struct SnapshotScreenshotRequest: Sendable, Equatable {
 /// Protocol defining UI automation snapshot management operations.
 @MainActor
 public protocol SnapshotManagerProtocol: Sendable {
+    /// Whether this manager applies cutoff-aware, non-destructive implicit-latest invalidation.
+    var supportsImplicitLatestSnapshotInvalidation: Bool { get }
+
+    /// Effective desktop-wide cutoff applied to implicit latest-snapshot lookup.
+    /// Managers without a shared watermark can rely on the default `nil` implementation.
+    var effectiveImplicitLatestInvalidationWatermark: Date? { get }
+
     /// Create a new snapshot container.
     /// - Returns: Unique snapshot identifier
     func createSnapshot() async throws -> String
+
+    /// Reserve a snapshot hidden from implicit lookup until a successful observation publishes it.
+    func createSnapshot(pendingAt observationStartedAt: Date) async throws -> String
 
     /// Store element detection results in a snapshot
     /// - Parameters:
@@ -55,6 +65,21 @@ public protocol SnapshotManagerProtocol: Sendable {
     /// - Parameter applicationBundleId: Bundle identifier of the target application
     /// - Returns: Snapshot ID if available
     func getMostRecentSnapshot(applicationBundleId: String) async -> String?
+
+    /// Invalidate implicit "latest" lookup through a mutation-completion cutoff.
+    /// - Parameter cutoff: Snapshots created at or before this time become ineligible for implicit lookup
+    /// - Returns: The snapshot ID that was latest immediately before invalidation, if any
+    func invalidateImplicitLatestSnapshot(through cutoff: Date) async throws -> String?
+
+    /// Invalidate implicit latest lookup while preserving one successfully refreshed snapshot ID.
+    /// Concrete managers with atomic watermark support should override this overload.
+    func invalidateImplicitLatestSnapshot(through cutoff: Date, preserving snapshotId: String?) async throws -> String?
+
+    /// Preserve using a caller-supplied completion timestamp shared across hosts and retries.
+    func invalidateImplicitLatestSnapshot(
+        through cutoff: Date,
+        preserving snapshotId: String?,
+        preservedAt: Date?) async throws -> String?
 
     /// List all active snapshots
     /// - Returns: Array of snapshot information
@@ -107,6 +132,50 @@ public protocol SnapshotManagerProtocol: Sendable {
     /// - Parameter snapshotId: Snapshot identifier
     /// - Returns: UI automation snapshot if found
     func getUIAutomationSnapshot(snapshotId: String) async throws -> UIAutomationSnapshot?
+}
+
+extension SnapshotManagerProtocol {
+    public var supportsImplicitLatestSnapshotInvalidation: Bool {
+        false
+    }
+
+    public var effectiveImplicitLatestInvalidationWatermark: Date? {
+        nil
+    }
+
+    public func createSnapshot(pendingAt observationStartedAt: Date) async throws -> String {
+        _ = observationStartedAt
+        return try await self.createSnapshot()
+    }
+
+    /// Source-compatible fallback for managers without watermark support.
+    ///
+    /// The default is intentionally non-destructive. Concrete managers override the cutoff-aware requirement.
+    public func invalidateImplicitLatestSnapshot(through cutoff: Date) async throws -> String? {
+        _ = cutoff
+        return nil
+    }
+
+    public func invalidateImplicitLatestSnapshot(
+        through cutoff: Date,
+        preserving snapshotId: String?) async throws -> String?
+    {
+        _ = snapshotId
+        return try await self.invalidateImplicitLatestSnapshot(through: cutoff)
+    }
+
+    public func invalidateImplicitLatestSnapshot(
+        through cutoff: Date,
+        preserving snapshotId: String?,
+        preservedAt: Date?) async throws -> String?
+    {
+        _ = preservedAt
+        return try await self.invalidateImplicitLatestSnapshot(through: cutoff, preserving: snapshotId)
+    }
+
+    public func invalidateImplicitLatestSnapshot() async throws -> String? {
+        try await self.invalidateImplicitLatestSnapshot(through: Date())
+    }
 }
 
 /// Information about a snapshot

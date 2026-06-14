@@ -183,7 +183,11 @@ public final class ProcessService: ProcessServiceProtocol {
                     success: true,
                     output: executionResult.output,
                     error: nil,
-                    executionTime: Date().timeIntervalSince(stepStartTime))
+                    executionTime: Date().timeIntervalSince(stepStartTime),
+                    startedAt: stepStartTime,
+                    snapshotId: executionResult.snapshotId,
+                    desktopMutationCompletedAt: executionResult.desktopMutationCompletedAt,
+                    desktopMutationPreservationAllowed: executionResult.desktopMutationPreservationAllowed)
 
                 results.append(result)
 
@@ -195,7 +199,8 @@ public final class ProcessService: ProcessServiceProtocol {
                     success: false,
                     output: nil,
                     error: error.localizedDescription,
-                    executionTime: Date().timeIntervalSince(stepStartTime))
+                    executionTime: Date().timeIntervalSince(stepStartTime),
+                    startedAt: stepStartTime)
 
                 results.append(result)
 

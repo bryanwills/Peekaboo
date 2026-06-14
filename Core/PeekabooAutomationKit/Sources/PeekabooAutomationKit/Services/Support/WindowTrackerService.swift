@@ -47,6 +47,7 @@ public final class WindowTrackerService: WindowTrackingProviding {
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "WindowTracker")
     private let config: WindowTrackerConfiguration
     private let windowIdentityService = WindowIdentityService()
+    private let windowInfoProvider: (@MainActor (CGWindowID) -> WindowIdentityInfo?)?
 
     private var windows: [CGWindowID: TrackedWindow] = [:]
     private var watchers: [NotificationWatcher] = []
@@ -56,6 +57,15 @@ public final class WindowTrackerService: WindowTrackingProviding {
 
     public init(configuration: WindowTrackerConfiguration = WindowTrackerConfiguration()) {
         self.config = configuration
+        self.windowInfoProvider = nil
+    }
+
+    init(
+        configuration: WindowTrackerConfiguration = WindowTrackerConfiguration(),
+        windowInfoProvider: @escaping @MainActor (CGWindowID) -> WindowIdentityInfo?)
+    {
+        self.config = configuration
+        self.windowInfoProvider = windowInfoProvider
     }
 
     public func start() {
@@ -82,6 +92,19 @@ public final class WindowTrackerService: WindowTrackingProviding {
 
     public func windowBounds(for windowID: CGWindowID) -> CGRect? {
         self.windows[windowID]?.info.bounds
+    }
+
+    public func windowOwnerProcessIdentifier(for windowID: CGWindowID) -> pid_t? {
+        guard let ownerProcessIdentifier = self.windows[windowID]?.info.ownerPID,
+              ownerProcessIdentifier > 0
+        else {
+            return nil
+        }
+        return ownerProcessIdentifier
+    }
+
+    public func refreshWindow(for windowID: CGWindowID) {
+        self.refreshWindow(windowID: windowID)
     }
 
     public func status() -> WindowTrackerStatus {
@@ -155,14 +178,22 @@ public final class WindowTrackerService: WindowTrackingProviding {
         self.logger.debug("Window tracker event missing window ID pid=\(pid) notification=\(notification.rawValue)")
     }
 
-    private func refreshWindow(windowID: CGWindowID) {
-        guard let info = self.windowIdentityService.getWindowInfo(windowID: windowID) else { return }
+    func refreshWindow(windowID: CGWindowID) {
+        let info = if let windowInfoProvider {
+            windowInfoProvider(windowID)
+        } else {
+            self.windowIdentityService.getWindowInfo(windowID: windowID)
+        }
+        guard let info else {
+            self.windows[windowID] = nil
+            return
+        }
 
         let now = Date()
-        var tracked = self.windows[windowID] ?? TrackedWindow(info: info, lastEventAt: nil, lastUpdatedAt: nil)
-        tracked.lastEventAt = now
-        tracked.lastUpdatedAt = now
-        self.windows[windowID] = tracked
+        self.windows[windowID] = TrackedWindow(
+            info: info,
+            lastEventAt: now,
+            lastUpdatedAt: now)
     }
 
     private func refreshAllWindows() {

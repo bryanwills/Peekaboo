@@ -13,8 +13,11 @@ import TachikomaMCP
 
 @available(macOS 14.0, *)
 extension PeekabooAgentService {
-    private func makeToolContext() -> MCPToolContext {
-        MCPToolContext(services: self.services)
+    func makeToolContext() -> MCPToolContext {
+        MCPToolContext(
+            services: self.services,
+            snapshotMutationCoordinator: self.snapshotMutationCoordinator,
+            snapshotExecutionGate: self.snapshotExecutionGate)
     }
 
     private func makeAgentTool(
@@ -23,13 +26,16 @@ extension PeekabooAgentService {
         description: String? = nil) -> AgentTool
     {
         let toolName = name ?? tool.name
+        let context = self.makeToolContext()
 
         return AgentTool(
             name: toolName,
             description: description ?? tool.description,
             parameters: self.convertMCPSchemaToAgentSchema(tool.inputSchema),
             execute: { arguments in
-                let response = try await tool.execute(arguments: makeToolArguments(from: arguments))
+                let response = try await context.execute(
+                    tool: tool,
+                    arguments: makeToolArguments(from: arguments))
                 return await convertToolResponseToAgentToolResultAsync(response)
             })
     }
@@ -110,7 +116,8 @@ extension PeekabooAgentService {
     // MARK: - Screen Tools
 
     public func createListScreensTool() -> AgentTool {
-        let tool = ListTool(context: self.makeToolContext())
+        let context = self.makeToolContext()
+        let tool = ListTool(context: context)
         return AgentTool(
             name: "list_screens",
             description: "List all available screens/displays",
@@ -119,7 +126,7 @@ extension PeekabooAgentService {
                 required: []),
             execute: { _ in
                 let args = makeToolArguments(fromDict: ["item_type": "screens"])
-                let response = try await tool.execute(arguments: args)
+                let response = try await context.execute(tool: tool, arguments: args)
                 return await convertToolResponseToAgentToolResultAsync(response)
             })
     }
@@ -127,7 +134,8 @@ extension PeekabooAgentService {
     // MARK: - Application Tools
 
     public func createListAppsTool() -> AgentTool {
-        let tool = ListTool(context: self.makeToolContext())
+        let context = self.makeToolContext()
+        let tool = ListTool(context: context)
         return AgentTool(
             name: "list_apps",
             description: "List running applications",
@@ -136,13 +144,14 @@ extension PeekabooAgentService {
                 required: []),
             execute: { _ in
                 let args = makeToolArguments(fromDict: ["item_type": "running_applications"])
-                let response = try await tool.execute(arguments: args)
+                let response = try await context.execute(tool: tool, arguments: args)
                 return await convertToolResponseToAgentToolResultAsync(response)
             })
     }
 
     public func createLaunchAppTool() -> AgentTool {
-        let tool = AppTool(context: self.makeToolContext())
+        let context = self.makeToolContext()
+        let tool = AppTool(context: context)
         return AgentTool(
             name: "launch_app",
             description: "Launch an application",
@@ -158,7 +167,9 @@ extension PeekabooAgentService {
                 var argsDict = dictionaryFromArguments(arguments)
                 argsDict["action"] = AnyAgentToolValue(string: "launch")
                 let newArgs = AgentToolArguments(argsDict)
-                let response = try await tool.execute(arguments: makeToolArguments(from: newArgs))
+                let response = try await context.execute(
+                    tool: tool,
+                    arguments: makeToolArguments(from: newArgs))
                 return await convertToolResponseToAgentToolResultAsync(response)
             })
     }

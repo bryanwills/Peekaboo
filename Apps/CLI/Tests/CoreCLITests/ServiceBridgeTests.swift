@@ -138,6 +138,23 @@ struct ServiceBridgeTests {
         #expect(automation.targetedClickCalls.count == 1)
         #expect(automation.targetedClickCalls.first?.snapshotId == "snapshot-123")
         #expect(automation.targetedClickCalls.first?.targetProcessIdentifier == 12345)
+        #expect(automation.targetedClickCalls.first?.targetWindowID == nil)
+    }
+
+    @Test func `automation targeted click forwards exact window`() async throws {
+        let automation = MockTargetedAutomationService()
+
+        try await AutomationServiceBridge.click(
+            automation: automation,
+            target: .coordinates(CGPoint(x: 10, y: 20)),
+            clickType: .single,
+            snapshotId: nil,
+            targetProcessIdentifier: 12345,
+            targetWindowID: 42
+        )
+
+        #expect(automation.targetedClickCalls.first?.targetProcessIdentifier == 12345)
+        #expect(automation.targetedClickCalls.first?.targetWindowID == 42)
     }
 
     @Test func `automation targeted click maps missing event synthesizing permission`() async throws {
@@ -290,7 +307,7 @@ class MockAutomationService: UIAutomationServiceProtocol {
 
 @MainActor
 final class MockTargetedAutomationService: MockAutomationService, TargetedHotkeyServiceProtocol,
-TargetedTypeServiceProtocol, TargetedClickServiceProtocol {
+TargetedTypeServiceProtocol, ExactWindowTargetedClickServiceProtocol {
     struct TargetedHotkeyCall {
         let keys: String
         let holdDuration: Int
@@ -302,6 +319,7 @@ TargetedTypeServiceProtocol, TargetedClickServiceProtocol {
         let clickType: ClickType
         let snapshotId: String?
         let targetProcessIdentifier: pid_t
+        let targetWindowID: Int?
     }
 
     struct TargetedTypeActionsCall {
@@ -357,7 +375,24 @@ TargetedTypeServiceProtocol, TargetedClickServiceProtocol {
             target: target,
             clickType: clickType,
             snapshotId: snapshotId,
-            targetProcessIdentifier: targetProcessIdentifier
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetWindowID: nil
+        ))
+    }
+
+    func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t,
+        targetWindowID: Int
+    ) async throws {
+        self.targetedClickCalls.append(.init(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetWindowID: targetWindowID
         ))
     }
 }

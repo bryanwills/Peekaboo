@@ -1,9 +1,57 @@
 import CoreGraphics
 import Foundation
+import PeekabooFoundation
+
+public struct ApplicationLaunchRequest: Sendable, Codable, Equatable {
+    public let applicationIdentifier: String?
+    public let applicationBundleIdentifier: String?
+    public let openURLs: [URL]
+    public let activates: Bool
+    public let waitUntilReady: Bool
+
+    public init(
+        applicationIdentifier: String? = nil,
+        applicationBundleIdentifier: String? = nil,
+        openURLs: [URL] = [],
+        activates: Bool = true,
+        waitUntilReady: Bool = false)
+    {
+        self.applicationIdentifier = applicationIdentifier
+        self.applicationBundleIdentifier = applicationBundleIdentifier
+        self.openURLs = openURLs
+        self.activates = activates
+        self.waitUntilReady = waitUntilReady
+    }
+}
+
+public struct ApplicationRelaunchRequest: Sendable, Codable, Equatable {
+    public let targetIdentifier: String
+    public let launchRequest: ApplicationLaunchRequest
+    public let force: Bool
+    public let waitSeconds: TimeInterval
+
+    public init(
+        targetIdentifier: String,
+        launchRequest: ApplicationLaunchRequest,
+        force: Bool = false,
+        waitSeconds: TimeInterval = 2)
+    {
+        self.targetIdentifier = targetIdentifier
+        self.launchRequest = launchRequest
+        self.force = force
+        self.waitSeconds = waitSeconds
+    }
+}
 
 /// Protocol defining application and window management operations
 @MainActor
 public protocol ApplicationServiceProtocol: Sendable {
+    /// Whether this service implements the full `ApplicationLaunchRequest` contract.
+    var supportsApplicationLaunchOptions: Bool { get }
+
+    /// Whether this service keeps quit/wait/launch in one host-side transaction.
+    var supportsApplicationRelaunch: Bool { get }
+
     /// List all running applications
     /// - Returns: UnifiedToolOutput containing application information
     func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData>
@@ -35,6 +83,12 @@ public protocol ApplicationServiceProtocol: Sendable {
     /// - Returns: Application information after launch
     func launchApplication(identifier: String) async throws -> ServiceApplicationInfo
 
+    /// Launch an application or open URLs using the runtime host's GUI session.
+    func launchApplication(request: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo
+
+    /// Quit, wait, and launch while keeping the runtime host alive for the entire transaction.
+    func relaunchApplication(request: ApplicationRelaunchRequest) async throws -> ServiceApplicationInfo
+
     /// Activate (bring to front) an application
     /// - Parameter identifier: Application name or bundle ID
     func activateApplication(identifier: String) async throws
@@ -60,6 +114,33 @@ public protocol ApplicationServiceProtocol: Sendable {
 
     /// Show all hidden applications
     func showAllApplications() async throws
+}
+
+extension ApplicationServiceProtocol {
+    public var supportsApplicationLaunchOptions: Bool {
+        false
+    }
+
+    public var supportsApplicationRelaunch: Bool {
+        false
+    }
+
+    public func launchApplication(request: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo {
+        guard let identifier = request.applicationIdentifier,
+              request.openURLs.isEmpty,
+              request.activates,
+              !request.waitUntilReady
+        else {
+            throw PeekabooError.serviceUnavailable(
+                "This application service does not support launch options; update the Peekaboo runtime host")
+        }
+        return try await self.launchApplication(identifier: identifier)
+    }
+
+    public func relaunchApplication(request _: ApplicationRelaunchRequest) async throws -> ServiceApplicationInfo {
+        throw PeekabooError.serviceUnavailable(
+            "This application service does not support atomic relaunch; update the Peekaboo runtime host")
+    }
 }
 
 /// Information about an application for service layer
@@ -88,6 +169,9 @@ public struct ServiceApplicationInfo: Sendable, Codable, Equatable {
     /// macOS activation policy, when known.
     public let activationPolicy: ServiceApplicationActivationPolicy?
 
+    /// Whether LaunchServices reports that the app has finished launching.
+    public let isFinishedLaunching: Bool?
+
     public init(
         processIdentifier: Int32,
         bundleIdentifier: String?,
@@ -96,7 +180,8 @@ public struct ServiceApplicationInfo: Sendable, Codable, Equatable {
         isActive: Bool = false,
         isHidden: Bool = false,
         windowCount: Int = 0,
-        activationPolicy: ServiceApplicationActivationPolicy? = nil)
+        activationPolicy: ServiceApplicationActivationPolicy? = nil,
+        isFinishedLaunching: Bool? = nil)
     {
         self.processIdentifier = processIdentifier
         self.bundleIdentifier = bundleIdentifier
@@ -106,6 +191,7 @@ public struct ServiceApplicationInfo: Sendable, Codable, Equatable {
         self.isHidden = isHidden
         self.windowCount = windowCount
         self.activationPolicy = activationPolicy
+        self.isFinishedLaunching = isFinishedLaunching
     }
 }
 

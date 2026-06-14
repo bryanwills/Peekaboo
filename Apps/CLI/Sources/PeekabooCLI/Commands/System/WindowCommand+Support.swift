@@ -177,13 +177,12 @@ func logWindowAction(
 
 @MainActor
 func invalidateLatestSnapshotAfterWindowMutation(
-    services: any PeekabooServiceProviding,
-    logger: Logger,
+    runtime: CommandRuntime,
     reason: String
 ) async {
-    await InteractionObservationInvalidator.invalidateLatestSnapshot(
-        using: services.snapshots,
-        logger: logger,
+    await InteractionObservationInvalidator.invalidateAfterMutation(
+        targets: runtime.interactionMutationTargets,
+        logger: runtime.logger,
         reason: reason
     )
 }

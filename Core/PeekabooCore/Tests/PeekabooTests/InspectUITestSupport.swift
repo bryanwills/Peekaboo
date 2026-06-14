@@ -7,14 +7,20 @@ import PeekabooFoundation
 final class InspectUITestAutomationService: UIAutomationServiceProtocol {
     private let accessibilityGranted: Bool
     private let detectionResult: ElementDetectionResult?
+    private let inspectError: (any Error)?
     private(set) var lastDetectImageDataCount: Int?
     private(set) var lastDetectSnapshotId: String?
     private(set) var lastWindowContext: WindowContext?
     private(set) var lastInspectWindowContext: WindowContext?
 
-    init(accessibilityGranted: Bool, detectionResult: ElementDetectionResult? = nil) {
+    init(
+        accessibilityGranted: Bool,
+        detectionResult: ElementDetectionResult? = nil,
+        inspectError: (any Error)? = nil)
+    {
         self.accessibilityGranted = accessibilityGranted
         self.detectionResult = detectionResult
+        self.inspectError = inspectError
     }
 
     func detectElements(in imageData: Data, snapshotId: String?, windowContext: WindowContext?) async throws
@@ -32,6 +38,9 @@ final class InspectUITestAutomationService: UIAutomationServiceProtocol {
     func inspectAccessibilityTree(windowContext: WindowContext?) async throws -> ElementDetectionResult {
         self.lastInspectWindowContext = windowContext
         self.lastWindowContext = windowContext
+        if let inspectError {
+            throw inspectError
+        }
         if let detectionResult = self.detectionResult {
             return detectionResult
         }

@@ -80,6 +80,7 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             try await observation.validateIfExplicit(using: self.services.snapshots)
 
             let targetPID = try await self.backgroundProcessIdentifier(snapshotId: observation.snapshotId)
+            self.resolvedRuntime.beginInteractionMutation()
             if targetPID == nil {
                 try await ensureFocused(
                     snapshotId: observation.focusSnapshotId(for: self.target),
@@ -126,9 +127,8 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 }
             }
 
-            await InteractionObservationInvalidator.invalidateAfterMutationOrLatest(
-                observation,
-                snapshots: self.services.snapshots,
+            await InteractionObservationInvalidator.invalidateAfterMutation(
+                targets: self.resolvedRuntime.interactionMutationTargets,
                 logger: self.logger,
                 reason: "press"
             )

@@ -11,10 +11,27 @@ public enum WindowMovementAdjustment: Sendable {
 
 public protocol WindowTrackingProviding: AnyObject, Sendable {
     @MainActor func windowBounds(for windowID: CGWindowID) -> CGRect?
+    @MainActor func windowOwnerProcessIdentifier(for windowID: CGWindowID) -> pid_t?
+    @MainActor func refreshWindow(for windowID: CGWindowID)
+}
+
+extension WindowTrackingProviding {
+    @MainActor
+    public func windowOwnerProcessIdentifier(for _: CGWindowID) -> pid_t? {
+        nil
+    }
+
+    @MainActor
+    public func refreshWindow(for _: CGWindowID) {}
 }
 
 @MainActor
 public enum WindowMovementTracking {
+    private struct CurrentWindow {
+        let bounds: CGRect
+        let ownerProcessIdentifier: pid_t?
+    }
+
     private static let logger = Logger(subsystem: "boo.peekaboo.core", category: "WindowMovementTracking")
     private static let identityService = WindowIdentityService()
     private static let toleratedSizeJitter: CGFloat = 4
@@ -25,13 +42,11 @@ public enum WindowMovementTracking {
         _ point: CGPoint,
         snapshot: UIAutomationSnapshot) -> WindowMovementAdjustment
     {
-        guard let windowID = snapshot.windowID,
-              let snapshotBounds = snapshot.windowBounds
-        else {
+        guard let windowID = snapshot.windowID else {
             return .unchanged(point)
         }
 
-        guard let currentBounds = self.currentBounds(for: windowID) else {
+        guard let currentWindow = self.currentWindow(for: windowID) else {
             let identity = self.windowIdentityDescription(snapshot: snapshot, windowID: windowID)
             return .stale(
                 """
@@ -39,6 +54,24 @@ public enum WindowMovementTracking {
                 Run 'peekaboo see' again before targeting elements from this snapshot.
                 """)
         }
+
+        if let expectedProcessIdentifier = snapshot.applicationProcessId,
+           let actualProcessIdentifier = currentWindow.ownerProcessIdentifier,
+           expectedProcessIdentifier != actualProcessIdentifier
+        {
+            let identity = self.windowIdentityDescription(snapshot: snapshot, windowID: windowID)
+            return .stale(
+                """
+                Snapshot window now belongs to PID \(actualProcessIdentifier), not PID \(expectedProcessIdentifier) \
+                (\(identity)). Run 'peekaboo see' again before targeting elements from this snapshot.
+                """)
+        }
+
+        guard let snapshotBounds = snapshot.windowBounds else {
+            return .unchanged(point)
+        }
+
+        let currentBounds = currentWindow.bounds
 
         if self.sizeChangedMeaningfully(from: snapshotBounds.size, to: currentBounds.size) {
             let identity = self.windowIdentityDescription(snapshot: snapshot, windowID: windowID)
@@ -92,11 +125,33 @@ public enum WindowMovementTracking {
         }
     }
 
-    private static func currentBounds(for windowID: CGWindowID) -> CGRect? {
+    private static func currentWindow(for windowID: CGWindowID) -> CurrentWindow? {
         if let provider = self.provider {
-            return provider.windowBounds(for: windowID)
+            if let currentWindow = self.currentWindow(for: windowID, from: provider) {
+                return currentWindow
+            }
+
+            // The installed tracker polls visible windows, so off-Space windows may be absent from its cache.
+            provider.refreshWindow(for: windowID)
+            if let currentWindow = self.currentWindow(for: windowID, from: provider) {
+                return currentWindow
+            }
         }
-        return self.identityService.getWindowInfo(windowID: windowID)?.bounds
+
+        guard let info = self.identityService.getWindowInfo(windowID: windowID) else { return nil }
+        return CurrentWindow(
+            bounds: info.bounds,
+            ownerProcessIdentifier: info.ownerPID > 0 ? info.ownerPID : nil)
+    }
+
+    private static func currentWindow(
+        for windowID: CGWindowID,
+        from provider: any WindowTrackingProviding) -> CurrentWindow?
+    {
+        guard let bounds = provider.windowBounds(for: windowID) else { return nil }
+        return CurrentWindow(
+            bounds: bounds,
+            ownerProcessIdentifier: provider.windowOwnerProcessIdentifier(for: windowID))
     }
 
     private static func sizeChangedMeaningfully(from snapshotSize: CGSize, to currentSize: CGSize) -> Bool {

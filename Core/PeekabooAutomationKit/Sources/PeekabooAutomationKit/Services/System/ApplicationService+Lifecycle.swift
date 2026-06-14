@@ -6,57 +6,217 @@ import PeekabooFoundation
 
 @MainActor
 extension ApplicationService {
+    struct PreparedApplicationLaunch {
+        let applicationURL: URL?
+        let openURLs: [URL]
+        let activates: Bool
+        let waitUntilReady: Bool
+        let disablesRunningApplicationSubstitution: Bool
+    }
+
     public func launchApplication(identifier: String) async throws -> ServiceApplicationInfo {
-        self.logger.info("Launching application: \(identifier)")
+        let trimmedIdentifier = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.logger.info("Launching application: \(trimmedIdentifier)")
 
-        // First check if already running
         do {
-            let existingApp = try await findApplication(identifier: identifier)
-            self.logger.debug("Application already running: \(existingApp.name)")
-            return existingApp
+            let existingApplication = try await self.findApplication(identifier: trimmedIdentifier)
+            self.logger.debug("Application already running: \(existingApplication.name)")
+            return existingApplication
         } catch {
-            self.logger.debug("Application not currently running: \(identifier), will try to launch")
+            self.logger.debug("Application not currently running: \(trimmedIdentifier), will try to launch")
         }
 
-        // Try to launch by bundle ID
-        // Find the app URL
-        let appURL: URL
-        // Already on main thread due to @MainActor on class
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier) {
-            self.logger.debug("Found app by bundle ID at: \(url.path)")
-            appURL = url
-        } else if let url = findApplicationByName(identifier) {
-            self.logger.debug("Found app by name at: \(url.path)")
-            appURL = url
+        return try await self.launchApplication(request: ApplicationLaunchRequest(applicationIdentifier: identifier))
+    }
+
+    public func launchApplication(request: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo {
+        let identifier = request.applicationIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bundleIdentifier = request.applicationBundleIdentifier?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        self.logger.info("Launching application: \(bundleIdentifier ?? identifier ?? "default handler")")
+
+        let preparedLaunch = try self.prepareApplicationLaunch(request)
+        return try await self.performApplicationLaunch(preparedLaunch)
+    }
+
+    func prepareApplicationLaunch(_ request: ApplicationLaunchRequest) throws -> PreparedApplicationLaunch {
+        let identifier = request.applicationIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bundleIdentifier = request.applicationBundleIdentifier?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if request.applicationIdentifier != nil, identifier?.isEmpty != false {
+            throw PeekabooError.invalidInput("Application identifier must not be empty")
+        }
+        if request.applicationBundleIdentifier != nil, bundleIdentifier?.isEmpty != false {
+            throw PeekabooError.invalidInput("Application bundle identifier must not be empty")
+        }
+        guard !(identifier?.isEmpty == false && bundleIdentifier?.isEmpty == false) else {
+            throw PeekabooError.invalidInput(
+                "Application launch accepts either an application identifier or bundle identifier, not both")
+        }
+        guard identifier?.isEmpty == false || bundleIdentifier?.isEmpty == false || !request.openURLs.isEmpty else {
+            throw PeekabooError.invalidInput("Application launch requires an identifier or URL")
+        }
+
+        let applicationURL: URL? = if let bundleIdentifier, !bundleIdentifier.isEmpty {
+            try self.resolveApplicationURL(bundleIdentifier: bundleIdentifier)
         } else {
-            self.logger.error("Application not found in system: \(identifier)")
-            throw PeekabooError.appNotFound(identifier)
+            try identifier.flatMap { identifier in
+                identifier.isEmpty ? nil : try self.resolveApplicationURL(identifier)
+            }
+        }
+        if applicationURL == nil, request.openURLs.count != 1 {
+            throw PeekabooError.invalidInput("Opening multiple URLs requires an application identifier")
         }
 
-        // Launch the application
+        return PreparedApplicationLaunch(
+            applicationURL: applicationURL,
+            openURLs: request.openURLs,
+            activates: request.activates,
+            waitUntilReady: request.waitUntilReady,
+            disablesRunningApplicationSubstitution: identifier.map(Self.isExplicitApplicationPath) == true)
+    }
+
+    private func performApplicationLaunch(_ launch: PreparedApplicationLaunch) async throws -> ServiceApplicationInfo {
         let config = NSWorkspace.OpenConfiguration()
-        config.activates = true
+        config.activates = launch.activates
 
-        self.logger.debug("Launching app from URL: \(appURL.path)")
+        let runningApp: NSRunningApplication
+        if let applicationURL = launch.applicationURL {
+            if launch.disablesRunningApplicationSubstitution {
+                config.allowsRunningApplicationSubstitution = false
+            }
+            self.logger.debug("Launching app from URL: \(applicationURL.path)")
 
-        // Extract app name and icon path
-        let appName = appURL.lastPathComponent.replacingOccurrences(of: ".app", with: "")
-        let iconPath = appURL.appendingPathComponent("Contents/Resources/AppIcon.icns").path
-        let hasIcon = FileManager.default.fileExists(atPath: iconPath)
+            if launch.activates {
+                let appName = applicationURL.deletingPathExtension().lastPathComponent
+                let iconPath = applicationURL.appendingPathComponent("Contents/Resources/AppIcon.icns").path
+                let hasIcon = FileManager.default.fileExists(atPath: iconPath)
+                _ = await self.feedbackClient.showAppLaunch(appName: appName, iconPath: hasIcon ? iconPath : nil)
+            }
 
-        // Show app launch animation
-        _ = await self.feedbackClient.showAppLaunch(appName: appName, iconPath: hasIcon ? iconPath : nil)
+            runningApp = try await self.applicationOpenHandler(applicationURL, launch.openURLs, config)
+        } else {
+            let targetURL = launch.openURLs[0]
+            runningApp = try await NSWorkspace.shared.open(targetURL, configuration: config)
+        }
 
-        // Already on main thread due to @MainActor on class
-        let runningApp = try await NSWorkspace.shared.openApplication(at: appURL, configuration: config)
+        if launch.activates, !runningApp.isActive, !runningApp.activate(options: []) {
+            self.logger.warning("Launch succeeded but failed to activate \(runningApp.localizedName ?? "application")")
+        }
 
-        // Wait a bit for the app to fully launch
-        try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+        try await self.waitUntilReadyIfNeeded(runningApp, requested: launch.waitUntilReady)
+        try await self.waitUntilActiveIfNeeded(runningApp, requested: launch.activates)
 
         let launchMessage =
             "Successfully launched: \(runningApp.localizedName ?? "Unknown") (PID: \(runningApp.processIdentifier))"
         self.logger.info("\(launchMessage)")
         return self.createApplicationInfo(from: runningApp)
+    }
+
+    public func relaunchApplication(request: ApplicationRelaunchRequest) async throws -> ServiceApplicationInfo {
+        guard request.waitSeconds.isFinite, request.waitSeconds >= 0 else {
+            throw PeekabooError.invalidInput("Relaunch wait must be a finite, non-negative number of seconds")
+        }
+
+        // Resolve every launch prerequisite before mutating the target application.
+        let preparedLaunch = try self.prepareApplicationLaunch(request.launchRequest)
+        let target = try await self.resolveRelaunchTarget(request.targetIdentifier)
+        if target.processIdentifier == getpid() {
+            throw PeekabooError.serviceUnavailable("A runtime host cannot relaunch itself")
+        }
+        let canonicalTargetIdentifier = "PID:\(target.processIdentifier)"
+
+        guard try await self.quitRelaunchTarget(
+            identifier: canonicalTargetIdentifier,
+            force: request.force)
+        else {
+            throw PeekabooError.commandFailed("Application refused to quit")
+        }
+
+        let terminationDeadline = Date().addingTimeInterval(5)
+        while await self.isRelaunchTargetRunning(identifier: canonicalTargetIdentifier) {
+            guard Date() < terminationDeadline else {
+                throw PeekabooError.timeout("Application did not terminate within 5 seconds")
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+
+        if request.waitSeconds > 0 {
+            try await Task.sleep(for: .seconds(request.waitSeconds))
+        }
+        return try await self.performApplicationLaunch(preparedLaunch)
+    }
+
+    private func resolveRelaunchTarget(_ identifier: String) async throws -> ServiceApplicationInfo {
+        if let relaunchTargetResolver = self.relaunchTargetResolver {
+            return try await relaunchTargetResolver(identifier)
+        }
+        return try await self.findApplication(identifier: identifier)
+    }
+
+    private func quitRelaunchTarget(identifier: String, force: Bool) async throws -> Bool {
+        if let relaunchQuitHandler = self.relaunchQuitHandler {
+            return try await relaunchQuitHandler(identifier, force)
+        }
+        return try await self.quitApplication(identifier: identifier, force: force)
+    }
+
+    private func isRelaunchTargetRunning(identifier: String) async -> Bool {
+        if let relaunchRunningHandler = self.relaunchRunningHandler {
+            return await relaunchRunningHandler(identifier)
+        }
+        return await self.isApplicationRunning(identifier: identifier)
+    }
+
+    func resolveApplicationURL(_ identifier: String) throws -> URL {
+        let expanded = NSString(string: identifier).expandingTildeInPath
+        if identifier.contains("/"), FileManager.default.fileExists(atPath: expanded) {
+            return URL(fileURLWithPath: expanded)
+        }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier) {
+            self.logger.debug("Found app by bundle ID at: \(url.path)")
+            return url
+        }
+        if let url = self.findApplicationByName(identifier) {
+            self.logger.debug("Found app by name at: \(url.path)")
+            return url
+        }
+        self.logger.error("Application not found in system: \(identifier)")
+        throw PeekabooError.appNotFound(identifier)
+    }
+
+    func resolveApplicationURL(bundleIdentifier: String) throws -> URL {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else {
+            self.logger.error("Application bundle identifier not found: \(bundleIdentifier)")
+            throw PeekabooError.appNotFound(bundleIdentifier)
+        }
+        self.logger.debug("Found app by bundle ID at: \(url.path)")
+        return url
+    }
+
+    private static func isExplicitApplicationPath(_ identifier: String) -> Bool {
+        let expanded = NSString(string: identifier).expandingTildeInPath
+        return identifier.contains("/") && FileManager.default.fileExists(atPath: expanded)
+    }
+
+    private func waitUntilReadyIfNeeded(_ app: NSRunningApplication, requested: Bool) async throws {
+        guard requested else { return }
+        let deadline = Date().addingTimeInterval(10)
+        while !app.isFinishedLaunching {
+            guard Date() < deadline else {
+                throw PeekabooError.timeout("Application did not become ready within 10 seconds")
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+    }
+
+    private func waitUntilActiveIfNeeded(_ app: NSRunningApplication, requested: Bool) async throws {
+        guard requested else { return }
+        let deadline = Date().addingTimeInterval(2)
+        while !app.isActive, Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
     }
 
     public func activateApplication(identifier: String) async throws {
@@ -235,6 +395,7 @@ extension ApplicationService {
         let searchPaths = [
             "/Applications",
             "/System/Applications",
+            "/System/Library/CoreServices",
             "/Applications/Utilities",
             "~/Applications",
         ].map { NSString(string: $0).expandingTildeInPath }

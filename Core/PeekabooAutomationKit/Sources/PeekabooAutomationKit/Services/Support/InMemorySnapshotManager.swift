@@ -9,6 +9,14 @@ import PeekabooFoundation
 /// (e.g. a macOS menubar app) where automation state can be kept in-process for speed and fidelity.
 @MainActor
 public final class InMemorySnapshotManager: SnapshotManagerProtocol {
+    public let supportsImplicitLatestSnapshotInvalidation = true
+
+    public var effectiveImplicitLatestInvalidationWatermark: Date? {
+        SnapshotManager.latestWatermark(
+            self.implicitLatestInvalidatedAt,
+            self.desktopMutationWatermarkStore?.effectiveWatermark())
+    }
+
     public struct Options: Sendable {
         /// How long snapshots are considered valid for `getMostRecentSnapshot()` and pruning.
         public var snapshotValidityWindow: TimeInterval
@@ -31,19 +39,35 @@ public final class InMemorySnapshotManager: SnapshotManagerProtocol {
     }
 
     struct Entry {
-        var createdAt: Date
+        // Immutable observation order; reads only refresh `lastAccessedAt` for LRU pruning.
+        let createdAt: Date
         var lastAccessedAt: Date
         var processId: Int32
+        var isPending: Bool
         var detectionResult: ElementDetectionResult?
         var snapshotData: UIAutomationSnapshot
     }
 
+    struct ImplicitLatestPreservation {
+        let snapshotId: String
+        let invalidatedThrough: Date
+        let preservedAt: Date
+    }
+
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "InMemorySnapshotManager")
     let options: Options
+    let desktopMutationWatermarkStore: DesktopMutationWatermarkStore?
     var entries: [String: Entry] = [:]
+    var implicitLatestInvalidatedAt: Date?
+    var implicitLatestPreservation: ImplicitLatestPreservation?
 
-    public init(detectionResult: ElementDetectionResult? = nil, options: Options = Options()) {
+    public init(
+        detectionResult: ElementDetectionResult? = nil,
+        options: Options = Options(),
+        desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil)
+    {
         self.options = options
+        self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
 
         if let detectionResult {
             let now = Date()
@@ -52,6 +76,7 @@ public final class InMemorySnapshotManager: SnapshotManagerProtocol {
                 createdAt: now,
                 lastAccessedAt: now,
                 processId: getpid(),
+                isPending: false,
                 detectionResult: detectionResult,
                 snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
             self.applyDetectionResult(detectionResult, to: &entry.snapshotData)

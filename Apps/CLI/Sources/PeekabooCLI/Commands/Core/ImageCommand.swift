@@ -78,6 +78,10 @@ struct ImageCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFormatta
         self.resolvedRuntime.services
     }
 
+    func withCaptureFocusMutation(_ operation: () async throws -> Void) async rethrows {
+        try await self.resolvedRuntime.withCaptureFocusMutation(operation)
+    }
+
     var jsonOutput: Bool {
         self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
     }
@@ -95,7 +99,7 @@ struct ImageCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFormatta
         self.runtime = runtime
         self.logger.setJsonOutputMode(self.jsonOutput)
         let startMetadata: [String: Any] = [
-            "mode": self.mode?.rawValue ?? "auto",
+            "mode": mode?.rawValue ?? "auto",
             "app": self.app ?? "none",
             "pid": self.pid ?? 0,
             "hasAnalyzePrompt": self.analyze != nil
@@ -103,28 +107,28 @@ struct ImageCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFormatta
         self.logger.operationStart("image_command", metadata: startMetadata)
 
         do {
-            try self.validateStdoutStreamingOptions()
+            try validateStdoutStreamingOptions()
 
             // ScreenCaptureService performs the authoritative permission check inside each capture path.
             // Avoid preflighting here too; it adds fixed latency to every one-shot screenshot.
             let captures = try await CrossProcessOperationGate.withExclusiveOperation(
                 named: CrossProcessOperationGate.desktopObservationName
             ) {
-                try await self.performCapture()
+                try await performCapture()
             }
 
-            if self.streamsImageToStdout {
-                try self.outputImageToStdout(captures)
-            } else if let prompt = self.analyze, let firstFile = captures.first?.file {
-                let analysis = try await self.analyzeImage(at: firstFile.path, with: prompt)
-                self.outputResultsWithAnalysis(captures, analysis: analysis)
+            if streamsImageToStdout {
+                try outputImageToStdout(captures)
+            } else if let prompt = analyze, let firstFile = captures.first?.file {
+                let analysis = try await analyzeImage(at: firstFile.path, with: prompt)
+                outputResultsWithAnalysis(captures, analysis: analysis)
             } else {
-                self.outputResults(captures)
+                outputResults(captures)
             }
 
             self.logger.operationComplete("image_command", success: true)
         } catch {
-            self.handleError(error)
+            handleError(error)
             self.logger.operationComplete(
                 "image_command",
                 success: false,
@@ -155,7 +159,7 @@ extension ImageCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.app = values.singleOption("app")
         self.pid = try values.decodeOption("pid", as: Int32.self)
-        self.path = values.singleOption("path")
+        path = values.singleOption("path")
         if let parsedMode: CaptureMode = try values.decodeOptionEnum("mode") {
             self.mode = parsedMode
         }
@@ -169,7 +173,7 @@ extension ImageCommand: CommanderBindableCommand {
         if let parsedFormat {
             self.format = parsedFormat
         }
-        if let path = self.path?.trimmingCharacters(in: .whitespacesAndNewlines),
+        if let path = path?.trimmingCharacters(in: .whitespacesAndNewlines),
            !path.isEmpty {
             let expanded = (path as NSString).expandingTildeInPath
             let ext = URL(fileURLWithPath: expanded).pathExtension.lowercased()

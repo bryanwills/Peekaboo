@@ -259,7 +259,7 @@ private final class RecordingHotkeyActionDriver: ActionInputDriving {
         throw ActionInputError.unsupported(.actionUnsupported)
     }
 
-    func tryRightClick(element _: AutomationElement) throws -> ActionInputResult {
+    func tryRightClick(element _: any AutomationElementRepresenting) throws -> ActionInputResult {
         throw ActionInputError.unsupported(.actionUnsupported)
     }
 

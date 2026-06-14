@@ -37,7 +37,7 @@ import PeekabooFoundation
  */
 @MainActor
 public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceProtocol,
-TargetedClickServiceProtocol {
+ExactWindowTargetedClickServiceProtocol {
     let logger = Logger(subsystem: "boo.peekaboo.core", category: "UIAutomationService")
     let snapshotManager: any SnapshotManagerProtocol
 
@@ -54,7 +54,7 @@ TargetedClickServiceProtocol {
     public let inputPolicy: UIInputPolicy
     let actionInputDriver: any ActionInputDriving
     let syntheticInputDriver: any SyntheticInputDriving
-    let automationElementResolver: AutomationElementResolver
+    let automationElementResolver: any AutomationElementResolving
 
     // Search constraints to prevent unbounded AX traversals
     var searchLimits: UIAutomationSearchLimits
@@ -124,7 +124,7 @@ TargetedClickServiceProtocol {
         inputPolicy: UIInputPolicy = .currentBehavior,
         actionInputDriver: any ActionInputDriving,
         syntheticInputDriver: any SyntheticInputDriving = SyntheticInputDriver(),
-        automationElementResolver: AutomationElementResolver,
+        automationElementResolver: any AutomationElementResolving,
         feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient())
     {
         let manager = snapshotManager ?? SnapshotManager()

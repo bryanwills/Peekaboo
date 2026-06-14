@@ -5,6 +5,26 @@ import Testing
 
 struct FocusTargetResolverTests {
     @Test
+    @MainActor
+    func `Optional focus lookups propagate cancellation`() async {
+        let task = Task { @MainActor in
+            try await FocusFailurePolicy.optional {
+                withUnsafeCurrentTask { $0?.cancel() }
+                return 42
+            }
+        }
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+        await #expect(throws: CancellationError.self) {
+            try await FocusFailurePolicy.flatteningOptional { () async throws -> Int? in
+                throw CancellationError()
+            }
+        }
+    }
+
+    @Test
     func `explicit windowID always wins`() {
         let snapshot = UIAutomationSnapshot(
             applicationBundleId: "com.example.app",

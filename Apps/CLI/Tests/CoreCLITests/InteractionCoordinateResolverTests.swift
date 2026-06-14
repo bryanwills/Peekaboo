@@ -62,7 +62,9 @@ struct InteractionCoordinateResolverTests {
 
         #expect(resolution.coordinateSpace == .global)
         #expect(resolution.screenPoint == CGPoint(x: 220, y: 279))
-        #expect(resolution.windowInfo == nil)
+        #expect(resolution.targetWindowID == 59620)
+        #expect(resolution.targetApplicationName == "OpenClaw Settings")
+        #expect(resolution.diagnostics.targetWindow?.windowID == 59620)
     }
 
     @Test
@@ -87,6 +89,30 @@ struct InteractionCoordinateResolverTests {
                 CGPoint(x: 420, y: 10),
                 windowInfo: window,
                 targetApplication: nil
+            )
+        }
+    }
+
+    @Test
+    @MainActor
+    func `explicit application must own selected window`() {
+        let application = Self.makeApp(name: "Target", pid: 12345)
+        let selectedWindow = Self.makeWindow(
+            id: 59620,
+            title: "Foreign",
+            bounds: CGRect(x: 200, y: 260, width: 420, height: 300)
+        )
+        let applicationWindow = Self.makeWindow(
+            id: 70001,
+            title: "Owned",
+            bounds: CGRect(x: 0, y: 0, width: 420, height: 300)
+        )
+
+        #expect(throws: (any Error).self) {
+            try InteractionCoordinateResolver.validateWindowOwnership(
+                windowInfo: selectedWindow,
+                application: application,
+                applicationWindows: [applicationWindow]
             )
         }
     }

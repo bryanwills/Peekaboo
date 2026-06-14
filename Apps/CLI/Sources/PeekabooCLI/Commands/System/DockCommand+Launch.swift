@@ -44,6 +44,7 @@ extension DockCommand {
             self.logger.setJsonOutputMode(self.jsonOutput)
 
             do {
+                self.resolvedRuntime.beginInteractionMutation()
                 try await DockServiceBridge.launchFromDock(dock: self.services.dock, appName: self.app)
                 let dockItem = try await DockServiceBridge.findDockItem(dock: self.services.dock, name: self.app)
                 if self.verify {

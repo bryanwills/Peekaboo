@@ -74,6 +74,14 @@ public struct StepResult: Codable, Sendable {
     public let output: ProcessCommandOutput?
     public let error: String?
     public let executionTime: TimeInterval
+    /// Wall-clock time immediately before the step started executing.
+    public let startedAt: Date?
+    /// Snapshot carried or produced by the step, when applicable.
+    public let snapshotId: String?
+    /// Host-confirmed desktop mutation completion boundary for a produced observation.
+    public let desktopMutationCompletedAt: Date?
+    /// Whether the host certified that the produced observation may remain implicit-latest.
+    public let desktopMutationPreservationAllowed: Bool?
 
     public init(
         stepId: String,
@@ -82,7 +90,11 @@ public struct StepResult: Codable, Sendable {
         success: Bool,
         output: ProcessCommandOutput?,
         error: String?,
-        executionTime: TimeInterval)
+        executionTime: TimeInterval,
+        startedAt: Date? = nil,
+        snapshotId: String? = nil,
+        desktopMutationCompletedAt: Date? = nil,
+        desktopMutationPreservationAllowed: Bool? = nil)
     {
         self.stepId = stepId
         self.stepNumber = stepNumber
@@ -91,6 +103,10 @@ public struct StepResult: Codable, Sendable {
         self.output = output
         self.error = error
         self.executionTime = executionTime
+        self.startedAt = startedAt
+        self.snapshotId = snapshotId
+        self.desktopMutationCompletedAt = desktopMutationCompletedAt
+        self.desktopMutationPreservationAllowed = desktopMutationPreservationAllowed
     }
 }
 
@@ -98,9 +114,18 @@ public struct StepResult: Codable, Sendable {
 public struct StepExecutionResult: Sendable {
     public let output: ProcessCommandOutput?
     public let snapshotId: String?
+    public let desktopMutationCompletedAt: Date?
+    public let desktopMutationPreservationAllowed: Bool?
 
-    public init(output: ProcessCommandOutput?, snapshotId: String?) {
+    public init(
+        output: ProcessCommandOutput?,
+        snapshotId: String?,
+        desktopMutationCompletedAt: Date? = nil,
+        desktopMutationPreservationAllowed: Bool? = nil)
+    {
         self.output = output
         self.snapshotId = snapshotId
+        self.desktopMutationCompletedAt = desktopMutationCompletedAt
+        self.desktopMutationPreservationAllowed = desktopMutationPreservationAllowed
     }
 }

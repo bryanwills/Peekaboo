@@ -98,6 +98,7 @@ struct AppCommand: ParsableCommand {
                 let appIdentifier = try self.resolveApplicationIdentifier()
                 let appInfo = try await resolveApplication(appIdentifier, services: self.services)
 
+                self.resolvedRuntime.beginInteractionMutation()
                 try await self.services.applications.hideApplication(identifier: appIdentifier)
 
                 let data = [
@@ -178,6 +179,7 @@ struct AppCommand: ParsableCommand {
                 let appIdentifier = try self.resolveApplicationIdentifier()
                 let appInfo = try await resolveApplication(appIdentifier, services: self.services)
 
+                self.resolvedRuntime.beginInteractionMutation()
                 try await self.services.applications.unhideApplication(identifier: appIdentifier)
 
                 // Activate if requested
@@ -271,6 +273,7 @@ struct AppCommand: ParsableCommand {
                     if self.verify {
                         throw ValidationError("Verify is only supported with --to (not --cycle)")
                     }
+                    self.resolvedRuntime.beginInteractionMutation()
                     try await self.services.automation.hotkey(keys: "cmd,tab", holdDuration: 0)
 
                     struct CycleResult: Codable {
@@ -280,8 +283,8 @@ struct AppCommand: ParsableCommand {
 
                     let data = CycleResult(action: "cycle", success: true)
 
-                    await InteractionObservationInvalidator.invalidateLatestSnapshot(
-                        using: self.services.snapshots,
+                    await InteractionObservationInvalidator.invalidateAfterMutation(
+                        targets: self.resolvedRuntime.interactionMutationTargets,
                         logger: self.logger,
                         reason: "app switch cycle"
                     )
@@ -291,7 +294,13 @@ struct AppCommand: ParsableCommand {
                     AutomationEventLogger.log(.app, "switch action=cycle success=true")
                 } else if let targetApp = to {
                     let appInfo = try await resolveApplication(targetApp, services: self.services)
+                    self.resolvedRuntime.beginInteractionMutation()
                     try await self.services.applications.activateApplication(identifier: appInfo.name)
+                    await InteractionObservationInvalidator.invalidateAfterMutation(
+                        targets: self.resolvedRuntime.interactionMutationTargets,
+                        logger: self.logger,
+                        reason: "app switch"
+                    )
                     if self.verify {
                         try await self.verifyFrontmostApp(expected: appInfo)
                     }
@@ -310,11 +319,6 @@ struct AppCommand: ParsableCommand {
                         success: true
                     )
 
-                    await InteractionObservationInvalidator.invalidateLatestSnapshot(
-                        using: self.services.snapshots,
-                        logger: self.logger,
-                        reason: "app switch"
-                    )
                     output(data) {
                         print("✓ Switched to \(appInfo.name)")
                     }

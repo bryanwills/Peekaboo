@@ -8,12 +8,14 @@ extension TypeService {
     @MainActor
     func findAndClickElement(query: String, snapshotId: String?) async throws -> (found: Bool, frame: CGRect?) {
         // Search in snapshot first
-        if let snapshotId,
-           let detectionResult = try? await snapshotManager.getDetectionResult(snapshotId: snapshotId)
-        {
+        if let snapshotId {
+            guard let detectionResult = try? await snapshotManager.getDetectionResult(snapshotId: snapshotId) else {
+                throw ActionInputError.staleElement
+            }
             if let match = Self.resolveTargetElement(query: query, in: detectionResult) {
                 return (true, match.bounds)
             }
+            return (false, nil)
         }
 
         // Fall back to AX search

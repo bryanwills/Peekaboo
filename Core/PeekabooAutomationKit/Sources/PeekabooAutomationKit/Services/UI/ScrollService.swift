@@ -14,7 +14,7 @@ public final class ScrollService {
     let inputPolicy: UIInputPolicy
     private let actionInputDriver: any ActionInputDriving
     private let syntheticInputDriver: any SyntheticInputDriving
-    private let automationElementResolver: AutomationElementResolver
+    private let automationElementResolver: any AutomationElementResolving
 
     public convenience init(
         snapshotManager: (any SnapshotManagerProtocol)? = nil,
@@ -36,7 +36,7 @@ public final class ScrollService {
         inputPolicy: UIInputPolicy = .currentBehavior,
         actionInputDriver: any ActionInputDriving = ActionInputDriver(),
         syntheticInputDriver: any SyntheticInputDriving = SyntheticInputDriver(),
-        automationElementResolver: AutomationElementResolver = AutomationElementResolver())
+        automationElementResolver: any AutomationElementResolving = AutomationElementResolver())
     {
         let manager = snapshotManager ?? SnapshotManager()
         self.snapshotManager = manager
@@ -133,7 +133,11 @@ public final class ScrollService {
             throw NotFoundError.element(target)
         }
 
-        if let element = self.automationElementResolver.resolve(query: target, windowContext: nil) {
+        if let element = self.automationElementResolver.resolve(
+            query: target,
+            windowContext: nil,
+            requireTextInput: false)
+        {
             return try self.actionInputDriver.tryScroll(
                 element: element,
                 direction: request.direction,
@@ -220,12 +224,11 @@ public final class ScrollService {
     }
 
     private func lookupElementCenter(target: String, snapshotId: String?) async throws -> CGPoint? {
-        guard let snapshotId,
-              let detectionResult = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotId),
-              let element = detectionResult.elements.findById(target)
-        else {
-            return nil
+        guard let snapshotId else { return nil }
+        guard let detectionResult = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotId) else {
+            throw ActionInputError.staleElement
         }
+        guard let element = detectionResult.elements.findById(target) else { return nil }
 
         let point = CGPoint(x: element.bounds.midX, y: element.bounds.midY)
         return try await WindowMovementTracking.adjustPoint(
@@ -289,9 +292,10 @@ public final class ScrollService {
     @MainActor
     private func findElementFrame(query: String, snapshotId: String?) async throws -> CGRect? {
         // Search in snapshot first
-        if let snapshotId,
-           let detectionResult = try? await snapshotManager.getDetectionResult(snapshotId: snapshotId)
-        {
+        if let snapshotId {
+            guard let detectionResult = try? await snapshotManager.getDetectionResult(snapshotId: snapshotId) else {
+                throw ActionInputError.staleElement
+            }
             let queryLower = query.lowercased()
 
             for element in detectionResult.elements.all {
@@ -304,6 +308,7 @@ public final class ScrollService {
                     return element.bounds
                 }
             }
+            return nil
         }
 
         // Fall back to AX search

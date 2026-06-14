@@ -55,10 +55,10 @@ extension WindowCommand {
                 }
 
                 // Perform the action
+                self.resolvedRuntime.beginInteractionMutation()
                 try await WindowServiceBridge.closeWindow(windows: self.services.windows, target: target)
                 await invalidateLatestSnapshotAfterWindowMutation(
-                    services: self.services,
-                    logger: self.logger,
+                    runtime: self.resolvedRuntime,
                     reason: "window close"
                 )
 
@@ -137,10 +137,10 @@ extension WindowCommand {
                 }
 
                 // Perform the action
+                self.resolvedRuntime.beginInteractionMutation()
                 try await WindowServiceBridge.minimizeWindow(windows: self.services.windows, target: target)
                 await invalidateLatestSnapshotAfterWindowMutation(
-                    services: self.services,
-                    logger: self.logger,
+                    runtime: self.resolvedRuntime,
                     reason: "window minimize"
                 )
                 logWindowAction(
@@ -218,10 +218,10 @@ extension WindowCommand {
                 }
 
                 // Perform the action
+                self.resolvedRuntime.beginInteractionMutation()
                 try await WindowServiceBridge.maximizeWindow(windows: self.services.windows, target: target)
                 await invalidateLatestSnapshotAfterWindowMutation(
-                    services: self.services,
-                    logger: self.logger,
+                    runtime: self.resolvedRuntime,
                     reason: "window maximize"
                 )
                 logWindowAction(

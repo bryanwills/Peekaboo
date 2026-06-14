@@ -1,0 +1,152 @@
+import Foundation
+import PeekabooAutomationKit
+import PeekabooFoundation
+import Testing
+@testable import PeekabooBridge
+
+struct PeekabooBridgeCapabilityTests {
+    @Test
+    func `unknown bridge error kinds decode as untyped errors`() throws {
+        let data = Data(
+            #"{"code":"invalidRequest","message":"Future error","kind":"futureErrorKind","context":"S1"}"#.utf8)
+
+        let envelope = try JSONDecoder().decode(PeekabooBridgeErrorEnvelope.self, from: data)
+
+        #expect(envelope.code == .invalidRequest)
+        #expect(envelope.message == "Future error")
+        #expect(envelope.kind == nil)
+        #expect(envelope.context == "S1")
+    }
+
+    @Test
+    func `handshake omits implicit invalidation for legacy snapshot managers`() async throws {
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: StubServices(snapshots: LegacySnapshotManager()),
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [])
+        }
+        let handshake = try await self.handshake(server: server, hostKind: .gui)
+
+        #expect(!handshake.supportedOperations.contains(.invalidateImplicitLatestSnapshot))
+        #expect(handshake.enabledOperations?.contains(.invalidateImplicitLatestSnapshot) != true)
+    }
+
+    @Test
+    func `application relaunch stays inside one daemon bridge request`() async throws {
+        let applications = await MainActor.run { StubApplicationService() }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: StubServices(applications: applications),
+                hostKind: .onDemand,
+                allowlistedTeams: [],
+                allowlistedBundles: [],
+                daemonControl: StubDaemonControl())
+        }
+        let request = ApplicationRelaunchRequest(
+            targetIdentifier: "PID:123",
+            launchRequest: ApplicationLaunchRequest(
+                applicationIdentifier: "dev.stub",
+                activates: true,
+                waitUntilReady: true),
+            force: true,
+            waitSeconds: 0)
+        let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(
+            PeekabooBridgeRequest.relaunchApplicationWithOptions(request))
+
+        let responseData = await server.decodeAndHandle(requestData, peer: nil)
+        let response = try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeResponse.self, from: responseData)
+        guard case .application = response else {
+            Issue.record("Expected application response, got \(response)")
+            return
+        }
+        let requests = await MainActor.run { applications.relaunchRequests }
+        #expect(requests == [request])
+    }
+
+    private func handshake(
+        server: PeekabooBridgeServer,
+        hostKind: PeekabooBridgeHostKind) async throws -> PeekabooBridgeHandshakeResponse
+    {
+        let request = PeekabooBridgeRequest.handshake(.init(
+            protocolVersion: PeekabooBridgeConstants.protocolVersion,
+            client: .init(
+                bundleIdentifier: "dev.peeka.cli",
+                teamIdentifier: "TEAMID",
+                processIdentifier: getpid(),
+                hostname: Host.current().name),
+            requestedHostKind: hostKind))
+        let responseData = try await server.decodeAndHandle(
+            JSONEncoder.peekabooBridgeEncoder().encode(request),
+            peer: nil)
+        let response = try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeResponse.self, from: responseData)
+        guard case let .handshake(handshake) = response else {
+            throw PeekabooError.operationError(message: "Expected handshake response")
+        }
+        return handshake
+    }
+}
+
+@MainActor
+private final class LegacySnapshotManager: SnapshotManagerProtocol {
+    func createSnapshot() async throws -> String {
+        fatalError("unused")
+    }
+
+    func storeDetectionResult(snapshotId _: String, result _: ElementDetectionResult) async throws {
+        fatalError("unused")
+    }
+
+    func getDetectionResult(snapshotId _: String) async throws -> ElementDetectionResult? {
+        fatalError("unused")
+    }
+
+    func getMostRecentSnapshot() async -> String? {
+        fatalError("unused")
+    }
+
+    func getMostRecentSnapshot(applicationBundleId _: String) async -> String? {
+        fatalError("unused")
+    }
+
+    func listSnapshots() async throws -> [SnapshotInfo] {
+        fatalError("unused")
+    }
+
+    func cleanSnapshot(snapshotId _: String) async throws {
+        fatalError("unused")
+    }
+
+    func cleanSnapshotsOlderThan(days _: Int) async throws -> Int {
+        fatalError("unused")
+    }
+
+    func cleanAllSnapshots() async throws -> Int {
+        fatalError("unused")
+    }
+
+    func getSnapshotStoragePath() -> String {
+        fatalError("unused")
+    }
+
+    func storeScreenshot(_: SnapshotScreenshotRequest) async throws {
+        fatalError("unused")
+    }
+
+    func storeAnnotatedScreenshot(snapshotId _: String, annotatedScreenshotPath _: String) async throws {
+        fatalError("unused")
+    }
+
+    func getElement(snapshotId _: String, elementId _: String) async throws -> UIElement? {
+        fatalError("unused")
+    }
+
+    func findElements(snapshotId _: String, matching _: String) async throws -> [UIElement] {
+        fatalError("unused")
+    }
+
+    func getUIAutomationSnapshot(snapshotId _: String) async throws -> UIAutomationSnapshot? {
+        fatalError("unused")
+    }
+}

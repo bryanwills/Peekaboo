@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooAutomationKit
 import PeekabooFoundation
 import Testing
 @testable import PeekabooCLI
@@ -64,5 +65,71 @@ struct SeeCommandTimeoutTests {
             return
         }
         #expect(reason == "nested capture timeout")
+    }
+
+    @Test
+    @MainActor
+    func `timed out mutation keeps barrier until ignored cancellation work finishes`() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-local-timeout-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = DesktopMutationWatermarkStore(directoryURL: root)
+
+        await #expect(throws: PeekabooError.self) {
+            try await withMainActorCommandTimeout(
+                seconds: 0.01,
+                operationName: "delayed mutation",
+                desktopMutationWatermarkStore: store
+            ) {
+                await withCheckedContinuation { continuation in
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
+                        continuation.resume(returning: ())
+                    }
+                }
+            }
+        }
+
+        let firstPendingRead = try #require(store.effectiveWatermark())
+        try await Task.sleep(for: .milliseconds(2))
+        #expect(try #require(store.effectiveWatermark()) > firstPendingRead)
+
+        try await Task.sleep(for: .milliseconds(120))
+        let completed = try #require(store.effectiveWatermark())
+        try await Task.sleep(for: .milliseconds(2))
+        #expect(store.effectiveWatermark() == completed)
+    }
+
+    @Test
+    @MainActor
+    func `see timeout retains the command barrier until ignored cancellation work finishes`() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-see-timeout-lease-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = DesktopMutationWatermarkStore(directoryURL: root)
+        let tracker = InteractionMutationTracker(desktopMutationWatermarkStore: store)
+        #expect(try tracker.beginDurableMutation())
+
+        await #expect(throws: CaptureError.self) {
+            try await SeeCommand.withWallClockTimeout(
+                seconds: 0.01,
+                interactionMutationTracker: tracker
+            ) {
+                await withCheckedContinuation { continuation in
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
+                        continuation.resume(returning: ())
+                    }
+                }
+            }
+        }
+
+        #expect(try tracker.completeDurableMutation(through: Date()) == nil)
+        let firstPendingRead = try #require(store.effectiveWatermark())
+        try await Task.sleep(for: .milliseconds(2))
+        #expect(try #require(store.effectiveWatermark()) > firstPendingRead)
+
+        try await Task.sleep(for: .milliseconds(120))
+        let completed = try #require(store.effectiveWatermark())
+        try await Task.sleep(for: .milliseconds(2))
+        #expect(store.effectiveWatermark() == completed)
     }
 }

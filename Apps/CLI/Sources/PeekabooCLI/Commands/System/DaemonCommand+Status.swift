@@ -42,9 +42,22 @@ extension DaemonCommand {
             self.runtime = runtime
             let targets = await DaemonControlResolver.targets(explicitSocket: self.bridgeSocket)
 
-            if let status = targets.first?.status {
-                self.output(status) {
-                    DaemonStatusPrinter.render(status: status)
+            if let target = DaemonControlPlanner.preferredStatusTarget(
+                targets,
+                explicitSocket: self.bridgeSocket
+            ) {
+                let additionalSocketPaths = DaemonControlPlanner.additionalSocketPaths(
+                    in: targets,
+                    excluding: target
+                )
+                if !additionalSocketPaths.isEmpty {
+                    self.logger.warn(
+                        "Additional Peekaboo daemon detected at \(additionalSocketPaths.joined(separator: ", ")); " +
+                            "reporting \(target.client.socketPath)"
+                    )
+                }
+                self.output(target.status) {
+                    DaemonStatusPrinter.render(status: target.status)
                 }
             } else {
                 let stopped = PeekabooDaemonStatus(running: false)

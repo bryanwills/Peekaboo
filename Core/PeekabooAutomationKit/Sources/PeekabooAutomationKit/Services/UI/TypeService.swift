@@ -15,7 +15,7 @@ public final class TypeService {
     let inputPolicy: UIInputPolicy
     private let actionInputDriver: any ActionInputDriving
     private let syntheticInputDriver: any SyntheticInputDriving
-    private let automationElementResolver: AutomationElementResolver
+    private let automationElementResolver: any AutomationElementResolving
 
     public convenience init(
         snapshotManager: (any SnapshotManagerProtocol)? = nil,
@@ -37,7 +37,7 @@ public final class TypeService {
         inputPolicy: UIInputPolicy = .currentBehavior,
         actionInputDriver: any ActionInputDriving = ActionInputDriver(),
         syntheticInputDriver: any SyntheticInputDriving = SyntheticInputDriver(),
-        automationElementResolver: AutomationElementResolver = AutomationElementResolver())
+        automationElementResolver: any AutomationElementResolving = AutomationElementResolver())
     {
         self.init(
             snapshotManager: snapshotManager,
@@ -55,7 +55,7 @@ public final class TypeService {
         inputPolicy: UIInputPolicy = .currentBehavior,
         actionInputDriver: any ActionInputDriving = ActionInputDriver(),
         syntheticInputDriver: any SyntheticInputDriving = SyntheticInputDriver(),
-        automationElementResolver: AutomationElementResolver = AutomationElementResolver(),
+        automationElementResolver: any AutomationElementResolving = AutomationElementResolver(),
         randomSource: any TypingCadenceRandomSource)
     {
         let manager = snapshotManager ?? SnapshotManager()
@@ -300,6 +300,8 @@ public final class TypeService {
                 }
                 return resolved
             }
+
+            throw NotFoundError.element(target)
         }
 
         return self.automationElementResolver.resolve(query: target, windowContext: nil, requireTextInput: true)

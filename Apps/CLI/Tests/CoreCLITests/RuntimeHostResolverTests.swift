@@ -1,0 +1,266 @@
+import Commander
+import PeekabooAutomation
+import PeekabooBridge
+import Testing
+@testable import PeekabooCLI
+
+@Suite(.tags(.safe))
+@MainActor
+struct RuntimeHostResolverTests {
+    @Test
+    func `Policy-local click retains known snapshot invalidation endpoints`() throws {
+        let parsed = ParsedValues(
+            positional: [],
+            options: ["inputStrategy": ["actionFirst"]],
+            flags: []
+        )
+        let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: ClickCommand.self)
+        let knownPaths = ["/tmp/gui.sock", "/tmp/daemon.sock"]
+
+        let decision = RuntimeHostResolver.initialRoutingDecision(
+            options: options,
+            environment: [:],
+            configurationInput: nil,
+            knownSnapshotInvalidationRemoteSocketPaths: knownPaths
+        )
+
+        #expect(options.requiresImplicitSnapshotInvalidation)
+        #expect(decision == .local(snapshotInvalidationRemoteSocketPaths: knownPaths))
+    }
+
+    @Test
+    func `Config policy-local click retains known snapshot invalidation endpoints`() throws {
+        let parsed = ParsedValues(positional: [], options: [:], flags: [])
+        let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: ClickCommand.self)
+        let knownPaths = ["/tmp/gui.sock", "/tmp/daemon.sock"]
+
+        let decision = RuntimeHostResolver.initialRoutingDecision(
+            options: options,
+            environment: [:],
+            configurationInput: Configuration.InputConfig(click: .synthOnly),
+            knownSnapshotInvalidationRemoteSocketPaths: knownPaths
+        )
+
+        #expect(decision == .local(snapshotInvalidationRemoteSocketPaths: knownPaths))
+    }
+
+    @Test
+    func `Non-explicit local click retains known snapshot invalidation endpoints`() throws {
+        let environment = ["PEEKABOO_CAPTURE_ENGINE": "cg"]
+        let baseOptions = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: []),
+            commandType: ClickCommand.self
+        )
+        let options = baseOptions.applyingEnvironmentOverrides(environment: environment)
+        let knownPaths = ["/tmp/gui.sock", "/tmp/daemon.sock"]
+
+        let decision = RuntimeHostResolver.initialRoutingDecision(
+            options: options,
+            environment: environment,
+            configurationInput: nil,
+            knownSnapshotInvalidationRemoteSocketPaths: knownPaths
+        )
+
+        #expect(!options.preferRemote)
+        #expect(!options.remoteIsolationRequested)
+        #expect(options.requiresImplicitSnapshotInvalidation)
+        #expect(RuntimeHostResolver.shouldResolveKnownRemoteEndpoints(
+            options: options,
+            environment: environment,
+            configurationInput: nil
+        ))
+        #expect(decision == .local(snapshotInvalidationRemoteSocketPaths: knownPaths))
+    }
+
+    @Test
+    func `Non-mutating local command skips remote endpoint discovery`() throws {
+        let options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: []),
+            commandType: SleepCommand.self
+        )
+
+        #expect(!options.preferRemote)
+        #expect(!options.requiresImplicitSnapshotInvalidation)
+        #expect(!RuntimeHostResolver.shouldResolveKnownRemoteEndpoints(
+            options: options,
+            environment: [:],
+            configurationInput: nil
+        ))
+    }
+
+    @Test
+    func `Explicit no-remote keeps policy-local clicks isolated`() throws {
+        let knownPaths = ["/tmp/gui.sock", "/tmp/daemon.sock"]
+        let cliNoRemote = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(
+                positional: [],
+                options: ["inputStrategy": ["actionFirst"]],
+                flags: ["no-remote"]
+            ),
+            commandType: ClickCommand.self
+        )
+        let defaultClick = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: []),
+            commandType: ClickCommand.self
+        )
+
+        let cliDecision = RuntimeHostResolver.initialRoutingDecision(
+            options: cliNoRemote,
+            environment: [:],
+            configurationInput: nil,
+            knownSnapshotInvalidationRemoteSocketPaths: knownPaths
+        )
+        let environmentDecision = RuntimeHostResolver.initialRoutingDecision(
+            options: defaultClick,
+            environment: ["PEEKABOO_NO_REMOTE": "1", "PEEKABOO_INPUT_STRATEGY": "actionFirst"],
+            configurationInput: nil,
+            knownSnapshotInvalidationRemoteSocketPaths: knownPaths
+        )
+
+        #expect(cliNoRemote.remoteIsolationRequested)
+        #expect(!RuntimeHostResolver.shouldResolveKnownRemoteEndpoints(
+            options: cliNoRemote,
+            environment: [:],
+            configurationInput: nil
+        ))
+        #expect(!RuntimeHostResolver.shouldResolveKnownRemoteEndpoints(
+            options: defaultClick,
+            environment: ["PEEKABOO_NO_REMOTE": "1"],
+            configurationInput: nil
+        ))
+        #expect(cliDecision == .local(snapshotInvalidationRemoteSocketPaths: []))
+        #expect(environmentDecision == .local(snapshotInvalidationRemoteSocketPaths: []))
+    }
+
+    @Test
+    func `Bridge diagnostics mirror policy-local runtime routing`() {
+        var explicitPolicy = CommandRuntimeOptions()
+        explicitPolicy.inputStrategy = .actionFirst
+
+        #expect(BridgeDiagnostics.remoteSkipReason(
+            runtimeOptions: explicitPolicy,
+            environment: [:],
+            configurationInput: nil
+        ) == "input strategy policy")
+        #expect(BridgeDiagnostics.remoteSkipReason(
+            runtimeOptions: CommandRuntimeOptions(),
+            environment: [:],
+            configurationInput: Configuration.InputConfig(click: .synthOnly)
+        ) == "input strategy policy")
+        #expect(BridgeDiagnostics.remoteSkipReason(
+            runtimeOptions: CommandRuntimeOptions(),
+            environment: [:],
+            configurationInput: nil
+        ) == nil)
+    }
+
+    @Test
+    func `Historical diagnostics use runtime candidate validation`() async {
+        let socketPath = "/tmp/peekaboo/daemon-bbbbbbbbbbbbbbbb.sock"
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: socketPath,
+            requireReusableDaemon: true,
+            requiredHostKind: .onDemand,
+            requiresValidatedHistoricalDaemon: true
+        )
+        let handshake = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: [.captureScreen]
+        )
+        let currentOperationNames = [
+            PeekabooBridgeOperation.daemonStatus.rawValue,
+            PeekabooBridgeOperation.daemonStop.rawValue,
+            PeekabooBridgeOperation.launchApplicationWithOptions.rawValue,
+            PeekabooBridgeOperation.relaunchApplicationWithOptions.rawValue,
+            PeekabooBridgeOperation.invalidateImplicitLatestSnapshot.rawValue,
+        ]
+        let status = PeekabooDaemonStatus(
+            running: true,
+            pid: 4242,
+            mode: .manual,
+            bridge: PeekabooDaemonBridgeStatus(
+                socketPath: socketPath,
+                hostKind: .onDemand,
+                allowedOperations: [.daemonStatus, .daemonStop],
+                availableOperationNames: currentOperationNames
+            ),
+            supportsConditionalStop: true
+        )
+
+        let selected = await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: handshake,
+            options: CommandRuntimeOptions(),
+            fetchReusableDaemonStatus: { _ in status }
+        )
+        #expect(selected?.reusableDaemonStatus?.pid == 4242)
+
+        let staleStatus = PeekabooDaemonStatus(
+            running: true,
+            pid: 4242,
+            mode: .manual,
+            bridge: PeekabooDaemonBridgeStatus(
+                socketPath: socketPath,
+                hostKind: .onDemand,
+                allowedOperations: [.daemonStatus, .daemonStop]
+            ),
+            supportsConditionalStop: true
+        )
+        let rejected = await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: handshake,
+            options: CommandRuntimeOptions(),
+            fetchReusableDaemonStatus: { _ in staleStatus }
+        )
+        #expect(rejected == nil)
+    }
+
+    @Test
+    func `Candidate validation rejects synthetic click hosts without post event permission`() async {
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/bridge.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
+        var options = CommandRuntimeOptions()
+        options.requiresPostEventClickPermission = true
+        let accessibilityOnly = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.captureScreen, .targetedClick],
+            permissions: PermissionsStatus(
+                screenRecording: true,
+                accessibility: true,
+                postEvent: false
+            ),
+            enabledOperations: [.captureScreen, .targetedClick]
+        )
+        let postEventCapable = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.captureScreen, .targetedClick],
+            permissions: PermissionsStatus(
+                screenRecording: true,
+                accessibility: true,
+                postEvent: true
+            ),
+            enabledOperations: [.captureScreen, .targetedClick]
+        )
+
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: accessibilityOnly,
+            options: options
+        ) == nil)
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: postEventCapable,
+            options: options
+        ) != nil)
+    }
+}

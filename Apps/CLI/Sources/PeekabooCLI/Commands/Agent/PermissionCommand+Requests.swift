@@ -45,7 +45,9 @@ extension PermissionCommand {
         mutating func run(using runtime: CommandRuntime) async throws {
             self.prepare(using: runtime)
             if await self.renderIfAlreadyGranted() { return }
-            let result = await self.requestScreenRecordingPermission()
+            let result = await PermissionHelpers.performInteractivePermissionRequest(using: runtime) {
+                await self.requestScreenRecordingPermission()
+            }
             self.render(result: result)
         }
 
@@ -161,7 +163,9 @@ extension PermissionCommand {
         mutating func run(using runtime: CommandRuntime) async throws {
             self.prepare(using: runtime)
             if await self.renderIfAlreadyGranted() { return }
-            let granted = self.promptAccessibilityDialog()
+            let granted = await PermissionHelpers.performInteractivePermissionRequest(using: runtime) {
+                self.promptAccessibilityDialog()
+            }
             self.renderAccessibilityResult(granted: granted)
         }
 
@@ -280,7 +284,10 @@ extension PermissionCommand {
         }
 
         private func requestEventSynthesizingPermission() async throws -> AgentPermissionActionResult {
-            let result = try await PermissionHelpers.requestEventSynthesizingPermission(services: self.services)
+            let result = try await PermissionHelpers.requestEventSynthesizingPermission(
+                services: self.services,
+                runtime: self.resolvedRuntime
+            )
             return AgentPermissionActionResult(
                 action: result.action,
                 source: result.source,

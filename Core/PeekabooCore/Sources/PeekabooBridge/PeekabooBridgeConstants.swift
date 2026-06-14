@@ -24,7 +24,7 @@ public enum PeekabooBridgeConstants {
     }
 
     /// Current protocol version supported by this build.
-    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 8)
+    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 9)
 
     /// Oldest protocol version this build can serve without changing request semantics.
     public static let minimumProtocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 0)
@@ -63,6 +63,8 @@ public enum PeekabooBridgeConstants {
 extension JSONEncoder {
     public static func peekabooBridgeEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
+        // Keep legacy 1.0–1.8 date fields wire-compatible. Ordering-sensitive 1.9 fields use
+        // model-specific numeric reference-date encoding so they retain subsecond precision.
         encoder.dateEncodingStrategy = .iso8601
         return encoder
     }
@@ -71,7 +73,41 @@ extension JSONEncoder {
 extension JSONDecoder {
     public static func peekabooBridgeDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let value = try container.decode(String.self)
+            guard let date = PeekabooBridgeDateCoding.date(from: value) else {
+                throw DecodingError.dataCorruptedError(
+                    in: container,
+                    debugDescription: "Invalid Peekaboo Bridge ISO-8601 date: \(value)")
+            }
+            return date
+        }
         return decoder
+    }
+}
+
+private enum PeekabooBridgeDateCoding {
+    static func date(from value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+
+        guard let decimalIndex = value.firstIndex(of: ".") else {
+            return formatter.date(from: value)
+        }
+        let fractionalStart = value.index(after: decimalIndex)
+        let fractionalEnd = value[fractionalStart...].firstIndex(where: { !$0.isNumber }) ?? value.endIndex
+        let fractionalDigits = value[fractionalStart..<fractionalEnd]
+        guard !fractionalDigits.isEmpty,
+              let fraction = Double("0.\(fractionalDigits)")
+        else {
+            return nil
+        }
+
+        let wholeSecondsValue = String(value[..<decimalIndex] + value[fractionalEnd...])
+        guard let wholeSeconds = formatter.date(from: wholeSecondsValue) else {
+            return nil
+        }
+        return wholeSeconds.addingTimeInterval(fraction)
     }
 }

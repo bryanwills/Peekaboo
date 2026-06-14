@@ -182,7 +182,7 @@ extension ApplicationService {
         throw PeekabooError.appNotFound(identifier)
     }
 
-    private static func parsePID(_ identifier: String) -> Int32? {
+    static func parsePID(_ identifier: String) -> Int32? {
         guard identifier.uppercased().hasPrefix("PID:") else { return nil }
         return Int32(identifier.dropFirst(4))
     }
@@ -221,7 +221,8 @@ extension ApplicationService {
             isActive: app.isActive,
             isHidden: app.isHidden,
             windowCount: self.getWindowCount(for: app),
-            activationPolicy: Self.serviceActivationPolicy(from: app.activationPolicy))
+            activationPolicy: Self.serviceActivationPolicy(from: app.activationPolicy),
+            isFinishedLaunching: app.isFinishedLaunching)
     }
 
     private static func serviceActivationPolicy(

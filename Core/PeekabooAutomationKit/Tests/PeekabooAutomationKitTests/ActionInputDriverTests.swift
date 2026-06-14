@@ -211,6 +211,40 @@ struct ActionInputDriverTests {
 
     @MainActor
     @Test
+    func `element action facade normalizes stale action driver failures`() async throws {
+        let detected = DetectedElement(
+            id: "B1",
+            type: .button,
+            label: "Save",
+            bounds: CGRect(x: 10, y: 10, width: 80, height: 24))
+        let detectionResult = ElementDetectionResult(
+            snapshotId: "snapshot",
+            screenshotPath: "/tmp/shot.png",
+            elements: DetectedElements(buttons: [detected]),
+            metadata: DetectionMetadata(detectionTime: 0.01, elementCount: 1, method: "test"))
+        let service = UIAutomationService(
+            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
+            actionInputDriver: RecordingActionInputDriver(elementActionError: .staleElement),
+            automationElementResolver: FixedActionAutomationElementResolver())
+
+        do {
+            _ = try await service.setValue(target: "B1", value: .string("hello"), snapshotId: "snapshot")
+            Issue.record("Expected stale snapshot error from setValue")
+        } catch let PeekabooError.snapshotStale(reason) {
+            #expect(reason.contains("no longer available"))
+        }
+
+        do {
+            _ = try await service.performAction(target: "B1", actionName: "AXPress", snapshotId: "snapshot")
+            Issue.record("Expected stale snapshot error from performAction")
+        } catch let PeekabooError.snapshotStale(reason) {
+            #expect(reason.contains("no longer available"))
+        }
+    }
+
+    @MainActor
+    @Test
     func `mock element can exercise action click without live AX`() throws {
         let element = MockAutomationElement(
             role: AXRoleNames.kAXButtonRole,
@@ -233,13 +267,27 @@ struct ActionInputDriverTests {
             actionErrors: [AXActionNames.kAXShowMenuAction: AccessibilitySystemError(.cannotComplete)])
 
         do {
-            _ = try ActionInputDriver().tryRightClickForTesting(element: element)
+            _ = try ActionInputDriver().tryRightClick(element: element)
             Issue.record("Expected right-click action to request synthetic fallback")
         } catch let error as ActionInputError {
             #expect(error == .unsupported(.actionUnsupported))
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
+    }
+
+    @MainActor
+    @Test
+    func `right click performs show menu action`() throws {
+        let element = MockAutomationElement(
+            role: AXRoleNames.kAXButtonRole,
+            actionNames: [AXActionNames.kAXShowMenuAction])
+
+        let result = try ActionInputDriver().tryRightClick(element: element)
+
+        #expect(element.performedActions == [AXActionNames.kAXShowMenuAction])
+        #expect(result.actionName == AXActionNames.kAXShowMenuAction)
+        #expect(result.elementRole == AXRoleNames.kAXButtonRole)
     }
 
     @MainActor
@@ -326,12 +374,18 @@ struct ActionInputDriverTests {
 
 @MainActor
 private final class RecordingActionInputDriver: ActionInputDriving {
+    private let elementActionError: ActionInputError?
+
+    init(elementActionError: ActionInputError? = nil) {
+        self.elementActionError = elementActionError
+    }
+
     func tryClick(element _: AutomationElement) throws -> ActionInputResult {
         Issue.record("Action driver should not be called")
         return ActionInputResult()
     }
 
-    func tryRightClick(element _: AutomationElement) throws -> ActionInputResult {
+    func tryRightClick(element _: any AutomationElementRepresenting) throws -> ActionInputResult {
         Issue.record("Action driver should not be called")
         return ActionInputResult()
     }
@@ -356,13 +410,49 @@ private final class RecordingActionInputDriver: ActionInputDriving {
     }
 
     func trySetValue(element _: AutomationElement, value _: UIElementValue) throws -> ActionInputResult {
+        if let elementActionError {
+            throw elementActionError
+        }
         Issue.record("Action driver should not be called")
         return ActionInputResult()
     }
 
     func tryPerformAction(element _: AutomationElement, actionName _: String) throws -> ActionInputResult {
+        if let elementActionError {
+            throw elementActionError
+        }
         Issue.record("Action driver should not be called")
         return ActionInputResult()
+    }
+}
+
+@MainActor
+private final class FixedActionAutomationElementResolver: AutomationElementResolving {
+    private let element = AutomationElement(Element(AXUIElementCreateApplication(getpid())))
+
+    func resolve(detectedElement _: DetectedElement, windowContext _: WindowContext?) -> AutomationElement? {
+        self.element
+    }
+
+    func resolve(
+        detectedElement _: DetectedElement,
+        windowContext _: WindowContext?,
+        targetProcessIdentifier _: pid_t?) -> AutomationElement?
+    {
+        self.element
+    }
+
+    func resolve(query _: String, windowContext _: WindowContext?, requireTextInput _: Bool) -> AutomationElement? {
+        self.element
+    }
+
+    func resolve(
+        query _: String,
+        windowContext _: WindowContext?,
+        targetProcessIdentifier _: pid_t?,
+        requireTextInput _: Bool) -> AutomationElement?
+    {
+        self.element
     }
 }
 

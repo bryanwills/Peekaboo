@@ -114,6 +114,12 @@ extension AppCommand {
 
                 var results: [AppQuitInfo] = []
                 for target in quitApps {
+                    if target.pid == self.resolvedRuntime.selectedRemoteHostProcessIdentifier {
+                        throw PeekabooError.invalidInput(
+                            "Cannot quit the daemon host executing this command; use a different runtime host"
+                        )
+                    }
+                    self.resolvedRuntime.beginInteractionMutation()
                     let success = await (try? self.services.applications.quitApplication(
                         identifier: target.identifier,
                         force: self.force

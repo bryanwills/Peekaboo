@@ -137,8 +137,10 @@ struct MenuBarCommand: ParsableCommand, ErrorHandlingCommand, OutputFormattable 
             let focusSnapshot = self.verify ? try await verifier.captureFocusSnapshot() : nil
             let result: PeekabooCore.ClickResult
             if let idx = self.index {
+                self.resolvedRuntime.beginInteractionMutation()
                 result = try await MenuServiceBridge.clickMenuBarItem(at: idx, menu: self.services.menu)
             } else if let name = self.itemName {
+                self.resolvedRuntime.beginInteractionMutation()
                 result = try await MenuServiceBridge.clickMenuBarItem(named: name, menu: self.services.menu)
             } else {
                 throw PeekabooError.invalidInput("Please provide either a menu bar item name or use --index")

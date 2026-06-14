@@ -1,6 +1,8 @@
 import Commander
 import Testing
+@testable import PeekabooAgentRuntime
 @testable import PeekabooCLI
+@testable import PeekabooCore
 
 struct MCPWrapperCommandBindingTests {
     @Test
@@ -74,5 +76,27 @@ struct MCPWrapperCommandBindingTests {
         )
 
         #expect(command.runtimeOptions.requiresInspectAccessibilityTree == true)
+        #expect(command.runtimeOptions.requiresImplicitSnapshotInvalidation == false)
+        #expect(command.runtimeOptions.usesPerToolSnapshotInvalidation == true)
+    }
+
+    @Test
+    @MainActor
+    func `MCP server context shares the nested agent execution gate`() throws {
+        let services = PeekabooServices()
+        let gate = MCPToolSnapshotExecutionGate()
+        let agent = try PeekabooAgentService(
+            services: services,
+            snapshotExecutionGate: gate
+        )
+        services.agent = agent
+
+        let context = MCPCommand.Serve.makeToolContext(
+            services: services,
+            snapshotMutationCoordinator: nil
+        )
+
+        #expect(context.snapshotExecutionGate === gate)
+        #expect(context.snapshotExecutionGate === agent.snapshotExecutionGate)
     }
 }

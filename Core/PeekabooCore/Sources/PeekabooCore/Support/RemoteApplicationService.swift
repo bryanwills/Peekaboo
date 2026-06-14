@@ -10,10 +10,27 @@ import PeekabooFoundation
 public final class RemoteApplicationService: ApplicationServiceProtocol {
     private let client: PeekabooBridgeClient
     private let localFallback: (any ApplicationServiceProtocol)?
+    private let supportsLaunchOptions: Bool
+    private let supportsRelaunch: Bool
 
-    public init(client: PeekabooBridgeClient, localFallback: (any ApplicationServiceProtocol)? = nil) {
+    public var supportsApplicationLaunchOptions: Bool {
+        self.supportsLaunchOptions
+    }
+
+    public var supportsApplicationRelaunch: Bool {
+        self.supportsRelaunch
+    }
+
+    public init(
+        client: PeekabooBridgeClient,
+        localFallback: (any ApplicationServiceProtocol)? = nil,
+        supportsLaunchOptions: Bool = false,
+        supportsRelaunch: Bool = false)
+    {
         self.client = client
         self.localFallback = localFallback
+        self.supportsLaunchOptions = supportsLaunchOptions
+        self.supportsRelaunch = supportsRelaunch
     }
 
     public func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
@@ -53,6 +70,33 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
 
     public func launchApplication(identifier: String) async throws -> ServiceApplicationInfo {
         try await self.client.launchApplication(identifier: identifier)
+    }
+
+    public func launchApplication(request: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo {
+        if self.supportsLaunchOptions {
+            return try await self.client.launchApplication(request: request)
+        }
+
+        if let identifier = request.applicationIdentifier,
+           request.openURLs.isEmpty,
+           request.activates,
+           !request.waitUntilReady
+        {
+            return try await self.client.launchApplication(identifier: identifier)
+        }
+
+        throw PeekabooBridgeErrorEnvelope(
+            code: .operationNotSupported,
+            message: "The selected Peekaboo host does not support background launch options; update or relaunch it")
+    }
+
+    public func relaunchApplication(request: ApplicationRelaunchRequest) async throws -> ServiceApplicationInfo {
+        guard self.supportsRelaunch else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "The selected Peekaboo host does not support atomic relaunch; update or relaunch it")
+        }
+        return try await self.client.relaunchApplication(request: request)
     }
 
     public func activateApplication(identifier: String) async throws {
@@ -119,7 +163,7 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
         }
         switch envelope.code {
         case .internalError:
-            return true
+            return !envelope.mayCompleteSnapshotWorkAfterFailure
         case .permissionDenied:
             return envelope.permission == .appleScript
         default:

@@ -215,6 +215,25 @@ public struct DetectionMetadata: Sendable, Codable {
     /// Truncation metadata if traversal budgets were reached
     public let truncationInfo: DetectionTruncationInfo?
 
+    /// Host-confirmed completion boundary for focus-capable bridge detection.
+    public let desktopMutationCompletedAt: Date?
+
+    /// Whether no overlapping desktop mutation invalidated this observation before publication.
+    public let desktopMutationPreservationAllowed: Bool?
+
+    private enum CodingKeys: String, CodingKey {
+        case detectionTime
+        case elementCount
+        case method
+        case warnings
+        case windowContext
+        case isDialog
+        case truncationInfo
+        case desktopMutationCompletedAt
+        case desktopMutationCompletedAtReferenceDateSeconds
+        case desktopMutationPreservationAllowed
+    }
+
     public init(
         detectionTime: TimeInterval,
         elementCount: Int,
@@ -222,7 +241,9 @@ public struct DetectionMetadata: Sendable, Codable {
         warnings: [String] = [],
         windowContext: WindowContext? = nil,
         isDialog: Bool = false,
-        truncationInfo: DetectionTruncationInfo?)
+        truncationInfo: DetectionTruncationInfo?,
+        desktopMutationCompletedAt: Date? = nil,
+        desktopMutationPreservationAllowed: Bool? = nil)
     {
         self.detectionTime = detectionTime
         self.elementCount = elementCount
@@ -231,6 +252,51 @@ public struct DetectionMetadata: Sendable, Codable {
         self.windowContext = windowContext
         self.isDialog = isDialog
         self.truncationInfo = truncationInfo
+        self.desktopMutationCompletedAt = desktopMutationCompletedAt
+        self.desktopMutationPreservationAllowed = desktopMutationPreservationAllowed
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.detectionTime = try container.decode(TimeInterval.self, forKey: .detectionTime)
+        self.elementCount = try container.decode(Int.self, forKey: .elementCount)
+        self.method = try container.decode(String.self, forKey: .method)
+        self.warnings = try container.decodeIfPresent([String].self, forKey: .warnings) ?? []
+        self.windowContext = try container.decodeIfPresent(WindowContext.self, forKey: .windowContext)
+        self.isDialog = try container.decodeIfPresent(Bool.self, forKey: .isDialog) ?? false
+        self.truncationInfo = try container.decodeIfPresent(
+            DetectionTruncationInfo.self,
+            forKey: .truncationInfo)
+        if let seconds = try container.decodeIfPresent(
+            TimeInterval.self,
+            forKey: .desktopMutationCompletedAtReferenceDateSeconds)
+        {
+            self.desktopMutationCompletedAt = Date(timeIntervalSinceReferenceDate: seconds)
+        } else {
+            self.desktopMutationCompletedAt = try container.decodeIfPresent(
+                Date.self,
+                forKey: .desktopMutationCompletedAt)
+        }
+        self.desktopMutationPreservationAllowed = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .desktopMutationPreservationAllowed)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.detectionTime, forKey: .detectionTime)
+        try container.encode(self.elementCount, forKey: .elementCount)
+        try container.encode(self.method, forKey: .method)
+        try container.encode(self.warnings, forKey: .warnings)
+        try container.encodeIfPresent(self.windowContext, forKey: .windowContext)
+        try container.encode(self.isDialog, forKey: .isDialog)
+        try container.encodeIfPresent(self.truncationInfo, forKey: .truncationInfo)
+        try container.encodeIfPresent(
+            self.desktopMutationCompletedAt?.timeIntervalSinceReferenceDate,
+            forKey: .desktopMutationCompletedAtReferenceDateSeconds)
+        try container.encodeIfPresent(
+            self.desktopMutationPreservationAllowed,
+            forKey: .desktopMutationPreservationAllowed)
     }
 
     public init(

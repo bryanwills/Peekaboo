@@ -21,7 +21,9 @@ extension UIAutomationService {
      */
     public func scroll(_ request: ScrollRequest) async throws {
         self.logger.debug("Delegating scroll to ScrollService")
-        let result = try await self.scrollService.scroll(request)
+        let result = try await self.normalizingSnapshotErrors {
+            try await self.scrollService.scroll(request)
+        }
 
         let feedbackPoint = result.anchorPoint ?? NSEvent.mouseLocation
         _ = await self.feedbackClient.showScrollFeedback(

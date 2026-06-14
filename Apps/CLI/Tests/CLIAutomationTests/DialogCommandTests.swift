@@ -120,7 +120,7 @@ struct DialogCommandTests {
         )
 
         let services = self.makeTestServices(dialogs: dialogService)
-        let (output, status) = try await self.runCommand(
+        let (output, status) = try await runCommand(
             ["dialog", "dismiss", "--force", "--json"],
             services: services
         )
@@ -198,7 +198,7 @@ struct DialogCommandTests {
         let dialogService = StubDialogService(elements: elements)
         let services = self.makeTestServices(dialogs: dialogService)
 
-        let (output, status) = try await self.runCommand(
+        let (output, status) = try await runCommand(
             ["dialog", "list", "--json"],
             services: services
         )
@@ -209,6 +209,37 @@ struct DialogCommandTests {
         #expect(response.data.title == "Open")
         #expect(response.data.buttons.contains("New Document"))
         #expect(response.data.textFields.first?.placeholder == "File name")
+    }
+
+    @Test
+    func `untargeted dialog list leaves latest snapshot eligible`() async throws {
+        let elements = DialogElements(
+            dialogInfo: DialogInfo(
+                title: "Open",
+                role: "AXWindow",
+                subrole: "AXDialog",
+                isFileDialog: true,
+                bounds: .init(x: 0, y: 0, width: 400, height: 300)
+            ),
+            buttons: [],
+            textFields: [],
+            staticTexts: []
+        )
+        let snapshots = StubSnapshotManager()
+        let latestSnapshotID = try await snapshots.createSnapshot()
+        let services = TestServicesFactory.makePeekabooServices(
+            dialogs: StubDialogService(elements: elements),
+            snapshots: snapshots
+        )
+
+        let (_, status) = try await runCommand(
+            ["dialog", "list", "--json"],
+            services: services
+        )
+
+        #expect(status == 0)
+        #expect(snapshots.invalidationCutoffs.isEmpty)
+        #expect(await snapshots.getMostRecentSnapshot() == latestSnapshotID)
     }
 
     @Test
@@ -235,7 +266,7 @@ struct DialogCommandTests {
         )
         let services = self.makeTestServices(dialogs: dialogService)
 
-        let (output, status) = try await self.runCommand(
+        let (output, status) = try await runCommand(
             ["dialog", "click", "--button", "New Document", "--json"],
             services: services
         )

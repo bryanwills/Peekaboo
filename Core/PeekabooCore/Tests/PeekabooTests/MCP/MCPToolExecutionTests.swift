@@ -319,6 +319,29 @@ struct MCPToolExecutionTests {
     }
 
     @Test
+    func `timed out See tool retains its pending snapshot tombstone`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run {
+            MockAutomationService(
+                accessibilityGranted: true,
+                detectionError: POSIXError(.ETIMEDOUT))
+        }
+        let snapshots = await MainActor.run { InMemorySnapshotManager() }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            snapshots: snapshots)
+        let tool = SeeTool(context: context)
+
+        let response = try await context.execute(tool: tool, arguments: ToolArguments(raw: [:]))
+
+        #expect(response.isError)
+        #expect(try await snapshots.listSnapshots().isEmpty)
+        #expect(try await snapshots.cleanAllSnapshots() == 1)
+        #expect(await UISnapshotManager.shared.getSnapshot(id: nil) == nil)
+        await UISnapshotManager.shared.removeAllSnapshots()
+    }
+
+    @Test
     func `See tool app target detects against resolved observation window`() async throws {
         let (app, windows) = await MainActor.run {
             Self.makeWindowedTestApp()
@@ -495,8 +518,10 @@ struct MCPToolExecutionTests {
         } else {
             Issue.record("Expected ClickTool to forward .elementId, not coordinates")
         }
-        let invalidated = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
-        #expect(invalidated == nil)
+        let preserved = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(preserved != nil)
+        #expect(implicitLatest == nil)
         #expect(MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
@@ -539,8 +564,10 @@ struct MCPToolExecutionTests {
         let calls = await MainActor.run { automation.targetedClickCalls }
         #expect(calls.first?.snapshotId == snapshotId)
         #expect(calls.first?.targetProcessIdentifier == 111)
-        let invalidated = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
-        #expect(invalidated == nil)
+        let preserved = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(preserved != nil)
+        #expect(implicitLatest == nil)
         #expect(MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
@@ -671,12 +698,14 @@ struct MCPToolExecutionTests {
         #expect(response.isError == false)
         let calls = await MainActor.run { automation.clickCalls }
         #expect(calls.first?.snapshotId == nil)
-        let invalidated = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
-        #expect(invalidated == nil)
+        let preserved = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(preserved != nil)
+        #expect(implicitLatest == nil)
     }
 
     @Test
-    func `Click tool invalidates explicit snapshot after coordinate click`() async throws {
+    func `Click tool invalidates implicit latest while preserving explicit snapshot history`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
@@ -695,10 +724,12 @@ struct MCPToolExecutionTests {
         #expect(response.isError == false)
         let calls = await MainActor.run { automation.clickCalls }
         #expect(calls.first?.snapshotId == nil)
-        let invalidated = await UISnapshotManager.shared.getSnapshot(id: explicitSnapshotId)
-        let stillLatest = await UISnapshotManager.shared.getSnapshot(id: latestSnapshotId)
-        #expect(invalidated == nil)
-        #expect(stillLatest != nil)
+        let explicitHistory = await UISnapshotManager.shared.getSnapshot(id: explicitSnapshotId)
+        let latestHistory = await UISnapshotManager.shared.getSnapshot(id: latestSnapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(explicitHistory != nil)
+        #expect(latestHistory != nil)
+        #expect(implicitLatest == nil)
         #expect(MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
@@ -757,14 +788,16 @@ struct MCPToolExecutionTests {
         #expect(response.isError == false)
         let typeSnapshotId = await MainActor.run { automation.lastTypeSnapshotId }
         #expect(typeSnapshotId == nil)
-        let invalidated = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
-        #expect(invalidated == nil)
+        let preserved = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(preserved != nil)
+        #expect(implicitLatest == nil)
         #expect(MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
     @Test
-    func `Type tool invalidates explicit snapshot after focused typing`() async throws {
+    func `Type tool invalidates implicit latest while preserving explicit snapshot history`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
@@ -782,10 +815,12 @@ struct MCPToolExecutionTests {
         #expect(response.isError == false)
         let typeSnapshotId = await MainActor.run { automation.lastTypeSnapshotId }
         #expect(typeSnapshotId == explicitSnapshotId)
-        let invalidated = await UISnapshotManager.shared.getSnapshot(id: explicitSnapshotId)
-        let stillLatest = await UISnapshotManager.shared.getSnapshot(id: latestSnapshotId)
-        #expect(invalidated == nil)
-        #expect(stillLatest != nil)
+        let explicitHistory = await UISnapshotManager.shared.getSnapshot(id: explicitSnapshotId)
+        let latestHistory = await UISnapshotManager.shared.getSnapshot(id: latestSnapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(explicitHistory != nil)
+        #expect(latestHistory != nil)
+        #expect(implicitLatest == nil)
         #expect(MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
@@ -804,14 +839,16 @@ struct MCPToolExecutionTests {
         #expect(response.isError == false)
         let requests = await MainActor.run { automation.scrollRequests }
         #expect(requests.first?.snapshotId == nil)
-        let invalidated = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
-        #expect(invalidated == nil)
+        let preserved = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(preserved != nil)
+        #expect(implicitLatest == nil)
         #expect(MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
     @Test
-    func `Scroll tool invalidates explicit snapshot after pointer-position scroll`() async throws {
+    func `Scroll tool invalidates implicit latest while preserving explicit snapshot history`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
@@ -829,10 +866,12 @@ struct MCPToolExecutionTests {
         #expect(response.isError == false)
         let requests = await MainActor.run { automation.scrollRequests }
         #expect(requests.first?.snapshotId == explicitSnapshotId)
-        let invalidated = await UISnapshotManager.shared.getSnapshot(id: explicitSnapshotId)
-        let stillLatest = await UISnapshotManager.shared.getSnapshot(id: latestSnapshotId)
-        #expect(invalidated == nil)
-        #expect(stillLatest != nil)
+        let explicitHistory = await UISnapshotManager.shared.getSnapshot(id: explicitSnapshotId)
+        let latestHistory = await UISnapshotManager.shared.getSnapshot(id: latestSnapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(explicitHistory != nil)
+        #expect(latestHistory != nil)
+        #expect(implicitLatest == nil)
         #expect(MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
@@ -945,8 +984,10 @@ struct MCPElementActionToolExecutionTests {
         #expect(call?.target == "T1")
         #expect(call?.value == .string("hello"))
         #expect(call?.snapshotId == snapshotId)
-        let invalidated = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
-        #expect(invalidated == nil)
+        let preserved = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(preserved != nil)
+        #expect(implicitLatest == nil)
         #expect(MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
@@ -967,8 +1008,10 @@ struct MCPElementActionToolExecutionTests {
         #expect(response.isError == false)
         let call = await MainActor.run { automation.setValueCalls.first }
         #expect(call?.snapshotId == snapshotId)
-        let invalidated = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
-        #expect(invalidated == nil)
+        let preserved = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(preserved != nil)
+        #expect(implicitLatest == nil)
         #expect(MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
@@ -995,8 +1038,10 @@ struct MCPElementActionToolExecutionTests {
         #expect(call?.target == "B1")
         #expect(call?.actionName == "AXPress")
         #expect(call?.snapshotId == snapshotId)
-        let invalidated = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
-        #expect(invalidated == nil)
+        let preserved = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(preserved != nil)
+        #expect(implicitLatest == nil)
         #expect(MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
@@ -1026,11 +1071,15 @@ enum MCPToolTestHelpers {
         screenCapture: (any ScreenCaptureServiceProtocol)? = nil,
         applications: (any ApplicationServiceProtocol)? = nil,
         screens: (any ScreenServiceProtocol)? = nil,
-        clipboard: (any ClipboardServiceProtocol)? = nil) async -> MCPToolContext
+        clipboard: (any ClipboardServiceProtocol)? = nil,
+        snapshots: (any SnapshotManagerProtocol)? = nil,
+        snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
+        snapshotExecutionGate: MCPToolSnapshotExecutionGate = MCPToolSnapshotExecutionGate()) async -> MCPToolContext
     {
         await MainActor.run {
             let services = PeekabooServices()
             let resolvedScreens = screens ?? services.screens
+            let resolvedSnapshots = snapshots ?? services.snapshots
             return MCPToolContext(
                 automation: automation ?? services.automation,
                 menu: services.menu,
@@ -1043,13 +1092,16 @@ enum MCPToolTestHelpers {
                     screenCapture: screenCapture ?? services.screenCapture,
                     automation: automation ?? services.automation,
                     applications: applications ?? services.applications,
-                    screens: resolvedScreens),
-                snapshots: services.snapshots,
+                    screens: resolvedScreens,
+                    snapshotManager: snapshots),
+                snapshots: resolvedSnapshots,
                 screens: resolvedScreens,
                 agent: services.agent,
                 permissions: services.permissions,
                 clipboard: clipboard ?? services.clipboard,
-                browser: services.browser)
+                browser: services.browser,
+                snapshotMutationCoordinator: snapshotMutationCoordinator,
+                snapshotExecutionGate: snapshotExecutionGate)
         }
     }
 
@@ -1104,6 +1156,7 @@ TargetedTypeServiceProtocol {
 
     private let accessibilityGranted: Bool
     private let detectionResult: ElementDetectionResult?
+    private let detectionError: (any Error)?
     private let mockCurrentMouseLocation: CGPoint?
     private(set) var clickCalls: [ClickCall] = []
     private(set) var targetedClickCalls: [TargetedClickCall] = []
@@ -1128,10 +1181,12 @@ TargetedTypeServiceProtocol {
     init(
         accessibilityGranted: Bool,
         detectionResult: ElementDetectionResult? = nil,
+        detectionError: (any Error)? = nil,
         currentMouseLocation: CGPoint? = nil)
     {
         self.accessibilityGranted = accessibilityGranted
         self.detectionResult = detectionResult
+        self.detectionError = detectionError
         self.mockCurrentMouseLocation = currentMouseLocation
     }
 
@@ -1139,6 +1194,9 @@ TargetedTypeServiceProtocol {
         -> ElementDetectionResult
     {
         self.lastWindowContext = windowContext
+        if let detectionError {
+            throw detectionError
+        }
         if let detectionResult = self.detectionResult {
             return detectionResult
         }

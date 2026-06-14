@@ -86,6 +86,7 @@ struct MoveWindowSubcommand: ApplicationResolvable, ErrorHandlingCommand, Output
             let spaceService = SpaceCommandEnvironment.service
 
             if self.toCurrent {
+                self.resolvedRuntime.beginInteractionMutation()
                 try await spaceService.moveWindowToCurrentSpace(windowID: windowID)
                 AutomationEventLogger.log(
                     .space,
@@ -119,6 +120,7 @@ struct MoveWindowSubcommand: ApplicationResolvable, ErrorHandlingCommand, Output
             }
 
             let targetSpace = spaces[spaceNum - 1]
+            self.resolvedRuntime.beginInteractionMutation()
             try await spaceService.moveWindowToSpace(windowID: windowID, spaceID: targetSpace.id)
             if self.follow {
                 try await spaceService.switchToSpace(targetSpace.id)

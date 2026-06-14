@@ -7,14 +7,31 @@ import PeekabooFoundation
 
 @MainActor
 public final class RemoteSnapshotManager: SnapshotManagerProtocol {
-    private let client: PeekabooBridgeClient
+    public let supportsImplicitLatestSnapshotInvalidation: Bool
 
-    public init(client: PeekabooBridgeClient) {
+    public var effectiveImplicitLatestInvalidationWatermark: Date? {
+        self.desktopMutationWatermarkStore?.effectiveWatermark()
+    }
+
+    private let client: PeekabooBridgeClient
+    private let desktopMutationWatermarkStore: DesktopMutationWatermarkStore?
+
+    public init(
+        client: PeekabooBridgeClient,
+        supportsImplicitLatestSnapshotInvalidation: Bool = false,
+        desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil)
+    {
         self.client = client
+        self.supportsImplicitLatestSnapshotInvalidation = supportsImplicitLatestSnapshotInvalidation
+        self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
     }
 
     public func createSnapshot() async throws -> String {
         try await self.client.createSnapshot()
+    }
+
+    public func createSnapshot(pendingAt observationStartedAt: Date) async throws -> String {
+        try await self.client.createSnapshot(pendingAt: observationStartedAt)
     }
 
     public func storeDetectionResult(snapshotId: String, result: ElementDetectionResult) async throws {
@@ -35,6 +52,43 @@ public final class RemoteSnapshotManager: SnapshotManagerProtocol {
 
     public func getMostRecentSnapshot(applicationBundleId: String) async -> String? {
         await (try? self.client.getMostRecentSnapshot(applicationBundleId: applicationBundleId))
+    }
+
+    public func invalidateImplicitLatestSnapshot(through cutoff: Date) async throws -> String? {
+        try await self.invalidateImplicitLatestSnapshot(through: cutoff, preserving: nil)
+    }
+
+    public func invalidateImplicitLatestSnapshot(
+        through cutoff: Date,
+        preserving snapshotId: String?) async throws -> String?
+    {
+        try await self.invalidateImplicitLatestSnapshot(
+            through: cutoff,
+            preserving: snapshotId,
+            preservedAt: snapshotId == nil ? nil : Date())
+    }
+
+    public func invalidateImplicitLatestSnapshot(
+        through cutoff: Date,
+        preserving snapshotId: String?,
+        preservedAt: Date?) async throws -> String?
+    {
+        let effectiveCutoff = try self.desktopMutationWatermarkStore?.advance(through: cutoff) ?? cutoff
+        let effectiveSnapshotID = effectiveCutoff <= cutoff ? snapshotId : nil
+        do {
+            return try await self.client.invalidateImplicitLatestSnapshot(
+                through: effectiveCutoff,
+                preserving: effectiveSnapshotID,
+                preservedAt: effectiveSnapshotID == nil ? nil : preservedAt)
+        } catch let envelope as PeekabooBridgeErrorEnvelope
+            where envelope.code == .operationNotSupported
+            || envelope.code == .invalidRequest
+            || envelope.code == .decodingFailed
+        {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge host lacks cutoff-aware snapshot invalidation; update or relaunch Peekaboo")
+        }
     }
 
     public func listSnapshots() async throws -> [SnapshotInfo] {

@@ -158,17 +158,34 @@ public struct PeekabooBridgeTargetedClickRequest: Codable, Sendable {
     public let clickType: ClickType
     public let snapshotId: String?
     public let targetProcessIdentifier: Int32
+    public let targetWindowID: Int?
 
     public init(
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        targetProcessIdentifier: Int32)
+        targetProcessIdentifier: Int32,
+        targetWindowID: Int? = nil)
     {
         self.target = target
         self.clickType = clickType
         self.snapshotId = snapshotId
         self.targetProcessIdentifier = targetProcessIdentifier
+        self.targetWindowID = targetWindowID
+    }
+
+    /// Whether this request necessarily uses the synthetic event path.
+    public var requiresPostEventPermission: Bool {
+        Self.requiresPostEventPermission(target: self.target, clickType: self.clickType)
+    }
+
+    public static func requiresPostEventPermission(target: ClickTarget, clickType: ClickType) -> Bool {
+        switch (target, clickType) {
+        case (.coordinates, _), (_, .double):
+            true
+        case (_, .single), (_, .right):
+            false
+        }
     }
 }
 
@@ -334,7 +351,31 @@ public struct PeekabooBridgeDialogDismissRequest: Codable, Sendable {
     public let appName: String?
 }
 
-public struct PeekabooBridgeCreateSnapshotRequest: Codable, Sendable {}
+public struct PeekabooBridgeCreateSnapshotRequest: Codable, Sendable {
+    public let pendingAt: Date?
+
+    public init(pendingAt: Date? = nil) {
+        self.pendingAt = pendingAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case pendingAtReferenceDateSeconds
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.pendingAt = try container.decodeIfPresent(
+            TimeInterval.self,
+            forKey: .pendingAtReferenceDateSeconds).map(Date.init(timeIntervalSinceReferenceDate:))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(
+            self.pendingAt?.timeIntervalSinceReferenceDate,
+            forKey: .pendingAtReferenceDateSeconds)
+    }
+}
 
 public struct PeekabooBridgeStoreDetectionRequest: Codable, Sendable {
     public let snapshotId: String
@@ -386,6 +427,44 @@ public struct PeekabooBridgeGetMostRecentSnapshotRequest: Codable, Sendable {
 
     public init(applicationBundleId: String?) {
         self.applicationBundleId = applicationBundleId
+    }
+}
+
+public struct PeekabooBridgeInvalidateImplicitLatestSnapshotRequest: Codable, Sendable {
+    public let cutoff: Date
+    public let preservingSnapshotId: String?
+    public let preservedAt: Date?
+
+    public init(cutoff: Date, preservingSnapshotId: String? = nil, preservedAt: Date? = nil) {
+        self.cutoff = cutoff
+        self.preservingSnapshotId = preservingSnapshotId
+        self.preservedAt = preservedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case cutoffReferenceDateSeconds
+        case preservingSnapshotId
+        case preservedAtReferenceDateSeconds
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.cutoff = try Date(timeIntervalSinceReferenceDate: container.decode(
+            TimeInterval.self,
+            forKey: .cutoffReferenceDateSeconds))
+        self.preservingSnapshotId = try container.decodeIfPresent(String.self, forKey: .preservingSnapshotId)
+        self.preservedAt = try container.decodeIfPresent(
+            TimeInterval.self,
+            forKey: .preservedAtReferenceDateSeconds).map(Date.init(timeIntervalSinceReferenceDate:))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.cutoff.timeIntervalSinceReferenceDate, forKey: .cutoffReferenceDateSeconds)
+        try container.encodeIfPresent(self.preservingSnapshotId, forKey: .preservingSnapshotId)
+        try container.encodeIfPresent(
+            self.preservedAt?.timeIntervalSinceReferenceDate,
+            forKey: .preservedAtReferenceDateSeconds)
     }
 }
 

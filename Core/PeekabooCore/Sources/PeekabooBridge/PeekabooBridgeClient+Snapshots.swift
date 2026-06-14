@@ -4,7 +4,11 @@ import PeekabooFoundation
 
 extension PeekabooBridgeClient {
     public func createSnapshot() async throws -> String {
-        let response = try await self.send(.createSnapshot(.init()))
+        try await self.createSnapshot(pendingAt: nil)
+    }
+
+    public func createSnapshot(pendingAt: Date?) async throws -> String {
+        let response = try await self.send(.createSnapshot(.init(pendingAt: pendingAt)))
         switch response {
         case let .snapshotId(id): return id
         case let .error(envelope): throw envelope
@@ -56,6 +60,26 @@ extension PeekabooBridgeClient {
             throw PeekabooBridgeErrorEnvelope(
                 code: .invalidRequest,
                 message: "Unexpected getMostRecentSnapshot response")
+        }
+    }
+
+    public func invalidateImplicitLatestSnapshot(
+        through cutoff: Date = Date(),
+        preserving snapshotId: String? = nil,
+        preservedAt: Date? = nil) async throws -> String?
+    {
+        let response = try await self.send(.invalidateImplicitLatestSnapshot(.init(
+            cutoff: cutoff,
+            preservingSnapshotId: snapshotId,
+            preservedAt: preservedAt)))
+        switch response {
+        case let .snapshotId(id): return id
+        case .ok: return nil
+        case let .error(envelope): throw envelope
+        default:
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Unexpected invalidateImplicitLatestSnapshot response")
         }
     }
 

@@ -7,7 +7,7 @@ extension PeekabooBridgeOperation {
         case .captureScreen, .captureWindow, .captureFrontmost, .captureArea, .detectElements,
              .desktopObservation:
             [.screenRecording]
-        case .targetedHotkey, .targetedTypeActions, .targetedClick:
+        case .targetedHotkey, .targetedTypeActions:
             [.postEvent]
         case .inspectAccessibilityTree,
              .click, .type, .typeActions, .setValue, .performAction, .scroll, .hotkey, .swipe, .drag, .moveMouse,
@@ -18,7 +18,7 @@ extension PeekabooBridgeOperation {
              .rightClickDockItem, .hideDock, .showDock, .isDockHidden, .findDockItem, .dialogFindActive,
              .dialogClickButton, .dialogEnterText, .dialogHandleFile, .dialogDismiss, .dialogListElements:
             [.accessibility]
-        case .launchApplication, .activateApplication, .quitApplication, .hideApplication, .unhideApplication,
+        case .activateApplication, .hideApplication, .unhideApplication,
              .hideOtherApplications, .showAllApplications:
             [.appleScript]
         case ._appleScriptProbe,
@@ -37,13 +37,20 @@ extension PeekabooBridgeOperation {
              .storeAnnotatedScreenshot,
              .listSnapshots,
              .getMostRecentSnapshot,
+             .invalidateImplicitLatestSnapshot,
              .cleanSnapshot,
              .cleanSnapshotsOlderThan,
              .cleanAllSnapshots,
              .listApplications,
              .findApplication,
              .getFrontmostApplication,
-             .isApplicationRunning:
+             .isApplicationRunning,
+             .launchApplication,
+             .launchApplicationWithOptions,
+             .relaunchApplicationWithOptions,
+             .quitApplication,
+             .targetedClick,
+             .exactWindowTargetedClick:
             []
         }
     }
@@ -75,6 +82,7 @@ extension PeekabooBridgeOperation {
         .targetedHotkey,
         .targetedTypeActions,
         .targetedClick,
+        .exactWindowTargetedClick,
         .swipe,
         .drag,
         .moveMouse,
@@ -93,6 +101,8 @@ extension PeekabooBridgeOperation {
         .getFrontmostApplication,
         .isApplicationRunning,
         .launchApplication,
+        .launchApplicationWithOptions,
+        .relaunchApplicationWithOptions,
         .activateApplication,
         .quitApplication,
         .hideApplication,
@@ -129,6 +139,7 @@ extension PeekabooBridgeOperation {
         .storeAnnotatedScreenshot,
         .listSnapshots,
         .getMostRecentSnapshot,
+        .invalidateImplicitLatestSnapshot,
         .cleanSnapshot,
         .cleanSnapshotsOlderThan,
         .cleanAllSnapshots,

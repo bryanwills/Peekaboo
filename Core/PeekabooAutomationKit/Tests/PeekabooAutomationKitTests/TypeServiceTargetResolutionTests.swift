@@ -1,4 +1,6 @@
 import CoreGraphics
+import Foundation
+import enum PeekabooFoundation.PeekabooError
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -23,6 +25,60 @@ struct TypeServiceTargetResolutionTests {
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
+    }
+
+    @Test
+    @MainActor
+    func `synthetic type treats explicit missing snapshot as authoritative`() async {
+        let service = TypeService(
+            snapshotManager: InMemorySnapshotManager(),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly))
+
+        do {
+            try await service.type(
+                text: "hello",
+                target: "missing-\(UUID().uuidString)",
+                clearExisting: false,
+                typingDelay: 0,
+                snapshotId: "missing")
+            Issue.record("Expected stale element error for missing synthetic snapshot.")
+        } catch let error as ActionInputError {
+            #expect(error == .staleElement)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test
+    @MainActor
+    func `action-first type does not escape an explicit snapshot`() async throws {
+        let snapshotId = "snapshot"
+        let detectionResult = ElementDetectionResult(
+            snapshotId: snapshotId,
+            screenshotPath: "/tmp/shot.png",
+            elements: DetectedElements(),
+            metadata: DetectionMetadata(detectionTime: 0.01, elementCount: 0, method: "test"))
+        let resolver = RecordingTypeAutomationElementResolver()
+        let service = TypeService(
+            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
+            automationElementResolver: resolver)
+
+        do {
+            try await service.type(
+                text: "hello",
+                target: "outside-snapshot",
+                clearExisting: true,
+                typingDelay: 0,
+                snapshotId: snapshotId)
+            Issue.record("Expected missing snapshot target error.")
+        } catch let PeekabooError.elementNotFound(identifier) {
+            #expect(identifier == "outside-snapshot")
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(resolver.queryResolutionCount == 0)
     }
 
     @Test
@@ -130,5 +186,19 @@ struct TypeServiceTargetResolutionTests {
             metadata: DetectionMetadata(detectionTime: 0.01, elementCount: 2, method: "test"))
 
         #expect(TypeService.resolveTargetElement(query: "basic-text-field", in: detectionResult)?.id == "T_LOW")
+    }
+}
+
+@MainActor
+private final class RecordingTypeAutomationElementResolver: AutomationElementResolving {
+    private(set) var queryResolutionCount = 0
+
+    func resolve(detectedElement _: DetectedElement, windowContext _: WindowContext?) -> AutomationElement? {
+        nil
+    }
+
+    func resolve(query _: String, windowContext _: WindowContext?, requireTextInput _: Bool) -> AutomationElement? {
+        self.queryResolutionCount += 1
+        return nil
     }
 }

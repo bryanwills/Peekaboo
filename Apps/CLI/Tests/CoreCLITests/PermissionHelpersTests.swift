@@ -1,8 +1,44 @@
 import PeekabooBridge
+import PeekabooCore
 import Testing
 @testable import PeekabooCLI
 
 struct PermissionHelpersTests {
+    @Test
+    @MainActor
+    func `interactive permission request marks mutation before execution and invalidates latest`() async throws {
+        let snapshots = InMemorySnapshotManager()
+        let explicitSnapshot = try await snapshots.createSnapshot()
+        let tracker = InteractionMutationTracker()
+        let runtime = CommandRuntime(
+            configuration: .init(
+                verbose: false,
+                jsonOutput: true,
+                logLevel: nil,
+                captureEnginePreference: nil,
+                inputStrategy: nil
+            ),
+            services: PeekabooServices(snapshotManager: snapshots),
+            interactionMutationTracker: tracker
+        )
+        var mutationWasMarkedBeforeRequest = false
+
+        let result = try await CommanderRuntimeExecutor.runWithImplicitSnapshotInvalidation(
+            using: runtime,
+            required: true
+        ) {
+            await PermissionHelpers.performInteractivePermissionRequest(using: runtime) {
+                mutationWasMarkedBeforeRequest = tracker.mutationStartedAt != nil
+                return 42
+            }
+        }
+
+        #expect(result == 42)
+        #expect(mutationWasMarkedBeforeRequest)
+        #expect(await snapshots.getMostRecentSnapshot() == nil)
+        #expect(try await snapshots.listSnapshots().map(\.id) == [explicitSnapshot])
+    }
+
     @Test
     func `permission bridge follows the runtime daemon socket`() {
         let paths = PermissionHelpers.remotePermissionSocketPaths(
@@ -14,14 +50,19 @@ struct PermissionHelpersTests {
     }
 
     @Test
-    func `permission bridge includes the default legacy runtime fallback`() {
+    func `permission bridge includes the default legacy runtime fallback`() throws {
         let paths = PermissionHelpers.remotePermissionSocketPaths(
             explicitSocket: nil,
             environment: [:]
         )
 
-        #expect(paths == [
+        let buildScopedPath = DaemonLaunchPolicy.buildScopedDaemonSocketPath(
+            daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
+            runtimeBuildIdentity: DaemonLaunchPolicy.runtimeBuildIdentity()
+        )
+        #expect(try paths == [
             PeekabooBridgeConstants.daemonSocketPath,
+            #require(buildScopedPath),
             PeekabooBridgeConstants.peekabooSocketPath,
         ])
     }

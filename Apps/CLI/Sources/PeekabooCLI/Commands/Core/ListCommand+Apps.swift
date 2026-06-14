@@ -37,8 +37,7 @@ extension ListCommand {
             self.logger.setJsonOutputMode(self.jsonOutput)
 
             do {
-                try await requireScreenRecordingPermission(services: self.services)
-                let output = try await self.services.applications.listApplications()
+                let output = try await services.applications.listApplications()
 
                 if self.jsonOutput {
                     outputSuccessCodable(data: output.data, logger: self.outputLogger)
@@ -46,7 +45,7 @@ extension ListCommand {
                     print(CLIFormatter.format(output))
                 }
             } catch {
-                self.handleError(error)
+                handleError(error)
                 throw ExitCode(1)
             }
         }

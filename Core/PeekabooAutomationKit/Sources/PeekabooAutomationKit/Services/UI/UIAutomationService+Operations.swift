@@ -153,7 +153,9 @@ extension UIAutomationService {
      */
     public func click(target: ClickTarget, clickType: ClickType, snapshotId: String?) async throws {
         self.logger.debug("Delegating click to ClickService")
-        let result = try await self.clickService.click(target: target, clickType: clickType, snapshotId: snapshotId)
+        let result = try await self.normalizingSnapshotErrors {
+            try await self.clickService.click(target: target, clickType: clickType, snapshotId: snapshotId)
+        }
 
         // Show visual feedback if available
         let fallbackPoint = try await self.getClickPoint(for: target, snapshotId: snapshotId)
@@ -169,15 +171,50 @@ extension UIAutomationService {
         targetProcessIdentifier: pid_t) async throws
     {
         self.logger.debug("Delegating background click to ClickService")
-        let result = try await self.clickService.click(
-            target: target,
-            clickType: clickType,
-            snapshotId: snapshotId,
-            targetProcessIdentifier: targetProcessIdentifier)
+        let result = try await self.normalizingSnapshotErrors {
+            try await self.clickService.click(
+                target: target,
+                clickType: clickType,
+                snapshotId: snapshotId,
+                targetProcessIdentifier: targetProcessIdentifier)
+        }
 
         let fallbackPoint = try await self.getClickPoint(for: target, snapshotId: snapshotId)
         if let clickPoint = Self.visualFeedbackPoint(actionAnchor: result.anchorPoint, fallbackPoint: fallbackPoint) {
             _ = await self.feedbackClient.showClickFeedback(at: clickPoint, type: clickType)
+        }
+    }
+
+    public func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t,
+        targetWindowID: Int) async throws
+    {
+        self.logger.debug("Delegating exact-window background click to ClickService")
+        let result = try await self.normalizingSnapshotErrors {
+            try await self.clickService.click(
+                target: target,
+                clickType: clickType,
+                snapshotId: snapshotId,
+                targetProcessIdentifier: targetProcessIdentifier,
+                targetWindowID: targetWindowID)
+        }
+
+        let fallbackPoint = try await self.getClickPoint(for: target, snapshotId: snapshotId)
+        if let clickPoint = Self.visualFeedbackPoint(actionAnchor: result.anchorPoint, fallbackPoint: fallbackPoint) {
+            _ = await self.feedbackClient.showClickFeedback(at: clickPoint, type: clickType)
+        }
+    }
+
+    func normalizingSnapshotErrors<T>(
+        _ operation: () async throws -> T) async throws -> T
+    {
+        do {
+            return try await operation()
+        } catch let error as ActionInputError where error == .staleElement {
+            throw PeekabooError.snapshotStale("target element is no longer available")
         }
     }
 

@@ -74,9 +74,14 @@ public struct SeeTool: MCPTool {
     @MainActor
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
         let request = SeeRequest(arguments: arguments)
+        var newlyCreatedSnapshotID: String?
+        var newlyCreatedSnapshotWasPending = false
 
         do {
-            let snapshot = try await self.getOrCreateSnapshot(snapshotId: request.snapshotId)
+            let selection = try await self.getOrCreateSnapshot(snapshotId: request.snapshotId)
+            let snapshot = selection.snapshot
+            newlyCreatedSnapshotID = selection.isNew ? snapshot.id : nil
+            newlyCreatedSnapshotWasPending = selection.isNew && MCPToolContext.snapshotObservationStartedAt != nil
             let target = try ObservationTargetArgument.parse(request.appTarget)
             let observation = try await self.observeDesktop(
                 target: target,
@@ -107,6 +112,14 @@ public struct SeeTool: MCPTool {
                 target: target,
                 observation: observation)
         } catch {
+            if let newlyCreatedSnapshotID {
+                let preserveReservation = newlyCreatedSnapshotWasPending &&
+                    PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: error)
+                if !preserveReservation {
+                    try? await self.context.snapshots.cleanSnapshot(snapshotId: newlyCreatedSnapshotID)
+                    await UISnapshotManager.shared.removeSnapshot(id: newlyCreatedSnapshotID)
+                }
+            }
             self.logger.error("See tool execution failed: \(error.localizedDescription)")
             return ToolResponse.error("Failed to capture UI state: \(error.localizedDescription)")
         }
@@ -114,16 +127,28 @@ public struct SeeTool: MCPTool {
 
     // MARK: - Private Helpers
 
-    private func getOrCreateSnapshot(snapshotId: String?) async throws -> UISnapshot {
+    private func getOrCreateSnapshot(snapshotId: String?) async throws -> (snapshot: UISnapshot, isNew: Bool) {
         if let snapshotId {
             // Try to get existing snapshot
-            if let existingSnapshot = await UISnapshotManager.shared.getSnapshot(id: snapshotId) {
-                return existingSnapshot
+            let hostHasSnapshot = try await self.context.snapshots.listSnapshots().contains { $0.id == snapshotId }
+            if hostHasSnapshot,
+               let existingSnapshot = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
+            {
+                return (existingSnapshot, false)
             }
         }
 
-        // Create new snapshot
-        return await UISnapshotManager.shared.createSnapshot()
+        let observationStartedAt = MCPToolContext.snapshotObservationStartedAt
+        let snapshotId = if let observationStartedAt {
+            try await self.context.snapshots.createSnapshot(pendingAt: observationStartedAt)
+        } else {
+            try await self.context.snapshots.createSnapshot()
+        }
+        let snapshot = await UISnapshotManager.shared.createSnapshot(
+            id: snapshotId,
+            at: observationStartedAt ?? Date(),
+            pending: observationStartedAt != nil)
+        return (snapshot, true)
     }
 
     private func observeDesktop(
@@ -140,6 +165,7 @@ public struct SeeTool: MCPTool {
                 path: path,
                 saveRawScreenshot: true,
                 saveAnnotatedScreenshot: annotate,
+                saveSnapshot: true,
                 snapshotID: snapshot.id)))
     }
 

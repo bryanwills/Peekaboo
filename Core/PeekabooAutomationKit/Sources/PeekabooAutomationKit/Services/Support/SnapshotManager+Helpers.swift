@@ -1,12 +1,60 @@
 import CoreGraphics
+import Darwin
 import Foundation
 import PeekabooFoundation
+
+struct SnapshotImplicitLatestPreservation: Codable {
+    let snapshotId: String
+    let invalidatedThrough: Date
+    let preservedAt: Date
+}
+
+private struct SnapshotLatestCandidate {
+    let url: URL
+    let createdAt: Date
+}
+
+private struct SnapshotLatestReadState {
+    let cutoff: Date
+    let candidates: [SnapshotLatestCandidate]
+    let preservation: SnapshotImplicitLatestPreservation?
+}
+
+private enum SnapshotStateLockMode {
+    case read
+    case write
+
+    var operation: Int32 {
+        switch self {
+        case .read: LOCK_SH
+        case .write: LOCK_EX
+        }
+    }
+}
 
 extension SnapshotManager {
     // MARK: - Helpers
 
+    private static let pendingSnapshotMarkerName = ".pending"
+    private static let snapshotObservationStartName = ".observation-start"
+
+    static func latestWatermark(_ lhs: Date?, _ rhs: Date?) -> Date? {
+        switch (lhs, rhs) {
+        case let (lhs?, rhs?): max(lhs, rhs)
+        case let (lhs?, nil): lhs
+        case let (nil, rhs?): rhs
+        case (nil, nil): nil
+        }
+    }
+
+    func makeSnapshotID() -> String {
+        let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+        let randomSuffix = Int.random(in: 1000...9999)
+        return "\(timestamp)-\(randomSuffix)"
+    }
+
     func getSnapshotStorageURL() -> URL {
-        let url = FileManager.default.homeDirectoryForCurrentUser
+        let url = self.snapshotStorageURLOverride ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".peekaboo/snapshots")
 
         // Ensure the directory exists
@@ -19,31 +67,261 @@ extension SnapshotManager {
         self.getSnapshotStorageURL().appendingPathComponent(snapshotId)
     }
 
-    func findLatestValidSnapshot() async -> String? {
-        let snapshotDir = self.getSnapshotStorageURL()
+    func markSnapshotPending(at snapshotURL: URL, observationStartedAt: Date) throws {
+        let startedAtData = try JSONEncoder().encode(observationStartedAt)
+        try startedAtData.write(
+            to: snapshotURL.appendingPathComponent(Self.snapshotObservationStartName),
+            options: .atomic)
+        try Data().write(
+            to: snapshotURL.appendingPathComponent(Self.pendingSnapshotMarkerName),
+            options: .atomic)
+    }
 
-        guard let snapshots = try? FileManager.default.contentsOfDirectory(
-            at: snapshotDir,
-            includingPropertiesForKeys: [.creationDateKey],
-            options: .skipsHiddenFiles)
+    func isPendingSnapshot(at snapshotURL: URL) -> Bool {
+        FileManager.default.fileExists(
+            atPath: snapshotURL.appendingPathComponent(Self.pendingSnapshotMarkerName).path)
+    }
+
+    func snapshotCreationDate(at snapshotURL: URL, fallback: Date? = nil) -> Date? {
+        let observationStartURL = snapshotURL.appendingPathComponent(Self.snapshotObservationStartName)
+        if let data = try? Data(contentsOf: observationStartURL),
+           let date = try? JSONDecoder().decode(Date.self, from: data)
+        {
+            return date
+        }
+        if let fallback { return fallback }
+        return try? snapshotURL.resourceValues(forKeys: [.creationDateKey]).creationDate
+    }
+
+    func snapshotDirectoryURLs(
+        includingPending: Bool,
+        requiringSnapshotData: Bool = true) -> [URL]
+    {
+        do {
+            return try self.withImplicitLatestInvalidationLock(mode: .read) {
+                self.snapshotDirectoryURLsUnlocked(
+                    includingPending: includingPending,
+                    requiringSnapshotData: requiringSnapshotData)
+            }
+        } catch {
+            self.logger.error("Failed to lock snapshot state for directory read: \(error)")
+            return []
+        }
+    }
+
+    private func snapshotDirectoryURLsUnlocked(
+        includingPending: Bool,
+        requiringSnapshotData: Bool = true) -> [URL]
+    {
+        guard let urls = try? FileManager.default.contentsOfDirectory(
+            at: self.getSnapshotStorageURL(),
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: includingPending ? [] : .skipsHiddenFiles)
+        else { return [] }
+        return urls.filter { url in
+            guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return false }
+            if url.lastPathComponent.hasPrefix(".pending-") {
+                return includingPending
+            }
+            guard includingPending || !self.isPendingSnapshot(at: url) else { return false }
+            return !requiringSnapshotData || FileManager.default.fileExists(
+                atPath: url.appendingPathComponent("snapshot.json").path)
+        }
+    }
+
+    private var implicitLatestInvalidationWatermarkURL: URL {
+        self.getSnapshotStorageURL().appendingPathComponent(".implicit-latest-invalidated-at")
+    }
+
+    private var implicitLatestInvalidationLockURL: URL {
+        self.getSnapshotStorageURL().appendingPathComponent(".implicit-latest-invalidation.lock")
+    }
+
+    private var implicitLatestPreservationURL: URL {
+        self.getSnapshotStorageURL().appendingPathComponent(".implicit-latest-preserved-snapshot")
+    }
+
+    func implicitLatestInvalidationWatermark() -> Date? {
+        do {
+            return try self.withImplicitLatestInvalidationLock(mode: .read) {
+                self.readImplicitLatestInvalidationWatermarkUnlocked()
+            }
+        } catch {
+            self.logger.error("Failed to lock implicit-latest watermark for reading: \(error)")
+            return Date()
+        }
+    }
+
+    private func readImplicitLatestInvalidationWatermarkUnlocked() -> Date? {
+        let url = self.implicitLatestInvalidationWatermarkURL
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        guard let data = try? Data(contentsOf: url),
+              let watermark = try? JSONDecoder().decode(Date.self, from: data)
         else {
+            self.logger.error("Implicit-latest invalidation watermark is unreadable; hiding cached snapshots")
+            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .creationDateKey])
+            return values?.contentModificationDate ?? values?.creationDate ?? Date()
+        }
+        return watermark
+    }
+
+    func writeImplicitLatestInvalidationWatermark(_ date: Date) throws {
+        try self.writeImplicitLatestInvalidationState(through: date, preserving: nil, preservedAt: nil)
+    }
+
+    func writeImplicitLatestInvalidationState(
+        through cutoff: Date,
+        preserving snapshotId: String?,
+        preservedAt: Date?) throws
+    {
+        let sharedWatermark = try self.desktopMutationWatermarkStore?.advance(through: cutoff)
+        try self.withImplicitLatestInvalidationLock(mode: .write) {
+            let existing = self.readImplicitLatestInvalidationWatermarkUnlocked()
+            let preservation = self.readImplicitLatestPreservationUnlocked()
+            let watermark = max(Self.latestWatermark(existing, sharedWatermark) ?? cutoff, cutoff)
+            let data = try JSONEncoder().encode(watermark)
+            try data.write(to: self.implicitLatestInvalidationWatermarkURL, options: .atomic)
+
+            if let snapshotId,
+               let snapshotURL = self.safeSnapshotURL(for: snapshotId)
+            {
+                let pendingURL = snapshotURL.appendingPathComponent(Self.pendingSnapshotMarkerName)
+                if FileManager.default.fileExists(atPath: pendingURL.path) {
+                    try FileManager.default.removeItem(at: pendingURL)
+                }
+            }
+
+            if let snapshotId,
+               let preservedAt,
+               self.validPreservationSnapshotURL(for: snapshotId) != nil,
+               watermark <= cutoff
+            {
+                let next = SnapshotImplicitLatestPreservation(
+                    snapshotId: snapshotId,
+                    invalidatedThrough: cutoff,
+                    preservedAt: preservedAt)
+                try JSONEncoder().encode(next).write(to: self.implicitLatestPreservationURL, options: .atomic)
+            } else if let preservation, watermark > preservation.invalidatedThrough {
+                try? FileManager.default.removeItem(at: self.implicitLatestPreservationURL)
+            }
+        }
+    }
+
+    func implicitLatestPreservation() -> SnapshotImplicitLatestPreservation? {
+        do {
+            return try self.withImplicitLatestInvalidationLock(mode: .read) {
+                let watermark = self.readImplicitLatestInvalidationWatermarkUnlocked()
+                return self.validImplicitLatestPreservationUnlocked(watermark: watermark)
+            }
+        } catch {
+            self.logger.error("Failed to lock implicit-latest preservation for reading: \(error)")
+            return nil
+        }
+    }
+
+    private func validImplicitLatestPreservationUnlocked(
+        watermark: Date?) -> SnapshotImplicitLatestPreservation?
+    {
+        guard let preservation = self.readImplicitLatestPreservationUnlocked(),
+              self.validPreservationSnapshotURL(for: preservation.snapshotId) != nil,
+              watermark.map({ $0 <= preservation.invalidatedThrough }) ?? true
+        else { return nil }
+        return preservation
+    }
+
+    private func readImplicitLatestPreservationUnlocked() -> SnapshotImplicitLatestPreservation? {
+        guard let data = try? Data(contentsOf: self.implicitLatestPreservationURL) else { return nil }
+        return try? JSONDecoder().decode(SnapshotImplicitLatestPreservation.self, from: data)
+    }
+
+    private func validPreservationSnapshotURL(for snapshotId: String) -> URL? {
+        guard let candidate = self.safeSnapshotURL(for: snapshotId) else { return nil }
+        guard FileManager.default.fileExists(atPath: candidate.appendingPathComponent("snapshot.json").path)
+        else { return nil }
+        return candidate
+    }
+
+    private func safeSnapshotURL(for snapshotId: String) -> URL? {
+        guard !snapshotId.isEmpty, snapshotId != ".", snapshotId != ".." else { return nil }
+        let root = self.getSnapshotStorageURL().resolvingSymlinksInPath().standardizedFileURL
+        let candidate = root.appendingPathComponent(snapshotId, isDirectory: true)
+            .resolvingSymlinksInPath().standardizedFileURL
+        guard candidate.deletingLastPathComponent().path == root.path else { return nil }
+        return candidate
+    }
+
+    func removeSnapshotAndPreservation(snapshotId: String) throws -> Bool {
+        guard let snapshotURL = self.safeSnapshotURL(for: snapshotId) else {
+            throw SnapshotError.storageError("Invalid snapshot ID")
+        }
+        return try self.withImplicitLatestInvalidationLock(mode: .write) {
+            let existed = FileManager.default.fileExists(atPath: snapshotURL.path)
+            if existed {
+                try FileManager.default.removeItem(at: snapshotURL)
+            }
+            if self.readImplicitLatestPreservationUnlocked()?.snapshotId == snapshotId {
+                try? FileManager.default.removeItem(at: self.implicitLatestPreservationURL)
+            }
+            return existed
+        }
+    }
+
+    func clearImplicitLatestPreservation(ifMatching snapshotId: String) throws {
+        try self.withImplicitLatestInvalidationLock(mode: .write) {
+            guard self.readImplicitLatestPreservationUnlocked()?.snapshotId == snapshotId else { return }
+            try? FileManager.default.removeItem(at: self.implicitLatestPreservationURL)
+        }
+    }
+
+    func clearImplicitLatestInvalidationWatermark() throws {
+        try self.withImplicitLatestInvalidationLock(mode: .write) {
+            let url = self.implicitLatestInvalidationWatermarkURL
+            if FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
+            let preservationURL = self.implicitLatestPreservationURL
+            if FileManager.default.fileExists(atPath: preservationURL.path) {
+                try FileManager.default.removeItem(at: preservationURL)
+            }
+        }
+    }
+
+    private func withImplicitLatestInvalidationLock<T>(
+        mode: SnapshotStateLockMode,
+        _ body: () throws -> T) throws -> T
+    {
+        // Keep lock bodies synchronous and use only *Unlocked helpers; flock is not recursively safe.
+        let lockURL = self.implicitLatestInvalidationLockURL
+        let descriptor = open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno), userInfo: [NSFilePathErrorKey: lockURL.path])
+        }
+        defer { close(descriptor) }
+
+        guard flock(descriptor, mode.operation) == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno), userInfo: [NSFilePathErrorKey: lockURL.path])
+        }
+        defer { _ = flock(descriptor, LOCK_UN) }
+        return try body()
+    }
+
+    func findLatestValidSnapshot(createdAtOrBefore latestCreationDate: Date? = nil) async -> String? {
+        guard let state = self.latestSnapshotReadState(createdAtOrBefore: latestCreationDate) else {
             return nil
         }
 
-        let tenMinutesAgo = Date().addingTimeInterval(-self.snapshotValidityWindow)
-
-        let validSnapshots = snapshots.compactMap { url -> (url: URL, date: Date)? in
-            guard let resourceValues = try? url.resourceValues(forKeys: [.creationDateKey]),
-                  let creationDate = resourceValues.creationDate,
-                  creationDate > tenMinutesAgo
-            else {
-                return nil
-            }
-            return (url, creationDate)
-        }.sorted { $0.date > $1.date }
-
-        if let latest = validSnapshots.first {
-            let age = Int(-latest.date.timeIntervalSinceNow)
+        let latest = state.candidates.first
+        if let preservation = state.preservation,
+           preservation.preservedAt > state.cutoff,
+           latestCreationDate.map({ preservation.preservedAt <= $0 }) ?? true,
+           latest.map({ $0.createdAt <= preservation.preservedAt }) ?? true
+        {
+            return preservation.snapshotId
+        }
+        if let latest {
+            let age = Int(-latest.createdAt.timeIntervalSinceNow)
             self.logger.debug(
                 "Found valid snapshot: \(latest.url.lastPathComponent) created \(age) seconds ago")
             return latest.url.lastPathComponent
@@ -54,39 +332,81 @@ extension SnapshotManager {
     }
 
     func findLatestValidSnapshot(applicationBundleId: String) async -> String? {
-        let snapshotDir = self.getSnapshotStorageURL()
-
-        guard let snapshots = try? FileManager.default.contentsOfDirectory(
-            at: snapshotDir,
-            includingPropertiesForKeys: [.creationDateKey],
-            options: .skipsHiddenFiles)
-        else {
+        guard let state = self.latestSnapshotReadState() else {
             return nil
         }
 
-        let cutoff = Date().addingTimeInterval(-self.snapshotValidityWindow)
-
-        let recentSnapshots = snapshots.compactMap { url -> (url: URL, createdAt: Date)? in
-            guard let values = try? url.resourceValues(forKeys: [.creationDateKey]),
-                  let createdAt = values.creationDate,
-                  createdAt > cutoff,
-                  url.hasDirectoryPath
-            else {
-                return nil
-            }
-            return (url, createdAt)
-        }.sorted { $0.createdAt > $1.createdAt }
-
-        for entry in recentSnapshots {
+        var normalLatest: SnapshotLatestCandidate?
+        for entry in state.candidates {
             let snapshotId = entry.url.lastPathComponent
             guard let snapshotData = await self.snapshotActor.loadSnapshot(snapshotId: snapshotId, from: entry.url)
             else { continue }
             if snapshotData.applicationBundleId == applicationBundleId {
-                return snapshotId
+                normalLatest = entry
+                break
             }
         }
 
-        return nil
+        if let preservation = state.preservation,
+           preservation.preservedAt > state.cutoff,
+           normalLatest.map({ $0.createdAt <= preservation.preservedAt }) ?? true
+        {
+            let snapshotURL = self.getSnapshotPath(for: preservation.snapshotId)
+            if let snapshotData = await self.snapshotActor.loadSnapshot(
+                snapshotId: preservation.snapshotId,
+                from: snapshotURL),
+                snapshotData.applicationBundleId == applicationBundleId
+            {
+                return preservation.snapshotId
+            }
+        }
+
+        return normalLatest?.url.lastPathComponent
+    }
+
+    private func latestSnapshotReadState(
+        createdAtOrBefore latestCreationDate: Date? = nil) -> SnapshotLatestReadState?
+    {
+        let sharedWatermark = self.desktopMutationWatermarkStore?.effectiveWatermark()
+        do {
+            return try self.withImplicitLatestInvalidationLock(mode: .read) {
+                let snapshotDir = self.getSnapshotStorageURL()
+                guard let snapshots = try? FileManager.default.contentsOfDirectory(
+                    at: snapshotDir,
+                    includingPropertiesForKeys: [.creationDateKey],
+                    options: .skipsHiddenFiles)
+                else {
+                    return nil
+                }
+
+                let cutoff = Date().addingTimeInterval(-self.snapshotValidityWindow)
+                let watermark = Self.latestWatermark(
+                    self.readImplicitLatestInvalidationWatermarkUnlocked(),
+                    sharedWatermark)
+                let candidates = snapshots.compactMap { url -> SnapshotLatestCandidate? in
+                    guard let values = try? url.resourceValues(forKeys: [.creationDateKey]),
+                          let createdAt = self.snapshotCreationDate(at: url, fallback: values.creationDate),
+                          createdAt > cutoff,
+                          watermark.map({ createdAt > $0 }) ?? true,
+                          latestCreationDate.map({ createdAt <= $0 }) ?? true,
+                          url.hasDirectoryPath,
+                          !self.isPendingSnapshot(at: url),
+                          FileManager.default.fileExists(atPath: url.appendingPathComponent("snapshot.json").path)
+                    else {
+                        return nil
+                    }
+                    return SnapshotLatestCandidate(url: url, createdAt: createdAt)
+                }.sorted { $0.createdAt > $1.createdAt }
+                let preservation = self.validImplicitLatestPreservationUnlocked(watermark: watermark)
+                return SnapshotLatestReadState(
+                    cutoff: cutoff,
+                    candidates: candidates,
+                    preservation: preservation)
+            }
+        } catch {
+            self.logger.error("Failed to lock snapshot state for latest-snapshot read: \(error)")
+            return nil
+        }
     }
 
     func convertElementTypeToRole(_ type: ElementType) -> String {

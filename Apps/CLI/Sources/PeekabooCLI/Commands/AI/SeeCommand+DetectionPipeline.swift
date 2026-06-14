@@ -4,8 +4,10 @@ import PeekabooCore
 @available(macOS 14.0, *)
 @MainActor
 extension SeeCommand {
-    func performCaptureWithDetection() async throws -> CaptureAndDetectionResult {
-        if let observationResult = try await self.performObservationCaptureWithDetectionIfPossible() {
+    func performCaptureWithDetection(snapshotID: String) async throws -> CaptureAndDetectionResult {
+        if let observationResult = try await self.performObservationCaptureWithDetectionIfPossible(
+            snapshotID: snapshotID
+        ) {
             return observationResult
         }
 
@@ -27,10 +29,14 @@ extension SeeCommand {
             traversalBudget: self.axTraversalBudget()
         )
 
-        let detectionResult = try await self.detectElements(for: captureContext, windowContext: windowContext)
+        let detectionResult = try await self.detectElements(
+            for: captureContext,
+            windowContext: windowContext,
+            snapshotID: snapshotID
+        )
 
         let resultWithPath = ElementDetectionResult(
-            snapshotId: detectionResult.snapshotId,
+            snapshotId: snapshotID,
             screenshotPath: outputPath,
             elements: detectionResult.elements,
             metadata: detectionResult.metadata
@@ -38,7 +44,7 @@ extension SeeCommand {
 
         try await self.services.snapshots.storeScreenshot(
             SnapshotScreenshotRequest(
-                snapshotId: detectionResult.snapshotId,
+                snapshotId: snapshotID,
                 screenshotPath: outputPath,
                 applicationBundleId: captureResult.metadata.applicationInfo?.bundleIdentifier,
                 applicationProcessId: captureResult.metadata.applicationInfo.map { Int32($0.processIdentifier) },
@@ -49,12 +55,12 @@ extension SeeCommand {
         )
 
         try await self.services.snapshots.storeDetectionResult(
-            snapshotId: detectionResult.snapshotId,
+            snapshotId: snapshotID,
             result: resultWithPath
         )
 
         return CaptureAndDetectionResult(
-            snapshotId: detectionResult.snapshotId,
+            snapshotId: snapshotID,
             screenshotPath: outputPath,
             annotatedPath: nil,
             elements: detectionResult.elements,
@@ -65,7 +71,8 @@ extension SeeCommand {
 
     private func detectElements(
         for captureContext: CaptureContext,
-        windowContext: WindowContext
+        windowContext: WindowContext,
+        snapshotID: String
     ) async throws -> ElementDetectionResult {
         let captureResult = captureContext.captureResult
         let detectionStart = Date()
@@ -87,20 +94,29 @@ extension SeeCommand {
                 isDialog: false
             )
             return ElementDetectionResult(
-                snapshotId: UUID().uuidString,
+                snapshotId: snapshotID,
                 screenshotPath: "",
                 elements: DetectedElements(other: ocrElements),
                 metadata: metadata
             )
         }
 
-        return try await self.detectElements(
+        let detectionResult = try await self.detectElements(
             imageData: captureResult.imageData,
-            windowContext: windowContext
+            windowContext: windowContext,
+            snapshotID: snapshotID
+        )
+        return ElementDetectionResult(
+            snapshotId: snapshotID,
+            screenshotPath: detectionResult.screenshotPath,
+            elements: detectionResult.elements,
+            metadata: detectionResult.metadata
         )
     }
 
-    private func performObservationCaptureWithDetectionIfPossible() async throws -> CaptureAndDetectionResult? {
+    private func performObservationCaptureWithDetectionIfPossible(
+        snapshotID: String
+    ) async throws -> CaptureAndDetectionResult? {
         guard let target = try self.observationTargetForCaptureWithDetectionIfPossible() else {
             return nil
         }
@@ -114,7 +130,7 @@ extension SeeCommand {
         let observation: DesktopObservationResult
         do {
             observation = try await self.services.desktopObservation
-                .observe(self.makeObservationRequest(target: target))
+                .observe(self.makeObservationRequest(target: target, snapshotID: snapshotID))
         } catch DesktopObservationError.targetNotFound(_) where self.menubar {
             self.logger.verbose("No observation-backed menu bar popover found; falling back", category: "Capture")
             self.logger.operationComplete("capture_phase", success: false, metadata: [
@@ -138,7 +154,7 @@ extension SeeCommand {
         }
 
         return CaptureAndDetectionResult(
-            snapshotId: detectionResult.snapshotId,
+            snapshotId: snapshotID,
             screenshotPath: outputPath,
             annotatedPath: observation.files.annotatedScreenshotPath,
             elements: detectionResult.elements,

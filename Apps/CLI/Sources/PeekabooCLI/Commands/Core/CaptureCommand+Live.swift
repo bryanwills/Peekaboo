@@ -69,6 +69,10 @@ struct CaptureLiveCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFo
         self.resolvedRuntime.services
     }
 
+    func withCaptureFocusMutation(_ operation: () async throws -> Void) async rethrows {
+        try await self.resolvedRuntime.withCaptureFocusMutation(operation)
+    }
+
     var jsonOutput: Bool {
         self.resolvedRuntime.configuration.jsonOutput
     }
@@ -86,14 +90,14 @@ struct CaptureLiveCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFo
             // The capture service performs the authoritative permission check inside
             // the serialized capture transaction; an extra CLI-side SCK probe can race
             // with concurrent screenshot commands and report transient TCC denial.
-            let scope = try await self.resolveScope()
-            let options = try self.buildOptions()
+            let scope = try await resolveScope()
+            let options = try buildOptions()
             if scope.kind == .window, let identifier = scope.applicationIdentifier {
-                try await self.focusIfNeeded(appIdentifier: identifier)
+                try await focusIfNeeded(appIdentifier: identifier)
             }
-            let outputDir = try self.resolveOutputDirectory()
+            let outputDir = try resolveOutputDirectory()
             let deps = WatchCaptureDependencies(
-                screenCapture: self.services.screenCapture,
+                screenCapture: services.screenCapture,
                 screenService: self.services.screens,
                 frameSource: nil
             )
@@ -101,7 +105,7 @@ struct CaptureLiveCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFo
                 scope: scope,
                 options: options,
                 outputRoot: outputDir,
-                autoclean: WatchAutocleanConfig(minutes: self.autocleanMinutes ?? 120, managed: self.path == nil),
+                autoclean: WatchAutocleanConfig(minutes: autocleanMinutes ?? 120, managed: path == nil),
                 sourceKind: .live,
                 videoIn: nil,
                 videoOut: CaptureCommandPathResolver.filePath(from: self.videoOut),
@@ -111,21 +115,21 @@ struct CaptureLiveCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFo
             let runSession: @MainActor @Sendable () async throws -> CaptureSessionResult = {
                 try await session.run()
             }
-            let enginePreference = self.liveCaptureEnginePreference(for: scope)
-            let result: CaptureSessionResult = if let engineAware = self.services.screenCapture
+            let enginePreference = liveCaptureEnginePreference(for: scope)
+            let result: CaptureSessionResult = if let engineAware = services.screenCapture
                 as? any EngineAwareScreenCaptureServiceProtocol {
                 try await engineAware.withCaptureEngine(enginePreference, operation: runSession)
             } else {
                 try await runSession()
             }
-            self.output(result)
+            output(result)
             self.logger.operationComplete(
                 "capture_live",
                 success: true,
                 metadata: ["frames_kept": result.stats.framesKept]
             )
         } catch {
-            self.handleError(error)
+            handleError(error)
             self.logger.operationComplete(
                 "capture_live",
                 success: false,
@@ -138,7 +142,7 @@ struct CaptureLiveCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFo
 
 extension CaptureLiveCommand {
     private func liveCaptureEnginePreference(for scope: CaptureScope) -> CaptureEnginePreference {
-        let value = (self.captureEngine ?? self.resolvedRuntime.configuration.captureEnginePreference)?
+        let value = (captureEngine ?? self.resolvedRuntime.configuration.captureEnginePreference)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
 

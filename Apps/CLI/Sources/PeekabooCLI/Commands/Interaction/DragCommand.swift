@@ -80,12 +80,16 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable {
                 fallbackToLatest: needsSnapshot,
                 snapshots: self.services.snapshots
             )
+            let refreshRuntime = self.resolvedRuntime
             observation = try await InteractionObservationRefresher.refreshForMissingElementsIfNeeded(
                 observation,
                 elementIds: [self.from, self.to],
                 target: self.target,
                 services: self.services,
-                logger: self.logger
+                logger: self.logger,
+                beforeRefresh: { startedAt in
+                    refreshRuntime.beginInteractionMutation(at: startedAt)
+                }
             )
             if needsSnapshot {
                 _ = try await observation.requireDetectionResult(using: self.services.snapshots)
@@ -93,6 +97,7 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable {
                 try await observation.validateIfExplicit(using: self.services.snapshots)
             }
 
+            self.resolvedRuntime.beginInteractionMutation()
             try await ensureFocused(
                 snapshotId: observation.focusSnapshotId(for: self.target),
                 target: self.target,
@@ -157,13 +162,13 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable {
                     + "profile=\(movement.profileName)"
             )
 
-            try await Task.sleep(nanoseconds: 100_000_000)
+            try? await Task.sleep(nanoseconds: 100_000_000)
             await InteractionObservationInvalidator.invalidateAfterMutation(
-                observation,
-                snapshots: self.services.snapshots,
+                targets: self.resolvedRuntime.interactionMutationTargets,
                 logger: self.logger,
                 reason: "drag"
             )
+            try Task.checkCancellation()
 
             let result = DragResult(
                 success: true,

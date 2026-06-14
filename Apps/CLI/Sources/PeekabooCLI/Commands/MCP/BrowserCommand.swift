@@ -101,9 +101,13 @@ struct BrowserCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsCo
         self.logger.setJsonOutputMode(self.jsonOutput)
 
         do {
+            let arguments = try self.arguments()
+            if Self.actionMayMutate(self.action) {
+                self.resolvedRuntime.beginInteractionMutation()
+            }
             let context = MCPToolContext(services: self.services)
             let tool = BrowserTool(context: context)
-            let response = try await tool.execute(arguments: ToolArguments(raw: self.arguments()))
+            let response = try await tool.execute(arguments: ToolArguments(raw: arguments))
             try MCPToolCommandOutput.output(
                 tool: tool.name,
                 response: response,
@@ -115,6 +119,20 @@ struct BrowserCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsCo
         } catch {
             self.handleError(error)
             throw ExitCode(1)
+        }
+    }
+
+    static func actionMayMutate(_ rawAction: String) -> Bool {
+        let normalized = rawAction
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "-", with: "_")
+        guard let action = BrowserAction(rawValue: normalized) else { return false }
+        switch action {
+        case .status, .connect, .disconnect, .listPages, .waitFor, .snapshot, .console, .network, .screenshot:
+            return false
+        case .selectPage, .closePage, .newPage, .navigate, .click, .fill, .fillForm, .drag, .hover, .type,
+             .pressKey, .uploadFile, .handleDialog, .performanceTrace, .call:
+            return true
         }
     }
 

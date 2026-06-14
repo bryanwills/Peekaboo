@@ -42,8 +42,12 @@ extension PeekabooServiceProviding {
 
     /// Install this service container as the default provider for MCP tool contexts and registry helpers.
     public func installAgentRuntimeDefaults() {
+        let fallbackSnapshotExecutionGate = MCPToolSnapshotExecutionGate()
         MCPToolContext.configureDefaultContext { [unowned services = self] in
-            MCPToolContext(services: services)
+            MCPToolContext(
+                services: services,
+                snapshotExecutionGate: (services.agent as? PeekabooAgentService)?.snapshotExecutionGate
+                    ?? fallbackSnapshotExecutionGate)
         }
 
         ToolRegistry.configureDefaultServices { [unowned services = self] in

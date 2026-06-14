@@ -8,8 +8,125 @@ import PeekabooFoundation
 import Testing
 
 struct PeekabooBridgeTests {
+    private struct BridgeDateEnvelope: Codable {
+        let date: Date
+    }
+
     private func decode(_ data: Data) throws -> PeekabooBridgeResponse {
         try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeResponse.self, from: data)
+    }
+
+    @Test
+    func `bridge encoder preserves the legacy whole-second date format`() throws {
+        let cutoff = Date(timeIntervalSince1970: 1_780_000_000.987_654)
+        let encoded = try JSONEncoder.peekabooBridgeEncoder().encode(BridgeDateEnvelope(date: cutoff))
+        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let encodedDate = try #require(object["date"] as? String)
+        let legacyDecoder = JSONDecoder()
+        legacyDecoder.dateDecodingStrategy = .iso8601
+
+        #expect(!encodedDate.contains("."))
+        _ = try legacyDecoder.decode(BridgeDateEnvelope.self, from: encoded)
+
+        let captureResponse = PeekabooBridgeResponse.capture(CaptureResult(
+            imageData: Data(),
+            savedPath: nil,
+            metadata: CaptureMetadata(
+                size: .init(width: 1, height: 1),
+                mode: .screen,
+                timestamp: cutoff)))
+        let captureData = try JSONEncoder.peekabooBridgeEncoder().encode(captureResponse)
+        _ = try legacyDecoder.decode(PeekabooBridgeResponse.self, from: captureData)
+    }
+
+    @Test
+    func `bridge dates decode fractional and legacy whole seconds`() throws {
+        let decoder = JSONDecoder.peekabooBridgeDecoder()
+        let whole = try decoder.decode(
+            BridgeDateEnvelope.self,
+            from: Data(#"{"date":"2026-01-02T03:04:05Z"}"#.utf8))
+        let fractional = try decoder.decode(
+            BridgeDateEnvelope.self,
+            from: Data(#"{"date":"2026-01-02T03:04:05.123456789Z"}"#.utf8))
+
+        #expect(abs(fractional.date.timeIntervalSince(whole.date) - 0.123_456_789) < 0.000_000_2)
+    }
+
+    @Test
+    func `mutation certificates preserve subsecond cutoffs without changing legacy date encoding`() throws {
+        let cutoff = Date(timeIntervalSinceReferenceDate: 800_000_000.987_654)
+        let metadata = DetectionMetadata(
+            detectionTime: 0,
+            elementCount: 0,
+            method: "accessibility",
+            truncationInfo: nil,
+            desktopMutationCompletedAt: cutoff,
+            desktopMutationPreservationAllowed: true)
+        let diagnostics = DesktopObservationDiagnostics(
+            desktopMutationCompletedAt: cutoff,
+            desktopMutationPreservationAllowed: true)
+        let encoder = JSONEncoder.peekabooBridgeEncoder()
+        let decoder = JSONDecoder.peekabooBridgeDecoder()
+
+        let metadataData = try encoder.encode(metadata)
+        let diagnosticsData = try encoder.encode(diagnostics)
+        let decodedMetadata = try decoder.decode(DetectionMetadata.self, from: metadataData)
+        let decodedDiagnostics = try decoder.decode(DesktopObservationDiagnostics.self, from: diagnosticsData)
+        let metadataObject = try #require(JSONSerialization.jsonObject(with: metadataData) as? [String: Any])
+        let diagnosticsObject = try #require(
+            JSONSerialization.jsonObject(with: diagnosticsData) as? [String: Any])
+
+        #expect(decodedMetadata.desktopMutationCompletedAt == cutoff)
+        #expect(decodedDiagnostics.desktopMutationCompletedAt == cutoff)
+        #expect(metadataObject["desktopMutationCompletedAtReferenceDateSeconds"] != nil)
+        #expect(metadataObject["desktopMutationCompletedAt"] == nil)
+        #expect(diagnosticsObject["desktopMutationCompletedAtReferenceDateSeconds"] != nil)
+        #expect(diagnosticsObject["desktopMutationCompletedAt"] == nil)
+    }
+
+    @Test
+    func `mutation certificates decode the interim fractional date field`() throws {
+        let fractionalDate = "2026-01-02T03:04:05.123456789Z"
+        let metadataData = try JSONSerialization.data(withJSONObject: [
+            "detectionTime": 0,
+            "elementCount": 0,
+            "method": "accessibility",
+            "warnings": [],
+            "isDialog": false,
+            "desktopMutationCompletedAt": fractionalDate,
+            "desktopMutationPreservationAllowed": true,
+        ])
+        let diagnosticsData = try JSONSerialization.data(withJSONObject: [
+            "warnings": [],
+            "desktopMutationCompletedAt": fractionalDate,
+            "desktopMutationPreservationAllowed": true,
+        ])
+        let metadata = try JSONDecoder.peekabooBridgeDecoder().decode(
+            DetectionMetadata.self,
+            from: metadataData)
+        let diagnostics = try JSONDecoder.peekabooBridgeDecoder().decode(
+            DesktopObservationDiagnostics.self,
+            from: diagnosticsData)
+
+        #expect(metadata.desktopMutationCompletedAt == diagnostics.desktopMutationCompletedAt)
+        #expect(metadata.desktopMutationPreservationAllowed == true)
+        #expect(diagnostics.desktopMutationPreservationAllowed == true)
+    }
+
+    @Test
+    func `bridge timeout and indeterminate responses preserve pending reservations`() {
+        #expect(PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: PeekabooBridgeErrorEnvelope(
+            code: .timeout,
+            message: "Timed out")))
+        #expect(PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: PeekabooBridgeErrorEnvelope(
+            code: .internalError,
+            message: "Bridge host returned no response")))
+        #expect(PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: PeekabooBridgeErrorEnvelope(
+            code: .decodingFailed,
+            message: "Bridge host returned an invalid response")))
+        #expect(!PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: PeekabooBridgeErrorEnvelope(
+            code: .permissionDenied,
+            message: "Permission denied")))
     }
 
     @Test
@@ -45,6 +162,7 @@ struct PeekabooBridgeTests {
 
         #expect(handshake.negotiatedVersion == PeekabooBridgeConstants.protocolVersion)
         #expect(handshake.supportedOperations.contains(PeekabooBridgeOperation.permissionsStatus))
+        #expect(handshake.supportedOperations.contains(PeekabooBridgeOperation.launchApplicationWithOptions))
         #expect(handshake.enabledOperations?.contains(PeekabooBridgeOperation.permissionsStatus) != false)
         #expect(handshake.permissions != nil)
         #expect(handshake.hostKind == PeekabooBridgeHostKind.gui)
@@ -405,6 +523,7 @@ struct PeekabooBridgeTests {
         }
 
         #expect(handshake.supportedOperations.contains(.daemonStatus) == false)
+        #expect(handshake.supportedOperations.contains(.relaunchApplicationWithOptions) == false)
     }
 
     @Test
@@ -693,7 +812,7 @@ struct PeekabooBridgeTests {
     }
 
     @Test
-    func `AppleScript operations allow AppleScript probe launch during permission gate`() async throws {
+    func `application launch does not trigger AppleScript permission probe`() async throws {
         let recorder = PermissionLaunchRecorder()
         let server = await MainActor.run {
             PeekabooBridgeServer(
@@ -718,7 +837,7 @@ struct PeekabooBridgeTests {
             return
         }
 
-        #expect(recorder.allowAppleScriptLaunchValues.contains(true))
+        #expect(!recorder.allowAppleScriptLaunchValues.contains(true))
     }
 
     @Test
@@ -1124,7 +1243,67 @@ extension PeekabooBridgeTests {
     }
 
     @Test
-    func `targeted hotkey is not advertised for unsupported remote automation services`() async throws {
+    func `remote automation restores snapshot errors for foreground clicks and element actions`() async throws {
+        let socketPath = "/tmp/peekaboo-bridge-snapshot-actions-\(UUID().uuidString).sock"
+        let services = await MainActor.run { StubServices() }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: services,
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [],
+                permissionStatusEvaluator: { _ in
+                    PermissionsStatus(
+                        screenRecording: false,
+                        accessibility: true,
+                        appleScript: false,
+                        postEvent: false)
+                })
+        }
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        let remote = await MainActor.run { RemoteUIAutomationService(client: client) }
+        await MainActor.run {
+            services.automationStub.clickError = PeekabooError.snapshotStale("window moved")
+        }
+        do {
+            try await remote.click(target: .elementId("B1"), clickType: .single, snapshotId: "S1")
+            Issue.record("Expected stale snapshot error")
+        } catch let PeekabooError.snapshotStale(reason) {
+            #expect(reason == "window moved")
+        }
+
+        let elementActions = await MainActor.run { RemoteElementActionUIAutomationService(client: client) }
+        await MainActor.run {
+            services.automationStub.elementActionError = PeekabooError.snapshotNotFound("expired")
+        }
+        do {
+            _ = try await elementActions.setValue(target: "T1", value: .string("hello"), snapshotId: "S1")
+            Issue.record("Expected missing snapshot error")
+        } catch let PeekabooError.snapshotNotFound(snapshotId) {
+            #expect(snapshotId == "expired")
+        }
+
+        await MainActor.run {
+            services.automationStub.elementActionError = PeekabooError.elementNotFound("B404")
+        }
+        do {
+            _ = try await elementActions.performAction(target: "B404", actionName: "AXPress", snapshotId: "S1")
+            Issue.record("Expected missing element error")
+        } catch let PeekabooError.elementNotFound(identifier) {
+            #expect(identifier == "B404")
+        }
+    }
+
+    @Test
+    func `unsupported remote automation capabilities are not advertised`() async throws {
         let server = await MainActor.run {
             PeekabooBridgeServer(
                 services: StubRemoteAutomationServices(supportsTargetedHotkeys: false),
@@ -1154,6 +1333,7 @@ extension PeekabooBridgeTests {
         }
 
         #expect(!handshake.supportedOperations.contains(.targetedHotkey))
+        #expect(!handshake.supportedOperations.contains(.exactWindowTargetedClick))
     }
 }
 
@@ -1165,22 +1345,30 @@ final class StubServices: PeekabooBridgeServiceProviding {
     let screenCapture: any ScreenCaptureServiceProtocol
     let automationStub = StubAutomationService()
     let automation: any UIAutomationServiceProtocol
-    let applications: any ApplicationServiceProtocol = StubApplicationService()
+    let applications: any ApplicationServiceProtocol
     let windows: any WindowManagementServiceProtocol = StubWindowService()
     let menu: any MenuServiceProtocol = UnimplementedMenuService()
     let dock: any DockServiceProtocol = UnimplementedDockService()
     let dialogs: any DialogServiceProtocol = UnimplementedDialogService()
-    let snapshots: any SnapshotManagerProtocol = SnapshotManager()
-    let desktopObservationStub = StubDesktopObservationService()
+    let snapshots: any SnapshotManagerProtocol
+    let desktopObservationStub: StubDesktopObservationService
     let desktopObservation: any DesktopObservationServiceProtocol
     let permissions: PermissionsService = .init()
     var lastBrowserStatusChannel: String?
     var lastBrowserExecute: PeekabooBridgeBrowserExecuteRequest?
 
-    init() {
+    init(
+        applications: any ApplicationServiceProtocol = StubApplicationService(),
+        snapshots: any SnapshotManagerProtocol = SnapshotManager(),
+        desktopObservation: (any DesktopObservationServiceProtocol)? = nil)
+    {
+        let desktopObservationStub = StubDesktopObservationService()
         self.screenCapture = self.screenCaptureStub
         self.automation = self.automationStub
-        self.desktopObservation = self.desktopObservationStub
+        self.applications = applications
+        self.snapshots = snapshots
+        self.desktopObservationStub = desktopObservationStub
+        self.desktopObservation = desktopObservation ?? desktopObservationStub
     }
 
     func browserStatus(channel: String?) async throws -> PeekabooBridgeBrowserStatus {
@@ -1334,7 +1522,7 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
 }
 
 @MainActor
-final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedClickServiceProtocol,
+final class StubAutomationService: TargetedHotkeyServiceProtocol, ExactWindowTargetedClickServiceProtocol,
 ElementActionAutomationServiceProtocol {
     struct Click { let target: ClickTarget; let type: ClickType }
     struct TargetedHotkey {
@@ -1343,7 +1531,12 @@ ElementActionAutomationServiceProtocol {
         let targetProcessIdentifier: pid_t?
     }
 
-    struct TargetedClick { let target: ClickTarget; let type: ClickType; let targetProcessIdentifier: pid_t? }
+    struct TargetedClick {
+        let target: ClickTarget
+        let type: ClickType
+        let targetProcessIdentifier: pid_t?
+        let targetWindowID: Int?
+    }
 
     struct SetValue {
         let target: String
@@ -1362,7 +1555,10 @@ ElementActionAutomationServiceProtocol {
     private(set) var lastProcessTargetedClick: TargetedClick?
     private(set) var lastSetValue: SetValue?
     private(set) var lastPerformAction: PerformAction?
+    var clickError: (any Error)?
+    var elementActionError: (any Error)?
     var targetedHotkeyError: (any Error)?
+    var targetedClickError: (any Error)?
 
     func detectElements(in _: Data, snapshotId _: String?, windowContext _: WindowContext?) async throws
         -> ElementDetectionResult
@@ -1381,6 +1577,9 @@ ElementActionAutomationServiceProtocol {
     }
 
     func click(target: ClickTarget, clickType: ClickType, snapshotId _: String?) async throws {
+        if let clickError {
+            throw clickError
+        }
         self.lastClick = Click(target: target, type: clickType)
     }
 
@@ -1390,10 +1589,31 @@ ElementActionAutomationServiceProtocol {
         snapshotId _: String?,
         targetProcessIdentifier: pid_t) async throws
     {
+        if let targetedClickError {
+            throw targetedClickError
+        }
         self.lastProcessTargetedClick = TargetedClick(
             target: target,
             type: clickType,
-            targetProcessIdentifier: targetProcessIdentifier)
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetWindowID: nil)
+    }
+
+    func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId _: String?,
+        targetProcessIdentifier: pid_t,
+        targetWindowID: Int) async throws
+    {
+        if let targetedClickError {
+            throw targetedClickError
+        }
+        self.lastProcessTargetedClick = TargetedClick(
+            target: target,
+            type: clickType,
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetWindowID: targetWindowID)
     }
 
     func type(text _: String, target _: String?, clearExisting _: Bool, typingDelay _: Int, snapshotId _: String?) async
@@ -1406,6 +1626,9 @@ ElementActionAutomationServiceProtocol {
     }
 
     func setValue(target: String, value: UIElementValue, snapshotId: String?) async throws -> ElementActionResult {
+        if let elementActionError {
+            throw elementActionError
+        }
         self.lastSetValue = SetValue(target: target, value: value, snapshotId: snapshotId)
         return ElementActionResult(
             target: target,
@@ -1415,6 +1638,9 @@ ElementActionAutomationServiceProtocol {
     }
 
     func performAction(target: String, actionName: String, snapshotId: String?) async throws -> ElementActionResult {
+        if let elementActionError {
+            throw elementActionError
+        }
         self.lastPerformAction = PerformAction(target: target, actionName: actionName, snapshotId: snapshotId)
         return ElementActionResult(target: target, actionName: actionName, anchorPoint: nil)
     }
@@ -1546,58 +1772,6 @@ private final class StubWindowService: WindowManagementServiceProtocol {
 }
 
 @MainActor
-private final class StubApplicationService: ApplicationServiceProtocol {
-    private let app = ServiceApplicationInfo(
-        processIdentifier: 123,
-        bundleIdentifier: "dev.stub",
-        name: "StubApp",
-        bundlePath: nil,
-        isActive: true,
-        isHidden: false,
-        windowCount: 1)
-
-    func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
-        UnifiedToolOutput(
-            data: ServiceApplicationListData(applications: [self.app]),
-            summary: .init(brief: "1 app", status: .success, counts: ["applications": 1]),
-            metadata: .init(duration: 0))
-    }
-
-    func findApplication(identifier _: String) async throws -> ServiceApplicationInfo {
-        self.app
-    }
-
-    func listWindows(for _: String, timeout _: Float?) async throws -> UnifiedToolOutput<ServiceWindowListData> {
-        UnifiedToolOutput(
-            data: ServiceWindowListData(windows: [], targetApplication: self.app),
-            summary: .init(brief: "0 windows", status: .success, counts: [:]),
-            metadata: .init(duration: 0))
-    }
-
-    func getFrontmostApplication() async throws -> ServiceApplicationInfo {
-        self.app
-    }
-
-    func isApplicationRunning(identifier _: String) async -> Bool {
-        true
-    }
-
-    func launchApplication(identifier _: String) async throws -> ServiceApplicationInfo {
-        self.app
-    }
-
-    func activateApplication(identifier _: String) async throws {}
-    func quitApplication(identifier _: String, force _: Bool) async throws -> Bool {
-        true
-    }
-
-    func hideApplication(identifier _: String) async throws {}
-    func unhideApplication(identifier _: String) async throws {}
-    func hideOtherApplications(identifier _: String) async throws {}
-    func showAllApplications() async throws {}
-}
-
-@MainActor
 private final class UnimplementedMenuService: MenuServiceProtocol {
     func listMenus(for _: String) async throws -> MenuStructure {
         throw PeekabooError.notImplemented("stub")
@@ -1708,7 +1882,7 @@ private final class UnimplementedDialogService: DialogServiceProtocol {
 }
 
 @MainActor
-private final class StubDaemonControl: PeekabooDaemonControlProviding {
+final class StubDaemonControl: PeekabooDaemonControlProviding {
     func daemonStatus() async -> PeekabooDaemonStatus {
         PeekabooDaemonStatus(
             running: true,

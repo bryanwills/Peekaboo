@@ -42,12 +42,17 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         supportsTargetedClicks: Bool = false,
         targetedClickUnavailableReason: String? = nil,
         targetedClickRequiresEventSynthesizingPermission: Bool = false,
+        supportsExactWindowTargetedClicks: Bool = false,
         supportsInspectAccessibilityTree: Bool = false,
         inspectAccessibilityTreeUnavailableReason: String? = nil,
         supportsPostEventPermissionRequest: Bool = false,
         supportsElementActions: Bool = false,
         supportsDesktopObservation: Bool = false,
-        allowLocalApplicationFallback: Bool = false)
+        supportsImplicitLatestSnapshotInvalidation: Bool = false,
+        supportsApplicationLaunchOptions: Bool = false,
+        supportsApplicationRelaunch: Bool = false,
+        allowLocalApplicationFallback: Bool = false,
+        desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil)
     {
         self.client = client
         self.supportsPostEventPermissionRequest = supportsPostEventPermissionRequest
@@ -56,7 +61,9 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         self.screenCapture = RemoteScreenCaptureService(client: client)
         self.applications = RemoteApplicationService(
             client: client,
-            localFallback: allowLocalApplicationFallback ? ApplicationService() : nil)
+            localFallback: allowLocalApplicationFallback ? ApplicationService() : nil,
+            supportsLaunchOptions: supportsApplicationLaunchOptions,
+            supportsRelaunch: supportsApplicationRelaunch)
         self.automation = if supportsElementActions {
             RemoteElementActionUIAutomationService(
                 client: client,
@@ -69,6 +76,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 supportsTargetedClicks: supportsTargetedClicks,
                 targetedClickUnavailableReason: targetedClickUnavailableReason,
                 targetedClickRequiresEventSynthesizingPermission: targetedClickRequiresEventSynthesizingPermission,
+                supportsExactWindowTargetedClicks: supportsExactWindowTargetedClicks,
                 supportsInspectAccessibilityTree: supportsInspectAccessibilityTree,
                 inspectAccessibilityTreeUnavailableReason: inspectAccessibilityTreeUnavailableReason)
         } else {
@@ -83,11 +91,15 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 supportsTargetedClicks: supportsTargetedClicks,
                 targetedClickUnavailableReason: targetedClickUnavailableReason,
                 targetedClickRequiresEventSynthesizingPermission: targetedClickRequiresEventSynthesizingPermission,
+                supportsExactWindowTargetedClicks: supportsExactWindowTargetedClicks,
                 supportsInspectAccessibilityTree: supportsInspectAccessibilityTree,
                 inspectAccessibilityTreeUnavailableReason: inspectAccessibilityTreeUnavailableReason)
         }
         self.windows = RemoteWindowManagementService(client: client)
-        let snapshotManager = RemoteSnapshotManager(client: client)
+        let snapshotManager = RemoteSnapshotManager(
+            client: client,
+            supportsImplicitLatestSnapshotInvalidation: supportsImplicitLatestSnapshotInvalidation,
+            desktopMutationWatermarkStore: desktopMutationWatermarkStore)
         let menuService = RemoteMenuService(client: client)
         let screenService = ScreenService()
 

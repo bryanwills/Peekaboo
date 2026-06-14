@@ -42,7 +42,8 @@ enum AutomationServiceBridge {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        targetProcessIdentifier: pid_t
+        targetProcessIdentifier: pid_t,
+        targetWindowID: Int? = nil
     ) async throws {
         try await Task { @MainActor in
             guard let targetedClickService = automation as? any TargetedClickServiceProtocol else {
@@ -55,12 +56,28 @@ enum AutomationServiceBridge {
                 throw self.targetedClickUnavailableError(service: targetedClickService)
             }
 
-            try await targetedClickService.click(
-                target: target,
-                clickType: clickType,
-                snapshotId: snapshotId,
-                targetProcessIdentifier: targetProcessIdentifier
-            )
+            if let targetWindowID {
+                guard let exactWindowService = targetedClickService as? any ExactWindowTargetedClickServiceProtocol
+                else {
+                    throw PeekabooError.serviceUnavailable(
+                        "Background clicks with an exact window require a compatible automation service"
+                    )
+                }
+                try await exactWindowService.click(
+                    target: target,
+                    clickType: clickType,
+                    snapshotId: snapshotId,
+                    targetProcessIdentifier: targetProcessIdentifier,
+                    targetWindowID: targetWindowID
+                )
+            } else {
+                try await targetedClickService.click(
+                    target: target,
+                    clickType: clickType,
+                    snapshotId: snapshotId,
+                    targetProcessIdentifier: targetProcessIdentifier
+                )
+            }
         }.value
     }
 

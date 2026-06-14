@@ -97,6 +97,7 @@ extension WindowCommand {
                 guard hasWindowTarget || snapshotContext != nil else { preconditionFailure("validated above") }
 
                 // Use enhanced focus with space support
+                self.resolvedRuntime.beginInteractionMutation()
                 if let windowID = windowInfo?.windowID {
                     try await ensureFocused(
                         windowID: CGWindowID(windowID),
@@ -117,6 +118,11 @@ extension WindowCommand {
                 } else {
                     throw ValidationError("Either --app, --pid, --window-id, or --snapshot must be specified")
                 }
+                await InteractionObservationInvalidator.invalidateAfterMutation(
+                    targets: self.resolvedRuntime.interactionMutationTargets,
+                    logger: self.logger,
+                    reason: "window focus"
+                )
 
                 let refreshedWindowInfo: ServiceWindowInfo? = if hasWindowTarget {
                     await self.windowOptions.refetchWindowInfo(
@@ -141,12 +147,6 @@ extension WindowCommand {
                         expectedApp: appInfo
                     )
                 }
-                await InteractionObservationInvalidator.invalidateAfterMutationOrLatest(
-                    observation,
-                    snapshots: self.services.snapshots,
-                    logger: self.logger,
-                    reason: "window focus"
-                )
                 logWindowAction(
                     action: "focus",
                     appName: appName,

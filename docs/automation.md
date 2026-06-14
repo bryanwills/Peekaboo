@@ -28,7 +28,7 @@ Peekaboo has two input delivery modes:
 - **Background** (default when a target process is known) posts process-targeted input without activating the app. `click`, `type`, `press`, `hotkey`, and `paste` use this mode when you pass `--app`, `--pid`, `--window-id`, or a snapshot with process metadata.
 - **Foreground** focuses the target first, then sends normal/global input to the active key window or mouse focus. Add `--foreground` when an app ignores background input, when a text field only accepts key-window input, or when you want focus/Space switching to be part of the action.
 
-Focus flags such as `--space-switch`, `--bring-to-current-space`, and `--no-auto-focus` belong to foreground delivery; using them implies `--foreground`. Background input requires Event Synthesizing permission for the sender shown by `peekaboo permissions status`. If it is missing, run `peekaboo permissions request-event-synthesizing`.
+Focus flags such as `--space-switch`, `--bring-to-current-space`, and `--no-auto-focus` belong to foreground delivery; using them implies `--foreground`. Background element/query clicks can complete through Accessibility alone. Keyboard input, coordinate clicks, and synthetic click fallback require Event Synthesizing for the sender shown by `peekaboo permissions status`; request it with `peekaboo permissions request-event-synthesizing`.
 
 Examples:
 

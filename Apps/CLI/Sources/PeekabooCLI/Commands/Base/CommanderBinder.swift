@@ -10,7 +10,7 @@ enum CommanderCLIBinder {
         parsedValues: ParsedValues
     ) throws -> any ParsableCommand {
         var command = type.init()
-        let runtimeOptions = try self.makeRuntimeOptions(from: parsedValues, commandType: type)
+        let runtimeOptions = try makeRuntimeOptions(from: parsedValues, commandType: type)
         if var bindable = command as? any CommanderBindableCommand {
             try bindable.applyCommanderValues(.init(parsedValues: parsedValues))
             guard let rebound = bindable as? any ParsableCommand else {
@@ -43,6 +43,31 @@ enum CommanderCLIBinder {
         commandType: (any ParsableCommand.Type)? = nil
     ) throws -> CommandRuntimeOptions {
         var options = CommandRuntimeOptions()
+        options.requiresApplicationLaunchOptions = Self.requiresApplicationLaunchOptions(commandType)
+        options.requiresApplicationRelaunch = commandType == AppCommand.RelaunchSubcommand.self
+        options.requiresSurvivingApplicationHost = commandType == AppCommand.QuitSubcommand.self
+        options.requiresHostApplicationInventory = Self.requiresHostApplicationInventory(commandType)
+        options.requiresImplicitSnapshotInvalidation = Self.requiresImplicitSnapshotInvalidation(
+            commandType,
+            parsedValues: parsedValues
+        )
+        let clipboardMayMutate = commandType == ClipboardCommand.self &&
+            Self.clipboardMayMutate(parsedValues)
+        options.requiresCallerDesktopMutationBarrier = commandType == SwitchSubcommand.self ||
+            commandType == MoveWindowSubcommand.self ||
+            commandType == CaptureActionCommand.self ||
+            clipboardMayMutate
+        options.requiresExactWindowTargetedClicks = Self.requiresExactWindowTargetedClicks(
+            commandType,
+            parsedValues: parsedValues
+        )
+        options.requiresPostEventClickPermission = Self.requiresPostEventClickPermission(
+            commandType,
+            parsedValues: parsedValues
+        )
+        options.usesPerToolSnapshotInvalidation = commandType == AgentCommand.self ||
+            commandType == MCPCommand.Serve.self ||
+            commandType == InspectUICommand.self
         options.verbose = parsedValues.flags.contains("verbose")
         options.jsonOutput = parsedValues.flags.contains("jsonOutput")
         let values = CommanderBindableValues(parsedValues: parsedValues)
@@ -53,7 +78,9 @@ enum CommanderCLIBinder {
             .trimmingCharacters(in: .whitespacesAndNewlines),
             !captureEngine.isEmpty {
             options.captureEnginePreference = captureEngine
-            options.preferRemote = false
+            if !options.requiresApplicationLaunchOptions && !options.requiresHostApplicationInventory {
+                options.preferRemote = false
+            }
         }
         if let rawInputStrategy = values.singleOption("inputStrategy")?
             .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -66,10 +93,10 @@ enum CommanderCLIBinder {
                 )
             }
             options.inputStrategy = strategy
-            options.preferRemote = false
         }
         if values.flag("no-remote") {
             options.preferRemote = false
+            options.remoteIsolationRequested = true
         }
         let explicitBridgeSocket = values.singleOption("bridge-socket")?.trimmingCharacters(in: .whitespacesAndNewlines)
         if commandType == AgentCommand.self && !values.flag("no-remote") {
@@ -80,8 +107,10 @@ enum CommanderCLIBinder {
             options.preferRemote = false
             options.autoStartDaemon = false
         }
-        if Self.prefersLocalRuntime(commandType), !values.flag("no-remote"),
-           explicitBridgeSocket?.isEmpty ?? true {
+        if Self.requiresCallerLocalRuntime(commandType) {
+            options.preferRemote = false
+        } else if Self.prefersLocalRuntime(commandType), !values.flag("no-remote"),
+                  explicitBridgeSocket?.isEmpty ?? true {
             options.preferRemote = false
         }
         if let socketPath = explicitBridgeSocket, !socketPath.isEmpty {
@@ -97,6 +126,232 @@ enum CommanderCLIBinder {
             options.requiresBrowserMCP = true
         }
         return options
+    }
+
+    private static func requiresApplicationLaunchOptions(_ commandType: (any ParsableCommand.Type)?) -> Bool {
+        commandType == OpenCommand.self ||
+            commandType == AppCommand.LaunchSubcommand.self ||
+            commandType == AppCommand.RelaunchSubcommand.self
+    }
+
+    private static func requiresHostApplicationInventory(_ commandType: (any ParsableCommand.Type)?) -> Bool {
+        commandType == ListCommand.AppsSubcommand.self ||
+            commandType == AppCommand.ListSubcommand.self
+    }
+
+    private static func requiresImplicitSnapshotInvalidation(
+        _ commandType: (any ParsableCommand.Type)?,
+        parsedValues: ParsedValues
+    ) -> Bool {
+        if commandType == ClipboardCommand.self {
+            return self.clipboardMayMutate(parsedValues)
+        }
+        if commandType == MenuBarCommand.self {
+            return parsedValues.positional.first?.lowercased() == "click"
+        }
+        if commandType == BrowserCommand.self {
+            return BrowserCommand.actionMayMutate(parsedValues.positional.first ?? "status")
+        }
+        if commandType == SeeCommand.self {
+            return true
+        }
+        if self.isInteractivePermissionRequest(commandType) {
+            return true
+        }
+        if commandType == DialogCommand.ListSubcommand.self {
+            return self.dialogListMayFocus(parsedValues)
+        }
+        if commandType == MenuCommand.ListSubcommand.self {
+            return self.menuListMayFocus(parsedValues)
+        }
+        if commandType == ImageCommand.self ||
+            commandType == CaptureLiveCommand.self ||
+            commandType == CaptureWatchAlias.self {
+            return self.captureCommandMayFocus(commandType, parsedValues: parsedValues)
+        }
+        return commandType == OpenCommand.self ||
+            commandType == AppCommand.LaunchSubcommand.self ||
+            commandType == AppCommand.RelaunchSubcommand.self ||
+            commandType == AppCommand.QuitSubcommand.self ||
+            commandType == AppCommand.HideSubcommand.self ||
+            commandType == AppCommand.UnhideSubcommand.self ||
+            commandType == AppCommand.SwitchSubcommand.self ||
+            commandType == ClickCommand.self ||
+            commandType == MoveCommand.self ||
+            commandType == TypeCommand.self ||
+            commandType == PressCommand.self ||
+            commandType == HotkeyCommand.self ||
+            commandType == PasteCommand.self ||
+            commandType == ScrollCommand.self ||
+            commandType == SwipeCommand.self ||
+            commandType == DragCommand.self ||
+            commandType == SetValueCommand.self ||
+            commandType == PerformActionCommand.self ||
+            commandType == CaptureActionCommand.self ||
+            commandType == WindowCommand.FocusSubcommand.self ||
+            commandType == WindowCommand.CloseSubcommand.self ||
+            commandType == WindowCommand.MinimizeSubcommand.self ||
+            commandType == WindowCommand.MaximizeSubcommand.self ||
+            commandType == WindowCommand.MoveSubcommand.self ||
+            commandType == WindowCommand.ResizeSubcommand.self ||
+            commandType == WindowCommand.SetBoundsSubcommand.self ||
+            commandType == DialogCommand.ClickSubcommand.self ||
+            commandType == DialogCommand.DismissSubcommand.self ||
+            commandType == DialogCommand.InputSubcommand.self ||
+            commandType == DialogCommand.FileSubcommand.self ||
+            commandType == MenuCommand.ClickSubcommand.self ||
+            commandType == MenuCommand.ClickExtraSubcommand.self ||
+            commandType == DockCommand.LaunchSubcommand.self ||
+            commandType == DockCommand.RightClickSubcommand.self ||
+            commandType == DockCommand.HideSubcommand.self ||
+            commandType == DockCommand.ShowSubcommand.self ||
+            commandType == SwitchSubcommand.self ||
+            commandType == MoveWindowSubcommand.self ||
+            commandType == RunCommand.self
+    }
+
+    private static func isInteractivePermissionRequest(
+        _ commandType: (any ParsableCommand.Type)?
+    ) -> Bool {
+        commandType == PermissionsCommand.RequestScreenRecordingSubcommand.self ||
+            commandType == PermissionsCommand.RequestEventSynthesizingSubcommand.self ||
+            commandType == PermissionCommand.RequestScreenRecordingSubcommand.self ||
+            commandType == PermissionCommand.RequestAccessibilitySubcommand.self ||
+            commandType == PermissionCommand.RequestEventSynthesizingSubcommand.self
+    }
+
+    private static func clipboardMayMutate(_ parsedValues: ParsedValues) -> Bool {
+        let values = CommanderBindableValues(parsedValues: parsedValues)
+        let positionalAction = values.positionalValue(at: 0)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let action = (positionalAction?.isEmpty == false ? positionalAction : nil) ??
+            values.singleOption("actionOption") ??
+            values.singleOption("action")
+        return ClipboardCommand.actionMayMutate(action)
+    }
+
+    private static func menuListMayFocus(_ parsedValues: ParsedValues) -> Bool {
+        let values = CommanderBindableValues(parsedValues: parsedValues)
+        return !values.flag("noAutoFocus")
+    }
+
+    private static func dialogListMayFocus(_ parsedValues: ParsedValues) -> Bool {
+        let values = CommanderBindableValues(parsedValues: parsedValues)
+        let hasWindowTarget = values.singleOption("windowId") != nil ||
+            values.singleOption("windowTitle") != nil ||
+            values.singleOption("windowIndex") != nil
+        if hasWindowTarget {
+            return true
+        }
+        guard !values.flag("noAutoFocus") else { return false }
+
+        let app = values.singleOption("app")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return app?.isEmpty == false ||
+            values.singleOption("pid") != nil
+    }
+
+    private static func captureCommandMayFocus(
+        _ commandType: (any ParsableCommand.Type)?,
+        parsedValues: ParsedValues
+    ) -> Bool {
+        let values = CommanderBindableValues(parsedValues: parsedValues)
+        let focus = values.singleOption("captureFocus")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard focus != "background" else { return false }
+
+        let app = values.singleOption("app")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasApplicationTarget = app?.isEmpty == false || values.singleOption("pid") != nil
+
+        if commandType == ImageCommand.self {
+            let normalizedApp = app?.lowercased()
+            guard normalizedApp != "menubar", normalizedApp != "frontmost" else { return false }
+
+            let mode = values.singleOption("mode")?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() ?? Self.inferredImageCaptureMode(values)
+            switch mode {
+            case "window":
+                return values.singleOption("windowId") == nil && hasApplicationTarget
+            case "multi":
+                return hasApplicationTarget
+            default:
+                return false
+            }
+        }
+
+        let mode = values.singleOption("mode")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? Self.inferredLiveCaptureMode(values)
+        return mode == "window" && hasApplicationTarget
+    }
+
+    private static func inferredImageCaptureMode(_ values: CommanderBindableValues) -> String {
+        if values.singleOption("region") != nil { return "area" }
+        if values.singleOption("app") != nil ||
+            values.singleOption("pid") != nil ||
+            values.singleOption("windowTitle") != nil ||
+            values.singleOption("windowIndex") != nil ||
+            values.singleOption("windowId") != nil {
+            return "window"
+        }
+        return "frontmost"
+    }
+
+    private static func inferredLiveCaptureMode(_ values: CommanderBindableValues) -> String {
+        if values.singleOption("region") != nil { return "area" }
+        if values.singleOption("app") != nil ||
+            values.singleOption("pid") != nil ||
+            values.singleOption("windowTitle") != nil ||
+            values.singleOption("windowIndex") != nil {
+            return "window"
+        }
+        return "frontmost"
+    }
+
+    private static func requiresExactWindowTargetedClicks(
+        _ commandType: (any ParsableCommand.Type)?,
+        parsedValues: ParsedValues
+    ) -> Bool {
+        guard commandType == ClickCommand.self else { return false }
+        let values = CommanderBindableValues(parsedValues: parsedValues)
+        guard self.usesBackgroundClickDelivery(values) else { return false }
+
+        let hasWindowSelector = values.singleOption("windowId") != nil ||
+            values.singleOption("windowTitle") != nil ||
+            values.singleOption("windowIndex") != nil
+        if hasWindowSelector {
+            return true
+        }
+
+        let hasProcessTarget = values.singleOption("app") != nil || values.singleOption("pid") != nil
+        return values.singleOption("coords") != nil && hasProcessTarget && !values.flag("globalCoords")
+    }
+
+    private static func requiresPostEventClickPermission(
+        _ commandType: (any ParsableCommand.Type)?,
+        parsedValues: ParsedValues
+    ) -> Bool {
+        guard commandType == ClickCommand.self else { return false }
+        let values = CommanderBindableValues(parsedValues: parsedValues)
+        guard self.usesBackgroundClickDelivery(values) else { return false }
+        if values.singleOption("coords") != nil {
+            return true
+        }
+        // ClickCommand resolves conflicting flags as right-click first, then double-click.
+        return values.flag("double") && !values.flag("right")
+    }
+
+    private static func usesBackgroundClickDelivery(_ values: CommanderBindableValues) -> Bool {
+        if values.flag("focusBackground") { return true }
+        return !values.flag("foreground") &&
+            !values.flag("noAutoFocus") &&
+            !values.flag("spaceSwitch") &&
+            !values.flag("bringToCurrentSpace") &&
+            values.singleOption("focusTimeoutSeconds") == nil &&
+            values.singleOption("focusRetryCount") == nil
     }
 
     private static func prefersLocalRuntime(_ commandType: (any ParsableCommand.Type)?) -> Bool {
@@ -117,10 +372,16 @@ enum CommanderCLIBinder {
             commandType == ConfigCommand.TestProviderCommand.self ||
             commandType == ConfigCommand.RemoveProviderCommand.self ||
             commandType == ConfigCommand.ModelsProviderCommand.self ||
-            commandType == AppCommand.ListSubcommand.self ||
-            commandType == ListCommand.AppsSubcommand.self ||
             commandType == ListCommand.ScreensSubcommand.self ||
-            commandType == PermissionsCommand.RequestScreenRecordingSubcommand.self
+            commandType == PermissionsCommand.RequestScreenRecordingSubcommand.self ||
+            commandType == PermissionCommand.RequestScreenRecordingSubcommand.self ||
+            commandType == PermissionCommand.RequestAccessibilitySubcommand.self
+    }
+
+    private static func requiresCallerLocalRuntime(_ commandType: (any ParsableCommand.Type)?) -> Bool {
+        commandType == PermissionsCommand.RequestScreenRecordingSubcommand.self ||
+            commandType == PermissionCommand.RequestScreenRecordingSubcommand.self ||
+            commandType == PermissionCommand.RequestAccessibilitySubcommand.self
     }
 
     private static func isDaemonCommand(_ commandType: (any ParsableCommand.Type)?) -> Bool {

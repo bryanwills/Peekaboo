@@ -9,11 +9,6 @@ extension AppCommand {
 
     @MainActor
     struct LaunchSubcommand {
-        @MainActor
-        static var launcher: any ApplicationLaunching = ApplicationLaunchEnvironment.launcher
-        @MainActor
-        static var resolver: any ApplicationURLResolving = ApplicationURLResolverEnvironment.resolver
-
         static let commandDescription = CommandDescription(
             commandName: "launch",
             abstract: "Launch an application",
@@ -88,14 +83,12 @@ extension AppCommand {
             self.prepare(using: runtime)
             do {
                 try self.validateInputs()
-                let url = try self.resolveApplicationURL()
-                let launchedApp = try await self.launchApplication(at: url, name: self.displayName(for: url))
-                try await self.waitIfNeeded(for: launchedApp)
-                self.activateIfNeeded(launchedApp)
-                await self.invalidateFocusSnapshotIfNeeded()
+                self.resolvedRuntime.beginInteractionMutation()
+                let launchedApp = try await launchApplication()
+                await invalidateSnapshotsAfterLaunch()
                 self.renderLaunchSuccess(app: launchedApp)
             } catch {
-                self.handleError(error)
+                handleError(error, customCode: applicationLaunchErrorCode(for: error))
                 throw ExitCode(1)
             }
         }
@@ -112,41 +105,19 @@ extension AppCommand {
             }
         }
 
-        private func resolveApplicationURL() throws -> URL {
-            try Self.resolver.resolveApplication(appIdentifier: self.requestedAppIdentifier, bundleId: self.bundleId)
-        }
-
-        private func displayName(for url: URL) -> String {
-            (try? url.resourceValues(forKeys: [.localizedNameKey]).localizedName) ?? self.requestedAppIdentifier
-        }
-
         private var requestedAppIdentifier: String {
-            self.app ?? self.bundleId ?? "unknown"
+            self.bundleId ?? self.app ?? "unknown"
         }
 
-        private func waitIfNeeded(for app: any RunningApplicationHandle) async throws {
-            guard self.waitUntilReady else { return }
-            try await self.waitForApplicationReady(app)
-        }
-
-        private func activateIfNeeded(_ app: any RunningApplicationHandle) {
-            guard self.shouldFocusAfterLaunch else { return }
-            if !app.activate(options: []) {
-                self.logger
-                    .error("Launch succeeded but failed to focus \(app.localizedName ?? self.requestedAppIdentifier)")
-            }
-        }
-
-        private func invalidateFocusSnapshotIfNeeded() async {
-            guard self.shouldFocusAfterLaunch else { return }
-            await InteractionObservationInvalidator.invalidateLatestSnapshot(
-                using: self.services.snapshots,
+        private func invalidateSnapshotsAfterLaunch() async {
+            await InteractionObservationInvalidator.invalidateAfterMutation(
+                targets: self.resolvedRuntime.interactionMutationTargets,
                 logger: self.logger,
-                reason: "app launch focus"
+                reason: "app launch"
             )
         }
 
-        private func renderLaunchSuccess(app: any RunningApplicationHandle) {
+        private func renderLaunchSuccess(app: ServiceApplicationInfo) {
             struct LaunchResult: Codable {
                 let action: String
                 let app_name: String
@@ -157,10 +128,10 @@ extension AppCommand {
 
             let data = LaunchResult(
                 action: "launch",
-                app_name: app.localizedName ?? self.requestedAppIdentifier,
+                app_name: app.name,
                 bundle_id: app.bundleIdentifier ?? "unknown",
                 pid: app.processIdentifier,
-                is_ready: app.isFinishedLaunching
+                is_ready: app.isFinishedLaunching ?? !self.waitUntilReady
             )
             AutomationEventLogger.log(
                 .app,
@@ -168,34 +139,22 @@ extension AppCommand {
             )
 
             output(data) {
-                print("✓ Launched \(app.localizedName ?? self.requestedAppIdentifier) (PID: \(app.processIdentifier))")
+                print("✓ Launched \(app.name) (PID: \(app.processIdentifier))")
             }
         }
 
-        private func launchApplication(at url: URL, name: String) async throws -> any RunningApplicationHandle {
-            if self.openTargets.isEmpty {
-                return try await Self.launcher.launchApplication(at: url, activates: self.shouldFocusAfterLaunch)
-            } else {
-                let urls = try self.openTargets.map { try Self.resolveOpenTarget($0) }
-                return try await Self.launcher.launchApplication(
-                    url,
-                    opening: urls,
-                    activates: self.shouldFocusAfterLaunch
-                )
-            }
-        }
-
-        private func waitForApplicationReady(
-            _ app: any RunningApplicationHandle,
-            timeout: TimeInterval = 10
-        ) async throws {
-            let startTime = Date()
-            while !app.isFinishedLaunching {
-                if Date().timeIntervalSince(startTime) > timeout {
-                    throw PeekabooError.timeout("Application did not become ready within \(Int(timeout)) seconds")
-                }
-                try await Task.sleep(nanoseconds: 100_000_000) // 0.1 second
-            }
+        private func launchApplication() async throws -> ServiceApplicationInfo {
+            let urls = try openTargets.map { try Self.resolveOpenTarget($0) }
+            let applicationIdentifier = self.bundleId == nil
+                ? self.app.map { ApplicationIdentifierResolver.resolve($0) }
+                : nil
+            return try await self.services.applications.launchApplication(request: ApplicationLaunchRequest(
+                applicationIdentifier: applicationIdentifier,
+                applicationBundleIdentifier: self.bundleId,
+                openURLs: urls,
+                activates: self.shouldFocusAfterLaunch,
+                waitUntilReady: self.waitUntilReady
+            ))
         }
 
         static func resolveOpenTarget(
@@ -229,10 +188,10 @@ extension AppCommand.LaunchSubcommand: AsyncRuntimeCommand, ErrorHandlingCommand
 @MainActor
 extension AppCommand.LaunchSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        self.app = try values.decodeOptionalPositional(0, label: "app")
-        self.bundleId = values.singleOption("bundleId")
-        self.waitUntilReady = values.flag("waitUntilReady")
-        self.noFocus = values.flag("noFocus")
-        self.openTargets = values.optionValues("open")
+        app = try values.decodeOptionalPositional(0, label: "app")
+        bundleId = values.singleOption("bundleId")
+        waitUntilReady = values.flag("waitUntilReady")
+        noFocus = values.flag("noFocus")
+        openTargets = values.optionValues("open")
     }
 }
