@@ -97,6 +97,17 @@ struct AgentCommandTests {
     }
 
     @Test
+    func `Kimi (Moonshot) models are accepted`() throws {
+        let command = try AgentCommand.parse([])
+
+        #expect(command.parseModelString("kimi/kimi-k2.6") == .kimi(.k26))
+        #expect(command.parseModelString("kimi/kimi-k2.7-code") == .kimi(.k27Code))
+        #expect(command.parseModelString("moonshot/kimi-k2.7-code-highspeed") == .kimi(.k27CodeHighspeed))
+        #expect(command.parseModelString("kimi-k2.6") == .kimi(.k26))
+        #expect(command.parseModelString("kimi/unknown-model") == nil)
+    }
+
+    @Test
     func `OpenRouter provider model IDs are accepted`() throws {
         let command = try AgentCommand.parse([])
 
@@ -382,6 +393,8 @@ struct ModelSelectionIntegrationTests {
             ("MiniMax-M2.7", .minimax(.m27)),
             ("MiniMax-M3", .minimax(.m3)),
             ("minimax/MiniMax-M3", .minimax(.m3)),
+            ("kimi/kimi-k2.6", .kimi(.k26)),
+            ("kimi/kimi-k2.7-code", .kimi(.k27Code)),
             ("ollama/llama3.3", .ollama(.llama33)),
             ("openrouter/xiaomi/mimo-v2.5-pro", .openRouter(modelId: "xiaomi/mimo-v2.5-pro")),
         ]

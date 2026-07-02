@@ -4,6 +4,7 @@
 
 ### Added
 - MiniMax-M3 can now power screenshot analysis and agent runs through the global and China MiniMax routes. Thanks @Tugser for #191.
+- Kimi K2.6 and K2.7 Code can now power screenshot analysis and agent runs through Moonshot's API. Thanks @Tugser for #192.
 
 ### Fixed
 - Speech recording now cancels and releases its recorder observer on stop and send, including after recorder errors. Thanks @SebTardif for #204.

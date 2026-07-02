@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `peekaboo see --analyze` and `peekaboo agent` now accept MiniMax-M3 through the global and China MiniMax routes. Thanks @Tugser for #191.
+- `peekaboo see --analyze` and `peekaboo agent` now accept Kimi K2.6 and K2.7 Code models through Moonshot's API. Thanks @Tugser for #192.
 
 ### Fixed
 - Public CLI, agent, MCP, and API guidance now treats runtime element IDs as opaque strings to copy exactly instead of implying role-specific ID shapes. Thanks @coygeek for #194.
