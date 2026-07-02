@@ -2,6 +2,9 @@
 
 ## [3.5.3] - 2026-06-13
 
+### Added
+- MiniMax-M3 can now power screenshot analysis and agent runs through the global and China MiniMax routes. Thanks @Tugser for #191.
+
 ### Fixed
 - Go-to-Folder navigation now stops before typing or submitting when a required synthetic hotkey fails. Thanks @SebTardif for #206.
 - Daemon launch, socket, and shutdown polling now stop promptly when their parent task is cancelled instead of spinning until the timeout. Thanks @SebTardif for #203.
