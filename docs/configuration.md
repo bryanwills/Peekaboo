@@ -32,6 +32,7 @@ Peekaboo resolves settings in this order (highest → lowest):
 | Gemini API Key | credentials file | `GEMINI_API_KEY` | Required for Gemini. |
 | MiniMax API Key | credentials file | `MINIMAX_API_KEY` | Required for MiniMax international; also works as fallback for MiniMax China. |
 | MiniMax China API Key | credentials file | `MINIMAX_CN_API_KEY` | Optional China-specific key for `minimax-cn/...` models. |
+| Kimi API Key | credentials file | `MOONSHOT_API_KEY` / `KIMI_API_KEY` | Required for Kimi models; `MOONSHOT_API_KEY` takes precedence. |
 | Ollama URL | `aiProviders.ollamaBaseUrl` | `PEEKABOO_OLLAMA_BASE_URL` | Base URL for local/remote Ollama (default `http://localhost:11434`). |
 | Default Save Path | `defaults.savePath` | `PEEKABOO_DEFAULT_SAVE_PATH` | Directory for screenshots (supports `~`). |
 | Log Level | `logging.level` | `PEEKABOO_LOG_LEVEL` | `trace`, `debug`, `info`, `warn`, `error`, `fatal` (default `info`). |
@@ -52,7 +53,7 @@ Peekaboo resolves settings in this order (highest → lowest):
 ## Provider Variables
 
 - `PEEKABOO_AI_PROVIDERS`: `provider/model` CSV. Example: `openai/gpt-5.5,anthropic/claude-opus-4-8,grok/grok-4.3,ollama/llava:latest`.
-- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GROK_API_KEY` | `X_AI_API_KEY` | `XAI_API_KEY`, `GEMINI_API_KEY`: required for their respective providers when using API keys.
+- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GROK_API_KEY` | `X_AI_API_KEY` | `XAI_API_KEY`, `GEMINI_API_KEY`, `MINIMAX_API_KEY`, `MINIMAX_CN_API_KEY`, `MOONSHOT_API_KEY` | `KIMI_API_KEY`: required for their respective providers when using API keys.
 - `PEEKABOO_OLLAMA_BASE_URL`: change when your Ollama daemon isn’t on `localhost:11434`.
 
 ## Defaults & Paths

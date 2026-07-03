@@ -5,17 +5,22 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.5.3] - 2026-06-13
+## [3.5.4] - 2026-07-03
 
 ### Added
 - `peekaboo see --analyze` and `peekaboo agent` now accept MiniMax-M3 through the global and China MiniMax routes. Thanks @Tugser for #191.
 - `peekaboo see --analyze` and `peekaboo agent` now accept Kimi K2.6 and K2.7 Code models through Moonshot's API. Thanks @Tugser for #192.
 
 ### Fixed
+- CLI paste now completes and reports clipboard restoration before returning, warning without inviting a retry when delivery succeeded but restoration failed.
 - MCP paste now warns without suggesting a retry when clipboard restoration fails after delivery. Thanks @SebTardif for #210.
 - MCP inline image capture now returns an explicit error when neither capture nor saved-file fallback contains image data, instead of reporting a successful zero-byte PNG. Thanks @SebTardif for #209.
 - Public CLI, agent, MCP, and API guidance now treats runtime element IDs as opaque strings to copy exactly instead of implying role-specific ID shapes. Thanks @coygeek for #194.
 - JSON-only `peekaboo see` runs without `--path` now keep required screenshots in snapshot storage instead of leaving files on Desktop or exposing their temporary paths. Thanks @coygeek for #196.
+
+## [3.5.3] - 2026-06-13
+
+### Fixed
 - Background element/query/coordinate clicks now pin actions to the requested process and exact window, reject mismatched window/PID selectors and unverifiable snapshots, invalidate implicit latest snapshots without deleting history, and no longer require Event Synthesizing when Accessibility completes the click.
 - App launch, open, and inventory commands now use the selected runtime host, fixing sandboxed LaunchServices failures; launch/open preserve `--no-focus` and caller-relative app paths, relaunch preflights and keeps quit/wait/launch in one daemon-held transaction, build-scoped fallback daemons remain reusable and controllable across native/Rosetta execution and executable upgrades, incompatible legacy hosts no longer force sandboxed local fallback, and inventory ignores unrelated input overrides.
 - Agent, MCP, script, CLI, and bridge mutations now advance implicit-snapshot watermarks at host-confirmed completion or observation boundaries, keep durable pending barriers across client timeouts/disconnects without hiding the acting command's own snapshot, carry remote script observation certificates, recover safely from PID reuse, ignore unavailable alternate hosts after protecting the selected/local stores, and preserve explicit snapshot history.
