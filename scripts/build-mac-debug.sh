@@ -59,6 +59,41 @@ fi
 
 echo -e "${CYAN}Building ${SCHEME} macOS app (${CONFIGURATION})...${NC}"
 
+# Sign debug builds with a development identity when one is available.
+# Ad-hoc/unsigned builds get a cdhash-pinned TCC identity, so every rebuild
+# resets Screen Recording/Accessibility grants and re-prompts. A team-anchored
+# signature keeps grants stable across rebuilds. Machines without a
+# development certificate (contributors, CI) fall back to unsigned builds.
+DEBUG_CODE_SIGN_IDENTITY="${DEBUG_CODE_SIGN_IDENTITY:-Apple Development}"
+if [ -z "${DEBUG_DEVELOPMENT_TEAM:-}" ]; then
+    dev_cert_name=$(security find-identity -v -p codesigning 2>/dev/null \
+        | sed -n 's/.*"\('"$DEBUG_CODE_SIGN_IDENTITY"'[^"]*\)".*/\1/p' | head -n 1)
+    if [ -n "$dev_cert_name" ]; then
+        # The team must be passed on the command line too so Swift package
+        # targets (which have no team of their own) can satisfy the override.
+        DEBUG_DEVELOPMENT_TEAM=$(security find-certificate -c "$dev_cert_name" -p 2>/dev/null \
+            | openssl x509 -noout -subject 2>/dev/null \
+            | sed -n 's/.*OU *= *\([A-Z0-9]\{6,\}\).*/\1/p' | head -n 1)
+    fi
+fi
+
+if [ -n "${DEBUG_DEVELOPMENT_TEAM:-}" ]; then
+    echo -e "${CYAN}Signing with ${DEBUG_CODE_SIGN_IDENTITY} (${DEBUG_DEVELOPMENT_TEAM}) for stable TCC grants${NC}"
+    SIGNING_SETTINGS=(
+        CODE_SIGN_IDENTITY="$DEBUG_CODE_SIGN_IDENTITY"
+        DEVELOPMENT_TEAM="$DEBUG_DEVELOPMENT_TEAM"
+        CODE_SIGN_STYLE=Automatic
+    )
+else
+    echo -e "${CYAN}No development certificate found; building unsigned (TCC grants reset on each rebuild)${NC}"
+    SIGNING_SETTINGS=(
+        CODE_SIGN_IDENTITY=""
+        CODE_SIGNING_REQUIRED=NO
+        CODE_SIGN_ENTITLEMENTS=""
+        CODE_SIGNING_ALLOWED=NO
+    )
+fi
+
 # Build the app
 xcodebuild \
     -workspace "$WORKSPACE" \
@@ -68,10 +103,7 @@ xcodebuild \
     -destination "$DESTINATION" \
     build \
     ONLY_ACTIVE_ARCH=YES \
-    CODE_SIGN_IDENTITY="" \
-    CODE_SIGNING_REQUIRED=NO \
-    CODE_SIGN_ENTITLEMENTS="" \
-    CODE_SIGNING_ALLOWED=NO \
+    "${SIGNING_SETTINGS[@]}" \
     2>&1 | progress_filter | pipe_build_output
 
 BUILD_EXIT_CODE=${PIPESTATUS[0]}
