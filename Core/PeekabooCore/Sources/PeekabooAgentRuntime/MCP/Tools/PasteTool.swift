@@ -95,15 +95,28 @@ public struct PasteTool: MCPTool {
 
             let restoreDelayMs = max(0, arguments.getInt("restore_delay_ms") ?? 150)
             var restoreResult: ClipboardReadResult?
+            var restoreErrorDescription: String?
+            var restorePending = true
 
-            defer {
+            func restoreClipboard() throws -> ClipboardReadResult? {
                 if restoreDelayMs > 0 {
                     usleep(useconds_t(restoreDelayMs) * 1000)
                 }
-                if priorClipboard != nil {
-                    restoreResult = try? self.context.clipboard.restore(slot: restoreSlot)
-                } else {
+                guard priorClipboard != nil else {
                     self.context.clipboard.clear()
+                    return nil
+                }
+                return try self.context.clipboard.restore(slot: restoreSlot)
+            }
+
+            defer {
+                if restorePending {
+                    do {
+                        _ = try restoreClipboard()
+                    } catch {
+                        self.logger.error(
+                            "Failed to restore clipboard after paste error: \(error.localizedDescription)")
+                    }
                 }
             }
 
@@ -119,9 +132,23 @@ public struct PasteTool: MCPTool {
                 try await self.context.automation.hotkey(keys: "cmd,v", holdDuration: 50)
             }
 
+            do {
+                restoreResult = try restoreClipboard()
+            } catch {
+                restoreErrorDescription = error.localizedDescription
+                self.logger.error("Failed to restore clipboard: \(error.localizedDescription)")
+            }
+            restorePending = false
+
             let executionTime = Date().timeIntervalSince(startTime)
-            let message = "\(AgentDisplayTokens.Status.success) Pasted (Cmd+V) and restored clipboard " +
-                "in \(String(format: "%.2f", executionTime))s"
+            let message = if restoreErrorDescription != nil {
+                "\(AgentDisplayTokens.Status.warning) Pasted (Cmd+V), but clipboard restoration failed " +
+                    "in \(String(format: "%.2f", executionTime))s. Do not retry the paste; " +
+                    "the previous clipboard contents may be unavailable."
+            } else {
+                "\(AgentDisplayTokens.Status.success) Pasted (Cmd+V) and restored clipboard " +
+                    "in \(String(format: "%.2f", executionTime))s"
+            }
 
             let pastedObject: [String: Value] = [
                 "uti": .string(setResult.utiIdentifier),
@@ -140,6 +167,8 @@ public struct PasteTool: MCPTool {
                 "pasted": .object(pastedObject),
                 "previous_clipboard_present": .bool(priorClipboard != nil),
                 "restored": .object(restoredObject),
+                "restore_succeeded": .bool(restoreErrorDescription == nil),
+                "restore_error": restoreErrorDescription.map(Value.string) ?? .null,
                 "restore_delay_ms": .int(restoreDelayMs),
                 "execution_time": .double(executionTime),
                 "delivery_mode": .string(targetPID == nil ? "foreground" : "background"),
