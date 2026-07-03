@@ -164,10 +164,10 @@ All animations share one design system (`VisualizerDesign.swift`): a single viol
 - **Effect**: A macOS-style Spaces indicator chip: one dot per desktop, the active dot hops to the destination, and a "Desktop N" label updates with a direction arrow
 
 ### Element Detection (See) 👁️
-- **Effect**: All detected elements briefly highlight
-- **Style**: Colored overlays labeled with opaque element IDs
-- **Animation**: Fade in with slight scale
-- **Duration**: 2 seconds before fade
+- **Effect**: Every detected element gets an accent outline sized exactly to the control, with its opaque ID in a small HUD tag above
+- **Coordinates**: Senders convert accessibility bounds (top-left origin) to AppKit screen coordinates via `VisualizerBoundsConverter` before dispatch; unconverted rects render vertically mirrored
+- **Animation**: Pop in with slight scale, fade out at the end
+- **Duration**: 2 seconds (scaled) before fade
 
 ## Implementation Details
 

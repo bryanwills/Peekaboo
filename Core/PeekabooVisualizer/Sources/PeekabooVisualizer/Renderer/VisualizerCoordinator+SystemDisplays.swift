@@ -215,28 +215,21 @@ extension VisualizerCoordinator {
             return false
         }
 
-        // For element detection, we'll show highlights on all detected elements
-        // This is a simplified implementation - in a real app, you might want
-        // to create a custom view that shows all elements at once
-
+        // Rects arrive in AppKit screen coordinates (senders convert from
+        // accessibility space). Each highlight is sized to its element so the
+        // outline sits exactly on the control instead of filling the padded
+        // overlay window.
+        let highlightDuration = self.scaledDuration(for: duration, minimum: AnimationBaseline.elementHighlight)
         for (elementId, rect) in elements {
-            // Create a simple highlight view for each element
-            let highlightView = RoundedRectangle(cornerRadius: 4)
-                .stroke(Color.orange, lineWidth: 2)
-                .overlay(
-                    Text(elementId)
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                        .padding(4)
-                        .background(Color.black.opacity(0.7))
-                        .cornerRadius(4)
-                        .position(x: rect.width / 2, y: -10))
+            let highlightView = ElementHighlightView(
+                elementID: elementId,
+                size: rect.size,
+                duration: highlightDuration)
 
-            // Display using overlay manager
             _ = self.overlayManager.showAnimation(
                 at: Self.paddedRect(rect, padding: Self.OverlayPadding.elementHighlight),
                 content: highlightView,
-                duration: self.scaledDuration(for: duration, minimum: AnimationBaseline.elementHighlight),
+                duration: highlightDuration,
                 fadeOut: true)
         }
 

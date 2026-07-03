@@ -6,6 +6,31 @@ import Testing
 @MainActor
 struct SeeToolVisualizerTests {
     @Test
+    func `Global conversion flips against the primary display`() {
+        let primary = CGRect(x: 0, y: 0, width: 1440, height: 900)
+
+        // Element on the primary display.
+        let onPrimary = VisualizerBoundsConverter.convertGlobalAccessibilityRect(
+            CGRect(x: 120, y: 50, width: 200, height: 40),
+            primaryScreenFrame: primary)
+        #expect(onPrimary == CGRect(x: 120, y: 900 - 50 - 40, width: 200, height: 40))
+
+        // Element on a display arranged ABOVE the primary: global accessibility
+        // coordinates are negative there, and the same primary-height flip must
+        // land it above the primary in AppKit space.
+        let onUpperDisplay = VisualizerBoundsConverter.convertGlobalAccessibilityRect(
+            CGRect(x: 100, y: -1100, width: 200, height: 40),
+            primaryScreenFrame: primary)
+        #expect(onUpperDisplay == CGRect(x: 100, y: 900 + 1100 - 40, width: 200, height: 40))
+    }
+
+    @Test
+    func `Global conversion passes rects through without a primary screen`() {
+        let rect = CGRect(x: 10, y: 20, width: 30, height: 40)
+        #expect(VisualizerBoundsConverter.convertGlobalAccessibilityRect(rect, primaryScreenFrame: nil) == rect)
+    }
+
+    @Test
     func `Converts accessibility bounds into screen-space rectangles`() {
         let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
         let accessibilityRect = CGRect(x: 120, y: 50, width: 200, height: 40)

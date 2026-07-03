@@ -274,9 +274,22 @@ public struct SeeTool: MCPTool {
 
     // Removed getRolePrefix - no longer needed after refactoring to use main UIElement struct
 
+    @MainActor
     private func emitElementDetectionVisualizer(from detected: [AutomationDetectedElement]) async {
         guard !detected.isEmpty else { return }
-        let map = Dictionary(uniqueKeysWithValues: detected.map { ($0.id, $0.bounds) })
+        // Element bounds use global accessibility coordinates (top-left origin)
+        // but the overlay windows are positioned in global AppKit coordinates
+        // (bottom-left origin). Flip against the primary display — without this
+        // the highlights render vertically mirrored across the screen.
+        let screens = self.context.screens.listScreens()
+        let primaryFrame = (screens.first(where: \.isPrimary) ?? screens.first)?.frame
+        let map = Dictionary(uniqueKeysWithValues: detected.map { element in
+            (
+                element.id,
+                VisualizerBoundsConverter.convertGlobalAccessibilityRect(
+                    element.bounds,
+                    primaryScreenFrame: primaryFrame))
+        })
         _ = await VisualizationClient.shared.showElementDetection(elements: map)
     }
 
