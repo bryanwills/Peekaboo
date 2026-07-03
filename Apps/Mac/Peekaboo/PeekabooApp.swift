@@ -138,6 +138,11 @@ struct PeekabooApp: App {
         }
         .windowResizability(.automatic)
         .defaultSize(width: 900, height: 700)
+        // The sessions window must only appear on explicit user intent (menu,
+        // shortcut, dock). Without these, SwiftUI presents/restores it on
+        // every app launch — very noticeable with dev rebuild-relaunch loops.
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
 
         // Inspector window
         WindowGroup("Inspector", id: "inspector") {
@@ -268,8 +273,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.startBridgeHost(services: context.services)
         }
 
-        // Show onboarding if needed
-        if self.settings?.agentModeEnabled == true, self.settings?.hasValidAPIKey != true {
+        // Nudge towards API-key setup once, not on every launch — repeated
+        // launches (dev rebuild loops, login item) must not pop the window.
+        let apiKeyNudgeKey = "peekaboo.agentAPIKeyNudgeShown"
+        if self.settings?.agentModeEnabled == true,
+           self.settings?.hasValidAPIKey != true,
+           !UserDefaults.standard.bool(forKey: apiKeyNudgeKey)
+        {
+            UserDefaults.standard.set(true, forKey: apiKeyNudgeKey)
             self.showMainWindow()
         }
     }
@@ -301,9 +312,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // Reopen fires for dock clicks and for `open`/relaunch attempts while
+        // the app is already running. A dock click is real user intent, but a
+        // dock icon only exists while the activation policy is .regular — in
+        // .accessory mode the reopen is programmatic, and auto-opening the
+        // sessions window for those made it appear far too often.
         if flag {
             NSApp.activate(ignoringOtherApps: true)
-        } else {
+        } else if NSApp.activationPolicy() == .regular {
             self.showMainWindow()
         }
         return false
