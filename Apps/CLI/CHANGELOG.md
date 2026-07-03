@@ -5,7 +5,21 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [3.6.0] - 2026-07-03
+
+### Changed
+- Agent-skill documentation now defines Peekaboo as the authority for product and workflow guidance while allowing distributors such as OpenClaw to ship release-pinned snapshots with host-specific overlays.
+
+### Fixed
+- Bridge hosts now always return a non-empty decodable error when error encoding fails, instead of surfacing EOF or a secondary decode failure. Thanks @SebTardif for #211.
+- Snapshot listing and cleanup now propagate lock-open failures instead of treating unavailable storage as an empty snapshot list. Thanks @SebTardif for #212.
+- Element-detection highlights from `see` now land exactly on the detected controls instead of rendering vertically mirrored or filling the padded overlay window.
+- Automation services now route visual feedback to Peekaboo's visualizer instead of silently dropping click, type, scroll, hotkey, swipe, mouse-move, window, menu, dialog, dock, Space-switch, and screenshot-flash animations.
+- Typing feedback masks printable characters before events are persisted or displayed; set `PEEKABOO_VISUALIZER_SHOW_TYPED_TEXT=true` only for demos that intentionally show typed text.
+- Visualizer overlays now center on their targets, and mouse-trail and swipe coordinates are converted into the correct window-local coordinate space.
+
+### Removed
+- Removed the visualizer keyboard-theme setting, which only affected the retired QWERTY typing widget.
 
 ## [3.5.4] - 2026-07-03
 

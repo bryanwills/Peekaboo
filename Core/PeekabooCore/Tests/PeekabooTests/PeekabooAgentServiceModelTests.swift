@@ -6,6 +6,9 @@ import Testing
 @testable import PeekabooCore
 @testable import PeekabooVisualizer
 
+// Shared provider fakes keep these serialized agent-environment tests in one compilation unit.
+// swiftlint:disable file_length
+
 /// Tests for PeekabooAgentService model selection functionality
 @Suite(.serialized)
 struct PeekabooAgentServiceTests {
