@@ -2,12 +2,13 @@
 //  ScreenshotFlashView.swift
 //  Peekaboo
 //
-//  Created by Peekaboo on 2025-01-30.
+//  A viewfinder capture: corner brackets snap in with a soft shutter veil.
 //
 
 import SwiftUI
 
-/// A view that displays a camera flash animation for screenshot capture
+/// Screenshot feedback: viewfinder corner brackets snap onto the captured
+/// region while a brief veil flashes, reading as a camera shutter.
 struct ScreenshotFlashView: View {
     // MARK: - Properties
 
@@ -18,66 +19,82 @@ struct ScreenshotFlashView: View {
     let intensity: Double
 
     /// Animation state
-    @State private var flashOpacity: Double = 0
-    @State private var ghostScale: Double = 0
+    @State private var veilOpacity: Double = 0
+    @State private var bracketProgress: CGFloat = 0
+    @State private var bracketOpacity: Double = 0
+    @State private var ghostScale: Double = 0.5
+    @State private var ghostOffset: CGFloat = 0
     @State private var ghostOpacity: Double = 0
 
     // MARK: - Body
 
     var body: some View {
         ZStack {
-            // Flash overlay
+            // Shutter veil
             Color.white
-                .opacity(self.flashOpacity * self.intensity * 0.2) // Max 20% opacity
+                .opacity(self.veilOpacity * self.intensity * 0.18)
                 .ignoresSafeArea()
+
+            // Viewfinder corner brackets
+            CornerBracketsShape(inset: 12, armLength: 30)
+                .trim(from: 0, to: self.bracketProgress)
+                .stroke(
+                    Color.white.opacity(0.9),
+                    style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                .shadow(color: VisualizerTheme.accent.opacity(0.6), radius: 6)
+                .opacity(self.bracketOpacity)
 
             // Ghost easter egg (every 100th screenshot)
             if self.showGhost {
-                VStack {
-                    Text("👻")
-                        .font(.system(size: 50))
-                        .scaleEffect(self.ghostScale)
-                        .opacity(self.ghostOpacity)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Text("👻")
+                    .font(.system(size: 52))
+                    .scaleEffect(self.ghostScale)
+                    .offset(y: self.ghostOffset)
+                    .opacity(self.ghostOpacity)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .onAppear {
-            self.startFlashAnimation()
+            self.startCaptureAnimation()
         }
     }
 
     // MARK: - Methods
 
-    private func startFlashAnimation() {
-        // Flash animation
-        withAnimation(.easeOut(duration: 0.1)) {
-            self.flashOpacity = 1.0
+    private func startCaptureAnimation() {
+        // Brackets snap onto the captured region
+        withAnimation(VisualizerMotion.enter(0.05)) {
+            self.bracketOpacity = 1
+        }
+        withAnimation(VisualizerMotion.enter(0.16)) {
+            self.bracketProgress = 1.0
         }
 
-        // Fade out after flash
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            withAnimation(.easeIn(duration: 0.1)) {
-                self.flashOpacity = 0
-            }
+        // Shutter veil pulses once
+        withAnimation(VisualizerMotion.enter(0.08).delay(0.08)) {
+            self.veilOpacity = 1.0
+        }
+        withAnimation(VisualizerMotion.exit(0.12).delay(0.16)) {
+            self.veilOpacity = 0
         }
 
-        // Ghost animation (if enabled)
+        // Brackets linger briefly, then dissolve
+        withAnimation(VisualizerMotion.exit(0.12).delay(0.22)) {
+            self.bracketOpacity = 0
+        }
+
+        // Ghost floats up and fades
         if self.showGhost {
-            // Delay ghost appearance slightly
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-                    self.ghostScale = 1.0
-                    self.ghostOpacity = 0.8
-                }
-
-                // Fade out ghost
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    withAnimation(.easeOut(duration: 0.3)) {
-                        self.ghostScale = 1.2
-                        self.ghostOpacity = 0
-                    }
-                }
+            withAnimation(VisualizerMotion.pop(0.35).delay(0.05)) {
+                self.ghostScale = 1.0
+                self.ghostOpacity = 0.9
+            }
+            withAnimation(VisualizerMotion.glide(0.5).delay(0.1)) {
+                self.ghostOffset = -28
+            }
+            withAnimation(VisualizerMotion.exit(0.25).delay(0.45)) {
+                self.ghostOpacity = 0
+                self.ghostScale = 1.1
             }
         }
     }
@@ -86,18 +103,15 @@ struct ScreenshotFlashView: View {
 // MARK: - Preview
 
 #if DEBUG && !SWIFT_PACKAGE
-#Preview("Normal Flash") {
+#Preview("Capture") {
     ScreenshotFlashView(showGhost: false, intensity: 1.0)
         .frame(width: 400, height: 300)
+        .background(Color.gray.opacity(0.3))
 }
 
 #Preview("With Ghost") {
     ScreenshotFlashView(showGhost: true, intensity: 1.0)
         .frame(width: 400, height: 300)
-}
-
-#Preview("Half Intensity") {
-    ScreenshotFlashView(showGhost: false, intensity: 0.5)
-        .frame(width: 400, height: 300)
+        .background(Color.gray.opacity(0.3))
 }
 #endif

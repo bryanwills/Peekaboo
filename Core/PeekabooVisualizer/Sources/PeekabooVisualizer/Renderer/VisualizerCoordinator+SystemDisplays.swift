@@ -189,12 +189,19 @@ extension VisualizerCoordinator {
             direction: direction,
             duration: spaceDuration)
 
-        // Display full screen where mouse is located
+        // Display as a compact HUD centered on the screen where the mouse is
         let screen = self.getTargetScreen()
+        let screenFrame = screen.frame
+        let overlaySize = CGSize(width: 420, height: 180)
+        let rect = CGRect(
+            x: screenFrame.midX - overlaySize.width / 2,
+            y: screenFrame.midY - overlaySize.height / 2,
+            width: overlaySize.width,
+            height: overlaySize.height)
 
         // Display using overlay manager
         _ = self.overlayManager.showAnimation(
-            at: screen.frame,
+            at: rect,
             content: spaceView,
             duration: spaceDuration,
             fadeOut: true)

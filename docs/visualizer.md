@@ -47,10 +47,11 @@ MCP Server → peekaboo CLI → VisualizerEventStore → Distributed Notificatio
 
 | Component | Location | Role |
 | --- | --- | --- |
-| `VisualizationClient` | `Core/PeekabooCore/Sources/PeekabooCore/Visualizer/VisualizationClient.swift` | Runs inside CLI/MCP processes, serializes payloads, persists them, and posts distributed notifications containing the event descriptor. |
-| `VisualizerEventStore` | `Core/PeekabooCore/Sources/PeekabooCore/Visualizer/VisualizerEventStore.swift` | Owns the shared storage directory, defines the `VisualizerEvent` schema, and exposes helpers to persist, load, and clean up JSON envelopes. |
-| `VisualizerEventReceiver` | `Apps/Mac/Peekaboo/Services/Visualizer/VisualizerEventReceiver.swift` | Lives in Peekaboo.app, listens for `boo.peekaboo.visualizer.event`, loads the referenced JSON, and forwards it to `VisualizerCoordinator`. |
-| `VisualizerCoordinator` | `Apps/Mac/Peekaboo/Services/Visualizer/VisualizerCoordinator.swift` | Renders SwiftUI overlays (flashes, ripples, annotations, etc.) and honors user settings such as Reduce Motion. |
+| `VisualizationClient` | `Core/PeekabooVisualizer/Sources/PeekabooVisualizer/Visualizer/VisualizationClient.swift` | Runs inside CLI/MCP processes, serializes payloads, persists them, and posts distributed notifications containing the event descriptor. |
+| `VisualizerEventStore` | `Core/PeekabooVisualizer/Sources/PeekabooVisualizer/Visualizer/VisualizerEventStore.swift` | Owns the shared storage directory, defines the `VisualizerEvent` schema, and exposes helpers to persist, load, and clean up JSON envelopes. |
+| `VisualizerEventReceiver` | `Core/PeekabooVisualizer/Sources/PeekabooVisualizer/Renderer/VisualizerEventReceiver.swift` | Hosted by Peekaboo.app, listens for `boo.peekaboo.visualizer.event`, loads the referenced JSON, and forwards it to `VisualizerCoordinator`. |
+| `VisualizerCoordinator` | `Core/PeekabooVisualizer/Sources/PeekabooVisualizer/Renderer/VisualizerCoordinator.swift` | Renders SwiftUI overlays (reticles, HUD chips, comets, annotations) and honors user settings such as animation speed and per-action toggles. |
+| `VisualizerDesign` | `Core/PeekabooVisualizer/Sources/PeekabooVisualizer/Views/VisualizerDesign.swift` | The shared "Ghost HUD" design language: theme tokens, motion curves, HUD chip container, keycaps, and glyph badges every animation composes from. |
 
 ## Smoke Testing
 
@@ -68,6 +69,7 @@ MCP Server → peekaboo CLI → VisualizerEventStore → Distributed Notificatio
 
 - `PEEKABOO_VISUAL_FEEDBACK=false` – disable the client entirely (no files, no notifications).
 - `PEEKABOO_VISUAL_SCREENSHOTS=false` – skip screenshot flash events but allow the rest.
+- `PEEKABOO_VISUALIZER_SHOW_TYPED_TEXT=true` – show typed characters verbatim in the typing HUD. By default printable keys are masked as bullets before the event is persisted, so passwords and tokens never reach the shared store or the screen.
 - `PEEKABOO_VISUALIZER_STDOUT=true|false` – force VisualizationClient logs to stderr regardless of bundle context.
 - `PEEKABOO_VISUALIZER_STORAGE=/path` – override the shared directory.
 - `PEEKABOO_VISUALIZER_APP_GROUP=<group>` – resolve storage inside an App Group container.
@@ -103,90 +105,63 @@ Peekaboo.app still respects user-facing toggles via `PeekabooSettings`; the coor
 5. **Negative test** – Quit Peekaboo.app and rerun the CLI command. With `--verbose` or higher logging, the client should emit a single “Peekaboo.app is not running” debug line and skip event creation until the UI returns.
 6. **Optional overrides** – Set `PEEKABOO_VISUALIZER_FORCE_APP=true` and re-run inside a headless harness to confirm the transport still works without the UI present (the files remain until you delete them).
 
-## Visual Feedback Designs
+## Visual Feedback Designs — the "Ghost HUD" language
+
+All animations share one design system (`VisualizerDesign.swift`): a single violet accent (`VisualizerTheme.accent`, cyan secondary for gradients, red strictly for destructive operations), dark translucent HUD chips with hairline strokes, and a common motion vocabulary (`VisualizerMotion.pop/settle/enter/exit/glide`). Geometry over cartoons: reticles, comets, chevrons, and keycaps — no particle bursts, no clip-art cursors, no rainbow per-action colors.
 
 ### Screenshot Capture 📸
-- **Effect**: Subtle camera flash animation
-- **Style**: White semi-transparent overlay that quickly fades
-- **Duration**: 200ms (quick flash)
-- **Coverage**: Only the captured area flashes (not full screen)
-- **Intensity**: 20% opacity peak to avoid irritation
+- **Effect**: Viewfinder corner brackets snap onto the captured region while a white veil flashes once
+- **Intensity**: Veil peaks at 18% opacity scaled by the user's effect-intensity setting
+- **Coverage**: Only the captured area, not the full screen
+- **Easter egg**: Every 100th screenshot floats a 👻 up through the frame
 
 ### Click Actions 🎯
-- **Single Click**: Blue ripple effect from click point
-- **Double Click**: Purple double-ripple animation
-- **Right Click**: Orange ripple with context menu hint
-- **Duration**: 500ms expanding ripple
-- **Extra**: Small "click" label appears briefly
+- **Single Click**: A targeting ring contracts onto the point, the center dot pops with a glow bloom, and one impact pulse expands
+- **Double Click**: Two staggered impact pulses
+- **Right Click**: Dashed contracting ring in the secondary accent, hinting at a context menu
+- **No labels**: The geometry communicates the action; there is no "Click" text
 
 ### Typing Feedback ⌨️
-- **Style**: Floating keyboard widget at bottom center
-- **Effect**: Keys light up as typed
-- **Special Keys**: Visual representation (⏎, ⇥, ⌫)
-- **Position**: Semi-transparent, doesn't block content
-- **Cadence**: Widget mirrors the actual `TypingCadence` (human vs. linear) and displays the live WPM/delay coming from `VisualizerEvent.typingFeedback`.
-- **Duration**: Visible during typing + 500ms fade
+- **Style**: A caption pill at bottom center streams the keystrokes with a blinking caret
+- **Privacy**: Printable characters are masked as bullets by default (typed text can be a password); set `PEEKABOO_VISUALIZER_SHOW_TYPED_TEXT=true` to stream the actual text, e.g. for demo recordings
+- **Special Keys**: Rendered inline as accent glyphs (⏎, ⇥, ⌫, ⎋)
+- **Cadence**: Reveal speed derives from the incoming `TypingCadence` (human WPM or fixed delay)
 
 ### Scrolling 📜
-- **Effect**: Directional arrows with motion blur
-- **Style**: Animated arrows indicating scroll direction
-- **Position**: At scroll location
-- **Extra**: Scroll amount indicator (e.g., "3 lines")
+- **Effect**: A compact circular chip at the scroll point with three chevrons flowing along the scroll direction
+- **Extra**: A small "×N" tag beneath the chip when scrolling more than one unit
 
 ### Mouse Movement 🖱️
-- **Effect**: Glowing trail following mouse path
-- **Style**: Fading particle trail
-- **Color**: Soft blue glow
-- **Duration**: Trail fades over 1 second
+- **Effect**: A glowing comet head glides from start to destination, stretching a tapered gradient tail
+- **Landing**: A small ring blooms at the destination as the head arrives
 
 ### Swipe/Drag Gestures 👆
-- **Effect**: Animated path from start to end
-- **Style**: Gradient line with directional arrow
-- **Start/End**: Pulsing markers at endpoints
-- **Duration**: Animation follows gesture speed
+- **Effect**: The same comet vocabulary with a thicker stroke (button held)
+- **Endpoints**: A press ring marks touch-down; a release ring plus a direction chevron marks touch-up
 
 ### Hotkeys ⌨️
-- **Style**: Large key combination display
-- **Position**: Center of screen
-- **Format**: "⌘ + C", "⌃ + ⇧ + T"
-- **Effect**: Keys appear with spring animation
-- **Duration**: 1 second display + fade
+- **Style**: macOS-style keycaps (symbol plus caption, e.g. ⌘ command) in a HUD chip at screen center
+- **Effect**: Keys press down in sequence with an accent highlight, hold the chord, then release together
 
-### App Launch 🚀
-- **Effect**: App icon bounces in from bottom
-- **Style**: Icon + "Launching..." text
-- **Animation**: Playful bounce effect
-- **Duration**: Until app appears
-
-### App Quit 🛑
-- **Effect**: App icon shrinks and fades
-- **Style**: Icon + "Quitting..." text
-- **Animation**: Smooth scale down
-- **Duration**: 500ms
+### App Launch / Quit 🚀
+- **Style**: A HUD toast with the app icon, name, and a status line ("Launching" / "Quitting") with a colored status dot
+- **Launch**: Icon springs in with a one-shot glow sweep (green status dot)
+- **Quit**: Icon desaturates and sinks while the toast slips away (red status dot)
 
 ### Window Operations 🪟
-- **Move**: Dotted outline follows window
-- **Resize**: Live dimension labels (e.g., "800×600")
-- **Minimize**: Window shrinks to dock with trail
-- **Close**: Red flash on window before close
+- **Style**: The window outline plus a glyph badge naming the operation; accent color, red only for close
+- **Close**: Outline contracts and fades. **Minimize**: outline squashes toward the bottom. **Maximize/Focus**: outline expands with a glow pulse. **Move**: outline lifts and settles. **Resize/SetBounds**: corner brackets pulse inward
 
 ### Menu Navigation 📋
-- **Effect**: Sequential highlight of menu path
-- **Style**: Blue glow on each menu item
-- **Timing**: 200ms per menu level
-- **Path**: Shows breadcrumb trail
+- **Effect**: The menu path renders as a breadcrumb chip ("File ▸ New ▸ Project"); segments illuminate in traversal order
+- **States**: Active segment gets an accent fill, visited segments stay bright, pending segments dim
 
 ### Dialog Interactions 💬
-- **Effect**: Highlight dialog elements
-- **Buttons**: Pulse when clicked
-- **Text Fields**: Glow when focused
-- **Style**: Attention-grabbing but not intrusive
+- **Effect**: The target element gets an accent outline with a glyph badge naming the action
+- **Text entry**: A blinking caret at the field's leading edge; click actions pulse once
 
 ### Space Switching 🚪
-- **Effect**: Slide transition indicator
-- **Style**: Arrow showing direction
-- **Preview**: Mini preview of destination space
-- **Duration**: Matches system animation
+- **Effect**: A macOS-style Spaces indicator chip: one dot per desktop, the active dot hops to the destination, and a "Desktop N" label updates with a direction arrow
 
 ### Element Detection (See) 👁️
 - **Effect**: All detected elements briefly highlight
@@ -213,14 +188,19 @@ Peekaboo.app still respects user-facing toggles via `PeekabooSettings`; the coor
 
 ### SwiftUI Animation Components
 
-Located in `/Apps/Mac/Peekaboo/Features/Visualizer/`:
-- `ScreenshotFlashView.swift` - Camera flash effect
-- `ClickAnimationView.swift` - Ripple effects
-- `TypeAnimationView.swift` - Keyboard visualization
-- `ScrollAnimationView.swift` - Scroll indicators
-- `MouseTrailView.swift` - Mouse movement trails
-- `HotkeyDisplayView.swift` - Key combination display
+Located in `Core/PeekabooVisualizer/Sources/PeekabooVisualizer/Views/`:
+- `VisualizerDesign.swift` - Shared theme, motion curves, HUD chip, keycap, corner brackets, glyph badge
+- `ScreenshotFlashView.swift` - Viewfinder brackets + shutter veil
+- `ClickAnimationView.swift` - Targeting reticle with impact pulses
+- `TypeAnimationView.swift` - Streaming caption pill
+- `ScrollAnimationView.swift` - Flowing chevron chip
+- `MouseTrailView.swift` / `SwipePathView.swift` - Comet trails (window-local coordinates)
+- `HotkeyOverlayView.swift` - Keycap chord display
 - ... (one file per animation type)
+
+Two overlay invariants worth knowing when adding animations:
+- `AnimationOverlayManager` wraps every animation in a flexible container so fixed-size views center on the overlay window; without it they pin to the top-leading corner and misalign by the window padding.
+- Point-based views (mouse trail, swipe) receive window-local SwiftUI coordinates. `VisualizerCoordinator.windowLocalPoint(_:in:)` converts AppKit screen points (bottom-left origin) into flipped view coordinates.
 
 ### Integration Points
 
@@ -267,14 +247,12 @@ PEEKABOO_VISUALIZER_FORCE_APP=true        # Pretend the CLI is running inside th
 - **Customization**: Users can adjust flash intensity
 
 ### Click Animations
-- **Variety**: Different click patterns for different UI elements
-- **Physics**: Ripples interact with screen edges
-- **Trails**: Fast clicks create comet-like trails
+- **Variety**: Ring shape distinguishes the click type — solid for left, dashed for right, double pulse for double-click
+- **Precision**: The reticle contracts onto the exact click point, so recordings read like a targeting lock
 
-### Typing Widget
-- **Themes**: Multiple keyboard themes (classic, modern, ghostly)
-- **Effects**: Keys have satisfying press animations
-- **Cadence-aware**: Uses the incoming `TypingCadence` to scale animation speed and display real WPM (linear profiles convert delay to WPM).
+### Typing Caption
+- **Content over chrome**: Shows the actual text being typed rather than a fake keyboard
+- **Cadence-aware**: Uses the incoming `TypingCadence` to pace the character stream (human WPM or fixed delay).
 
 ### App Launch
 - **Personality**: Each app can have custom launch animation
@@ -343,110 +321,22 @@ Most importantly, it's completely optional - the CLI and MCP continue to work pe
   - [ ] Handle multi-screen setups
   - [ ] Add debug mode for testing
 
-### Phase 2: Core Animation Components
+### Phase 2–4: Animation Components (shipped as the Ghost HUD redesign)
 
-#### Screenshot Flash Animation
-- [ ] Create `ScreenshotFlashView.swift`
-  - [ ] Implement 200ms flash animation
-  - [ ] Add 20% opacity peak
-  - [ ] Support custom flash regions
-  - [ ] Add ghost emoji easter egg (every 100th)
-- [ ] Integrate with screenshot service
-  - [ ] Hook into `see` command
-  - [ ] Hook into `image` command
-  - [ ] Add configuration checks
+All per-action views exist in `Core/PeekabooVisualizer/Sources/PeekabooVisualizer/Views/` and compose the shared design system in `VisualizerDesign.swift`:
 
-#### Click Animations
-- [ ] Create `ClickAnimationView.swift`
-  - [ ] Single click (blue ripple)
-  - [ ] Double click (purple double-ripple)
-  - [ ] Right click (orange ripple)
-  - [ ] Add click type labels
-- [ ] Create physics system for ripples
-  - [ ] Edge bounce effects
-  - [ ] Ripple interference patterns
-  - [ ] Trail effects for rapid clicks
-
-#### Typing Feedback
-- [ ] Create `TypeAnimationView.swift`
-  - [ ] Floating keyboard widget
-  - [ ] Key press animations
-  - [ ] Special key representations
-  - [ ] WPM counter
-- [ ] Create keyboard themes
-  - [ ] Classic theme
-  - [ ] Modern theme
-  - [ ] Ghostly theme
-- [ ] Handle different keyboard layouts
-
-#### Scroll Animations
-- [ ] Create `ScrollAnimationView.swift`
-  - [ ] Directional arrows
-  - [ ] Motion blur effects
-  - [ ] Scroll amount indicators
-  - [ ] Smooth vs discrete scroll
-
-### Phase 3: Advanced Animations
-
-#### Mouse Movement
-- [ ] Create `MouseTrailView.swift`
-  - [ ] Particle trail system
-  - [ ] Fading glow effect
-  - [ ] Performance optimization
-  - [ ] Trail customization
-
-#### Swipe/Drag
-- [ ] Create `SwipeAnimationView.swift`
-  - [ ] Path drawing animation
-  - [ ] Gradient effects
-  - [ ] Start/end markers
-  - [ ] Variable speed support
-
-#### Hotkey Display
-- [ ] Create `HotkeyDisplayView.swift`
-  - [ ] Key combination formatting
-  - [ ] Spring animations
-  - [ ] Symbol rendering (⌘, ⌃, ⇧)
-  - [ ] Multi-key sequences
-
-#### App Lifecycle
-- [ ] Create `AppLaunchAnimationView.swift`
-  - [ ] Icon bounce effect
-  - [ ] Progress indication
-  - [ ] Custom per-app animations
-- [ ] Create `AppQuitAnimationView.swift`
-  - [ ] Shrink and fade effect
-  - [ ] Status text display
-
-### Phase 4: Window & System Animations
-
-#### Window Operations
-- [ ] Create `WindowOperationView.swift`
-  - [ ] Move operation (dotted outline)
-  - [ ] Resize operation (dimension labels)
-  - [ ] Minimize animation (trail to dock)
-  - [ ] Close animation (red flash)
-
-#### Menu Navigation
-- [ ] Create `MenuHighlightView.swift`
-  - [ ] Sequential item highlighting
-  - [ ] Breadcrumb trail
-  - [ ] Timing coordination
-  - [ ] Submenu support
-
-#### Dialog Interactions
-- [ ] Create `DialogFeedbackView.swift`
-  - [ ] Button pulse effects
-  - [ ] Text field glow
-  - [ ] Focus indicators
-  - [ ] Selection highlights
-
-#### Space Switching
-- [ ] Create `SpaceTransitionView.swift`
-  - [ ] Slide indicators
-  - [ ] Direction arrows
-  - [ ] Mini space previews
-  - [ ] Transition timing
+- [x] `ScreenshotFlashView` — viewfinder brackets, shutter veil, 👻 easter egg (every 100th)
+- [x] `ClickAnimationView` — targeting reticle; solid/dashed/double-pulse per click type
+- [x] `TypeAnimationView` — streaming caption pill with cadence-derived pacing
+- [x] `ScrollAnimationView` — flowing chevron chip with amount tag
+- [x] `MouseTrailView` — comet trail with landing ring (window-local coordinates)
+- [x] `SwipePathView` — drag comet with press/release rings
+- [x] `HotkeyOverlayView` — keycap chord with sequenced presses
+- [x] `AppLifecycleView` — launch/quit toast with status dot
+- [x] `WindowOperationView` — outline motion per operation, corner brackets for resize
+- [x] `MenuNavigationView` — breadcrumb with sequential illumination
+- [x] `DialogInteractionView` — element outline, glyph badge, caret for text entry
+- [x] `SpaceTransitionView` — Spaces dot indicator with hopping active dot
 
 ### Phase 5: Integration
 
@@ -509,9 +399,8 @@ Most importantly, it's completely optional - the CLI and MCP continue to work pe
 ### Phase 7: Fun Features
 
 #### Easter Eggs
-- [ ] Screenshot ghost emoji (every 100th)
+- [x] Screenshot ghost emoji (every 100th)
 - [ ] Special animations for specific apps
-- [ ] Hidden keyboard themes
 - [ ] Achievement system
 
 #### Sound Effects (Optional)

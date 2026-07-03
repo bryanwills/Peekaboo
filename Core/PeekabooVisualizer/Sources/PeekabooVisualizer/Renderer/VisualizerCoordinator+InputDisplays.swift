@@ -62,7 +62,7 @@ extension VisualizerCoordinator {
         // Create click animation view
         let clickView = ClickAnimationView(
             clickType: type,
-            animationSpeed: self.durationScaledAnimationSpeed)
+            durationScale: self.durationScaledAnimationSpeed)
 
         // Calculate window rect centered on click point
         let size: CGFloat = 320
@@ -90,20 +90,21 @@ extension VisualizerCoordinator {
             return false
         }
 
-        // Create typing widget view
+        // Create typing caption view
+        let overlayDuration = self.scaledDuration(for: duration, minimum: AnimationBaseline.typingOverlay)
         let typingView = TypeAnimationView(
             keys: keys,
-            theme: .modern,
             cadence: cadence,
-            animationSpeed: self.inverseScaledAnimationSpeed)
+            durationScale: self.durationScaledAnimationSpeed,
+            displayDuration: overlayDuration)
 
         // Position at bottom center of the screen where mouse is located
         let screen = self.getTargetScreen()
         let screenFrame = screen.frame
-        let widgetSize = CGSize(width: 600, height: 200)
+        let widgetSize = CGSize(width: 680, height: 120)
         let rect = CGRect(
             x: screenFrame.midX - widgetSize.width / 2,
-            y: screenFrame.minY + 50,
+            y: screenFrame.minY + 60,
             width: widgetSize.width,
             height: widgetSize.height)
 
@@ -111,7 +112,7 @@ extension VisualizerCoordinator {
         _ = self.overlayManager.showAnimation(
             at: Self.paddedRect(rect, padding: Self.OverlayPadding.typing),
             content: typingView,
-            duration: self.scaledDuration(for: duration, minimum: AnimationBaseline.typingOverlay),
+            duration: overlayDuration,
             fadeOut: true)
 
         return true
@@ -133,7 +134,7 @@ extension VisualizerCoordinator {
         let scrollView = ScrollAnimationView(
             direction: direction,
             amount: amount,
-            animationSpeed: self.inverseScaledAnimationSpeed)
+            durationScale: self.durationScaledAnimationSpeed)
 
         // Position near scroll point
         let size: CGFloat = 100
@@ -161,39 +162,22 @@ extension VisualizerCoordinator {
             return false
         }
 
-        // Calculate the window frame for all screens
-        var windowFrame = CGRect.zero
-        for screen in NSScreen.screens {
-            if windowFrame == .zero {
-                windowFrame = screen.frame
-            } else {
-                windowFrame = windowFrame.union(screen.frame)
-            }
-        }
-
-        // Create mouse trail view with window frame for coordinate translation
-        let mouseDuration = self.scaledDuration(for: duration, minimum: AnimationBaseline.mouseTrail)
-        let mouseView = MouseTrailView(
+        // Overlay window spanning the travel path plus breathing room
+        let windowRect = Self.travelWindowRect(
             from: from,
             to: to,
-            duration: mouseDuration,
-            windowFrame: windowFrame)
+            padding: Self.OverlayPadding.mouseTrail + 50)
 
-        // Calculate bounding rect for the trail
-        let minX = min(from.x, to.x) - 50
-        let minY = min(from.y, to.y) - 50
-        let maxX = max(from.x, to.x) + 50
-        let maxY = max(from.y, to.y) + 50
-
-        let rect = CGRect(
-            x: minX,
-            y: minY,
-            width: maxX - minX,
-            height: maxY - minY)
+        // Create mouse trail view with window-local coordinates
+        let mouseDuration = self.scaledDuration(for: duration, minimum: AnimationBaseline.mouseTrail)
+        let mouseView = MouseTrailView(
+            from: Self.windowLocalPoint(from, in: windowRect),
+            to: Self.windowLocalPoint(to, in: windowRect),
+            duration: mouseDuration)
 
         // Display using overlay manager
         _ = self.overlayManager.showAnimation(
-            at: Self.paddedRect(rect, padding: Self.OverlayPadding.mouseTrail),
+            at: windowRect,
             content: mouseView,
             duration: mouseDuration + 0.35,
             fadeOut: true)
@@ -209,40 +193,22 @@ extension VisualizerCoordinator {
             return false
         }
 
-        // Calculate the window frame for all screens
-        var windowFrame = CGRect.zero
-        for screen in NSScreen.screens {
-            if windowFrame == .zero {
-                windowFrame = screen.frame
-            } else {
-                windowFrame = windowFrame.union(screen.frame)
-            }
-        }
-
-        // Create swipe path view with window frame for coordinate translation
-        let swipeDuration = self.scaledDuration(for: duration, minimum: AnimationBaseline.swipePath)
-        let swipeView = SwipePathView(
+        // Overlay window spanning the gesture plus breathing room
+        let windowRect = Self.travelWindowRect(
             from: from,
             to: to,
-            duration: swipeDuration,
-            isTouch: true,
-            windowFrame: windowFrame)
+            padding: Self.OverlayPadding.swipe + 100)
 
-        // Calculate bounding rect for the swipe
-        let minX = min(from.x, to.x) - 100
-        let minY = min(from.y, to.y) - 100
-        let maxX = max(from.x, to.x) + 100
-        let maxY = max(from.y, to.y) + 100
-
-        let rect = CGRect(
-            x: minX,
-            y: minY,
-            width: maxX - minX,
-            height: maxY - minY)
+        // Create swipe path view with window-local coordinates
+        let swipeDuration = self.scaledDuration(for: duration, minimum: AnimationBaseline.swipePath)
+        let swipeView = SwipePathView(
+            from: Self.windowLocalPoint(from, in: windowRect),
+            to: Self.windowLocalPoint(to, in: windowRect),
+            duration: swipeDuration)
 
         // Display using overlay manager
         _ = self.overlayManager.showAnimation(
-            at: Self.paddedRect(rect, padding: Self.OverlayPadding.swipe),
+            at: windowRect,
             content: swipeView,
             duration: swipeDuration + 0.35,
             fadeOut: true)

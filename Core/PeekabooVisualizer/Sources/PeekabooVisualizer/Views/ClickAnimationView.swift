@@ -2,86 +2,84 @@
 //  ClickAnimationView.swift
 //  Peekaboo
 //
-//  Created by Peekaboo on 2025-01-30.
+//  A targeting reticle that locks onto the click point and pulses on impact.
 //
 
 import PeekabooFoundation
 import SwiftUI
 
-/// A view that displays ripple animations for different click types
+/// Click feedback: an outer ring contracts onto the point, a center dot pops,
+/// and an impact pulse expands outward. Double-click pulses twice; right-click
+/// uses a dashed ring to hint at a context menu.
 struct ClickAnimationView: View {
     // MARK: - Properties
 
     /// Type of click
     let clickType: ClickType
 
-    /// Animation speed multiplier
-    let animationSpeed: Double
+    /// Multiplier applied to all baseline durations (larger = slower).
+    let durationScale: Double
 
     /// Animation state
-    @State private var rippleScale: CGFloat = 0.1
-    @State private var rippleOpacity: Double = 1.0
-    @State private var secondRippleScale: CGFloat = 0.1
-    @State private var secondRippleOpacity: Double = 1.0
-    @State private var labelOpacity: Double = 0
-    @State private var labelScale: CGFloat = 0.8
+    @State private var ringDiameter: CGFloat = 130
+    @State private var ringOpacity: Double = 0
+    @State private var dotScale: CGFloat = 0.2
+    @State private var dotOpacity: Double = 0
+    @State private var glowOpacity: Double = 0
+    @State private var reticleOpacity: Double = 1
 
-    /// Colors for different click types
-    private var rippleColor: Color {
+    private var tint: Color {
+        self.clickType == .right ? VisualizerTheme.accentSecondary : VisualizerTheme.accent
+    }
+
+    private var ringStyle: StrokeStyle {
         switch self.clickType {
-        case .single:
-            Color.blue
-        case .double:
-            Color.purple
         case .right:
-            Color.orange
+            StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [7, 6])
+        case .single, .double:
+            StrokeStyle(lineWidth: 2.5, lineCap: .round)
         }
     }
 
-    /// Label text for the click type
-    private var clickLabel: String {
-        switch self.clickType {
-        case .single:
-            "Click"
-        case .double:
-            "Double Click"
-        case .right:
-            "Right Click"
-        }
+    private var pulseDelays: [Double] {
+        self.clickType == .double ? [0.22, 0.36] : [0.22]
     }
 
     // MARK: - Body
 
     var body: some View {
         ZStack {
-            // Primary ripple
+            // Soft bloom behind the impact point
             Circle()
-                .stroke(self.rippleColor, lineWidth: 3)
-                .scaleEffect(self.rippleScale)
-                .opacity(self.rippleOpacity)
+                .fill(
+                    RadialGradient(
+                        colors: [self.tint.opacity(0.45), self.tint.opacity(0)],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: 44))
+                .frame(width: 88, height: 88)
+                .opacity(self.glowOpacity)
 
-            // Secondary ripple for double-click
-            if self.clickType == .double {
-                Circle()
-                    .stroke(self.rippleColor, lineWidth: 2)
-                    .scaleEffect(self.secondRippleScale)
-                    .opacity(self.secondRippleOpacity)
+            // Targeting ring that contracts onto the point
+            Circle()
+                .stroke(self.tint, style: self.ringStyle)
+                .frame(width: self.ringDiameter, height: self.ringDiameter)
+                .opacity(self.ringOpacity)
+
+            // Impact pulses expanding outward
+            ForEach(Array(self.pulseDelays.enumerated()), id: \.offset) { _, delay in
+                ImpactPulseView(tint: self.tint, delay: delay * self.durationScale, duration: 0.3 * self.durationScale)
             }
 
-            // Click type label
-            Text(self.clickLabel)
-                .font(.caption)
-                .fontWeight(.medium)
-                .foregroundColor(self.rippleColor)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.white.opacity(0.9)))
-                .scaleEffect(self.labelScale)
-                .opacity(self.labelOpacity)
-                .offset(y: 30)
+            // Center dot
+            Circle()
+                .fill(self.tint)
+                .frame(width: 9, height: 9)
+                .scaleEffect(self.dotScale)
+                .opacity(self.dotOpacity)
+                .shadow(color: self.tint.opacity(0.8), radius: 6)
         }
+        .opacity(self.reticleOpacity)
         .frame(width: 320, height: 320)
         .onAppear {
             self.startAnimation()
@@ -91,36 +89,62 @@ struct ClickAnimationView: View {
     // MARK: - Methods
 
     private func startAnimation() {
-        let duration = 0.5 * self.animationSpeed
+        let scale = self.durationScale
 
-        // Primary ripple animation
-        withAnimation(.easeOut(duration: duration)) {
-            self.rippleScale = 1.8
-            self.rippleOpacity = 0
+        // Ring locks onto the target
+        withAnimation(VisualizerMotion.enter(0.1 * scale)) {
+            self.ringOpacity = 1
+        }
+        withAnimation(VisualizerMotion.enter(0.26 * scale)) {
+            self.ringDiameter = 46
         }
 
-        // Secondary ripple for double-click (delayed)
-        if self.clickType == .double {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15 * self.animationSpeed) {
-                withAnimation(.easeOut(duration: duration)) {
-                    self.secondRippleScale = 1.8
-                    self.secondRippleOpacity = 0
+        // Center dot pops with a glow bloom
+        withAnimation(VisualizerMotion.pop(0.3 * scale).delay(0.06 * scale)) {
+            self.dotScale = 1.0
+            self.dotOpacity = 1
+        }
+        withAnimation(VisualizerMotion.enter(0.2 * scale).delay(0.16 * scale)) {
+            self.glowOpacity = 1
+        }
+        withAnimation(VisualizerMotion.exit(0.18 * scale).delay(0.34 * scale)) {
+            self.glowOpacity = 0
+        }
+
+        // Everything dissolves at the end
+        withAnimation(VisualizerMotion.exit(0.14 * scale).delay(0.31 * scale)) {
+            self.reticleOpacity = 0
+            self.dotScale = 0.6
+        }
+    }
+}
+
+/// A single expanding impact ring.
+private struct ImpactPulseView: View {
+    let tint: Color
+    let delay: Double
+    let duration: Double
+
+    @State private var pulseScale: CGFloat = 0.3
+    @State private var pulseOpacity: Double = 0
+
+    var body: some View {
+        Circle()
+            .stroke(self.tint, lineWidth: 2)
+            .frame(width: 150, height: 150)
+            .scaleEffect(self.pulseScale)
+            .opacity(self.pulseOpacity)
+            .onAppear {
+                withAnimation(VisualizerMotion.enter(0.05).delay(self.delay)) {
+                    self.pulseOpacity = 0.9
+                }
+                withAnimation(VisualizerMotion.enter(self.duration).delay(self.delay)) {
+                    self.pulseScale = 1.0
+                }
+                withAnimation(VisualizerMotion.exit(self.duration * 0.7).delay(self.delay + self.duration * 0.3)) {
+                    self.pulseOpacity = 0
                 }
             }
-        }
-
-        // Label animation
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-            self.labelScale = 1.0
-            self.labelOpacity = 1.0
-        }
-
-        // Fade out label
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3 * self.animationSpeed) {
-            withAnimation(.easeOut(duration: 0.2)) {
-                self.labelOpacity = 0
-            }
-        }
     }
 }
 
@@ -128,20 +152,20 @@ struct ClickAnimationView: View {
 
 #if DEBUG && !SWIFT_PACKAGE
 #Preview("Single Click") {
-    ClickAnimationView(clickType: .single, animationSpeed: 1.0)
-        .frame(width: 300, height: 300)
-        .background(Color.gray.opacity(0.1))
+    ClickAnimationView(clickType: .single, durationScale: 3.0)
+        .frame(width: 320, height: 320)
+        .background(Color.gray.opacity(0.3))
 }
 
 #Preview("Double Click") {
-    ClickAnimationView(clickType: .double, animationSpeed: 1.0)
-        .frame(width: 300, height: 300)
-        .background(Color.gray.opacity(0.1))
+    ClickAnimationView(clickType: .double, durationScale: 3.0)
+        .frame(width: 320, height: 320)
+        .background(Color.gray.opacity(0.3))
 }
 
 #Preview("Right Click") {
-    ClickAnimationView(clickType: .right, animationSpeed: 1.0)
-        .frame(width: 300, height: 300)
-        .background(Color.gray.opacity(0.1))
+    ClickAnimationView(clickType: .right, durationScale: 3.0)
+        .frame(width: 320, height: 320)
+        .background(Color.gray.opacity(0.3))
 }
 #endif

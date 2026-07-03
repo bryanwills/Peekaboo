@@ -75,6 +75,23 @@ public final class VisualizerCoordinator {
         return rect.insetBy(dx: -padding, dy: -padding)
     }
 
+    /// Overlay window rect (AppKit screen coordinates) covering a travel path.
+    static func travelWindowRect(from: CGPoint, to: CGPoint, padding: CGFloat) -> CGRect {
+        CGRect(
+            x: min(from.x, to.x) - padding,
+            y: min(from.y, to.y) - padding,
+            width: abs(to.x - from.x) + padding * 2,
+            height: abs(to.y - from.y) + padding * 2)
+    }
+
+    /// Converts an AppKit screen point (bottom-left origin) into a window-local
+    /// SwiftUI point (top-left origin) for an overlay shown at `windowRect`.
+    static func windowLocalPoint(_ point: CGPoint, in windowRect: CGRect) -> CGPoint {
+        CGPoint(
+            x: point.x - windowRect.minX,
+            y: windowRect.maxY - point.y)
+    }
+
     private static func keyWidthForHotkeyOverlay(_ key: String) -> CGFloat {
         switch key.lowercased() {
         case "space":
@@ -115,10 +132,6 @@ public final class VisualizerCoordinator {
 
     var durationScaledAnimationSpeed: Double {
         self.animationSpeedScale * Self.animationSlowdownFactor
-    }
-
-    var inverseScaledAnimationSpeed: Double {
-        self.animationSpeedScale / Self.animationSlowdownFactor
     }
 
     /// Screenshot counter for easter egg (persisted)

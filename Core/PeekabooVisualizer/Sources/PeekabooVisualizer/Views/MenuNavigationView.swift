@@ -2,173 +2,138 @@
 //  MenuNavigationView.swift
 //  Peekaboo
 //
-//  Created by Peekaboo on 2025-01-30.
+//  A breadcrumb HUD chip that lights up each menu segment in sequence.
 //
 
 import SwiftUI
 
-/// Animated menu navigation visualization showing menu path
+/// Menu-navigation feedback: the traversed path renders as a breadcrumb and
+/// each segment illuminates in order, tracing the route through the menus.
 struct MenuNavigationView: View {
     let menuPath: [String]
     let duration: TimeInterval
 
-    @State private var pathProgress: [CGFloat] = []
-    @State private var glowOpacity: Double = 0
-    @State private var arrowOpacities: [Double] = []
-
-    private let primaryColor = Color.blue
-    private let secondaryColor = Color.cyan
+    @State private var chipScale: CGFloat = 0.94
+    @State private var chipOpacity: Double = 0
+    @State private var litCount = 0
 
     init(menuPath: [String], duration: TimeInterval = 1.5) {
         self.menuPath = menuPath
         self.duration = duration
-        self._pathProgress = State(initialValue: Array(repeating: 0, count: menuPath.count))
-        self._arrowOpacities = State(initialValue: Array(repeating: 0, count: max(0, menuPath.count - 1)))
     }
 
     var body: some View {
-        ZStack {
-            // Background glow
-            RoundedRectangle(cornerRadius: 16)
-                .fill(
-                    LinearGradient(
-                        colors: [self.primaryColor.opacity(0.2), self.secondaryColor.opacity(0.1)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing))
-                .blur(radius: 20)
-                .opacity(self.glowOpacity)
+        HStack(spacing: 8) {
+            ForEach(Array(self.menuPath.enumerated()), id: \.offset) { index, segment in
+                HStack(spacing: 8) {
+                    MenuSegmentView(
+                        title: segment,
+                        state: self.segmentState(index))
 
-            // Menu path
-            HStack(spacing: 12) {
-                ForEach(Array(self.menuPath.enumerated()), id: \.offset) { index, menuItem in
-                    HStack(spacing: 12) {
-                        // Menu item
-                        MenuItemView(
-                            title: menuItem,
-                            isActive: self.pathProgress[safe: index] ?? 0 > 0.5,
-                            scale: self.pathProgress[safe: index] ?? 0,
-                            primaryColor: self.primaryColor,
-                            secondaryColor: self.secondaryColor)
-
-                        // Arrow between items
-                        if index < self.menuPath.count - 1 {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundColor(self.secondaryColor)
-                                .opacity(self.arrowOpacities[safe: index] ?? 0)
-                        }
+                    if index < self.menuPath.count - 1 {
+                        Image(systemName: "chevron.compact.right")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(VisualizerTheme.hudTextSecondary)
                     }
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.black.opacity(0.8))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(
-                                LinearGradient(
-                                    colors: [self.primaryColor, self.secondaryColor],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing),
-                                lineWidth: 2)))
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .hudChip(cornerRadius: 16)
+        .scaleEffect(self.chipScale)
+        .opacity(self.chipOpacity)
         .onAppear {
-            self.animateMenuPath()
+            withAnimation(VisualizerMotion.pop()) {
+                self.chipScale = 1.0
+                self.chipOpacity = 1
+            }
+        }
+        .task {
+            await self.traverseBreadcrumb()
         }
     }
 
-    private func animateMenuPath() {
-        // Background glow
-        withAnimation(.easeIn(duration: 0.3)) {
-            self.glowOpacity = 1
+    private func segmentState(_ index: Int) -> MenuSegmentView.SegmentState {
+        if index == self.litCount - 1 {
+            .active
+        } else if index < self.litCount {
+            .visited
+        } else {
+            .pending
         }
+    }
 
-        // Sequential menu item animations
+    /// Illuminates segments in traversal order. Sequenced in real time because
+    /// the segment states are discrete and would collapse under delayed animations.
+    private func traverseBreadcrumb() async {
+        let step = min(0.25, (self.duration * 0.5) / Double(max(self.menuPath.count, 1)))
+
+        try? await Task.sleep(nanoseconds: UInt64(0.2 * 1_000_000_000))
         for index in self.menuPath.indices {
-            let delay = Double(index) * 0.2
-
-            // Menu item scale
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7).delay(delay)) {
-                if index < self.pathProgress.count {
-                    self.pathProgress[index] = 1.0
-                }
+            guard !Task.isCancelled else { return }
+            withAnimation(VisualizerMotion.pop(0.28)) {
+                self.litCount = index + 1
             }
-
-            // Arrow fade in
-            if index < self.arrowOpacities.count {
-                withAnimation(.easeIn(duration: 0.2).delay(delay + 0.1)) {
-                    self.arrowOpacities[index] = 1.0
-                }
-            }
+            try? await Task.sleep(nanoseconds: UInt64(step * 1_000_000_000))
         }
 
-        // Fade out
-        let fadeDelay = self.duration - 0.5
-        withAnimation(.easeOut(duration: 0.5).delay(fadeDelay)) {
-            self.glowOpacity = 0
-            for index in self.pathProgress.indices {
-                self.pathProgress[index] = 0
-            }
-            for index in self.arrowOpacities.indices {
-                self.arrowOpacities[index] = 0
-            }
+        let holdRemainder = max(self.duration - 0.6 - Double(self.menuPath.count) * step, 0.2)
+        try? await Task.sleep(nanoseconds: UInt64(holdRemainder * 1_000_000_000))
+        guard !Task.isCancelled else { return }
+        withAnimation(VisualizerMotion.exit(0.35)) {
+            self.chipOpacity = 0
+            self.chipScale = 0.97
         }
     }
 }
 
-/// Individual menu item visualization
-struct MenuItemView: View {
+/// One breadcrumb segment.
+private struct MenuSegmentView: View {
+    enum SegmentState {
+        case pending
+        case visited
+        case active
+    }
+
     let title: String
-    let isActive: Bool
-    let scale: CGFloat
-    let primaryColor: Color
-    let secondaryColor: Color
+    let state: SegmentState
 
     var body: some View {
         Text(self.title)
-            .font(.system(size: 16, weight: .medium))
-            .foregroundColor(self.isActive ? .white : .gray)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .font(.system(size: 14, weight: self.state == .active ? .semibold : .medium, design: .rounded))
+            .foregroundStyle(self.textColor)
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(
-                        LinearGradient(
-                            colors: self
-                                .isActive ? [self.primaryColor.opacity(0.3), self.secondaryColor.opacity(0.2)] :
-                                [Color.gray.opacity(0.1)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing)))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(
-                        self.isActive ? self.primaryColor.opacity(0.5) : Color.gray.opacity(0.2),
-                        lineWidth: 1))
-            .scaleEffect(self.scale)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(self.state == .active ? VisualizerTheme.accent.opacity(0.28) : Color.clear)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(
+                                self.state == .active ? VisualizerTheme.accent.opacity(0.7) : Color.clear,
+                                lineWidth: 1)))
+            .scaleEffect(self.state == .pending ? 0.96 : 1.0)
+            .opacity(self.state == .pending ? 0.45 : 1.0)
+    }
+
+    private var textColor: Color {
+        switch self.state {
+        case .pending: VisualizerTheme.hudTextSecondary
+        case .visited: VisualizerTheme.hudText.opacity(0.75)
+        case .active: VisualizerTheme.hudText
+        }
     }
 }
 
-// Removed - already defined in HotkeyOverlayView.swift
-
 #if DEBUG && !SWIFT_PACKAGE
 #Preview {
-    VStack(spacing: 50) {
-        MenuNavigationView(
-            menuPath: ["File", "New", "Project"])
-            .frame(width: 500, height: 100)
-            .background(Color.black.opacity(0.1))
-
-        MenuNavigationView(
-            menuPath: ["Edit", "Find", "Find and Replace..."])
-            .frame(width: 600, height: 100)
-            .background(Color.black.opacity(0.1))
-
-        MenuNavigationView(
-            menuPath: ["View", "Show Sidebar"])
-            .frame(width: 400, height: 100)
-            .background(Color.black.opacity(0.1))
+    VStack(spacing: 40) {
+        MenuNavigationView(menuPath: ["File", "New", "Project"], duration: 3.0)
+        MenuNavigationView(menuPath: ["Edit", "Find", "Find and Replace…"], duration: 3.0)
     }
+    .frame(width: 600, height: 250)
+    .background(Color.gray.opacity(0.3))
 }
 #endif

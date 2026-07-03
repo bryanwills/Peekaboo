@@ -2,178 +2,137 @@
 //  SwipePathView.swift
 //  Peekaboo
 //
-//  Created by Peekaboo on 2025-01-30.
+//  A drag comet with press and release rings marking the gesture endpoints.
 //
 
 import SwiftUI
 
-/// Animated swipe gesture visualization with directional indicators
+/// Swipe/drag feedback: a press ring marks touch-down, a comet traces the
+/// gesture, and a release ring with a direction chevron marks touch-up.
+/// Points are window-local SwiftUI coordinates (top-left origin).
 struct SwipePathView: View {
     let fromPoint: CGPoint
     let toPoint: CGPoint
     let duration: TimeInterval
-    let isTouch: Bool // Touch gesture vs mouse drag
-    let windowFrame: CGRect
 
-    @State private var pathProgress: CGFloat = 0
-    @State private var fingerScale: CGFloat = 0
-    @State private var arrowScale: CGFloat = 0
+    @State private var progress: CGFloat = 0
     @State private var pathOpacity: Double = 1
-    @State private var rippleScale: CGFloat = 1
+    @State private var pressScale: CGFloat = 0.3
+    @State private var pressOpacity: Double = 0
+    @State private var releaseScale: CGFloat = 0.3
+    @State private var releaseOpacity: Double = 0
+    @State private var chevronOpacity: Double = 0
 
-    private let primaryColor = Color.purple
-    private let secondaryColor = Color.pink
-
-    init(from: CGPoint, to: CGPoint, duration: TimeInterval = 0.5, isTouch: Bool = true, windowFrame: CGRect = .zero) {
-        // If windowFrame is provided, translate points from screen to window coordinates
-        if windowFrame != .zero {
-            self.fromPoint = CGPoint(
-                x: from.x - windowFrame.minX,
-                y: from.y - windowFrame.minY)
-            self.toPoint = CGPoint(
-                x: to.x - windowFrame.minX,
-                y: to.y - windowFrame.minY)
-        } else {
-            self.fromPoint = from
-            self.toPoint = to
-        }
-        self.windowFrame = windowFrame
+    init(from: CGPoint, to: CGPoint, duration: TimeInterval = 0.5) {
+        self.fromPoint = from
+        self.toPoint = to
         self.duration = duration
-        self.isTouch = isTouch
     }
 
     var body: some View {
         ZStack {
-            // Path visualization
-            Path { path in
-                path.move(to: self.fromPoint)
-                path.addCurve(
-                    to: self.toPoint,
-                    control1: CGPoint(
-                        x: self.fromPoint.x + (self.toPoint.x - self.fromPoint.x) * 0.3,
-                        y: self.fromPoint.y),
-                    control2: CGPoint(
-                        x: self.fromPoint.x + (self.toPoint.x - self.fromPoint.x) * 0.7,
-                        y: self.toPoint.y))
-            }
-            .trim(from: 0, to: self.pathProgress)
-            .stroke(
-                LinearGradient(
-                    colors: [self.primaryColor, self.secondaryColor],
-                    startPoint: .leading,
-                    endPoint: .trailing),
-                style: StrokeStyle(
-                    lineWidth: 4,
-                    lineCap: .round,
-                    lineJoin: .round))
-            .opacity(self.pathOpacity)
-            .shadow(color: self.primaryColor.opacity(0.5), radius: 5)
+            // Soft afterglow beneath the drag path
+            self.dragPath
+                .trim(from: 0, to: self.progress)
+                .stroke(
+                    VisualizerTheme.accent.opacity(0.3),
+                    style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                .blur(radius: 6)
+                .opacity(self.pathOpacity)
 
-            // Start point indicator
-            if self.isTouch {
-                // Finger touch point
-                ZStack {
-                    // Ripple effect
-                    Circle()
-                        .stroke(self.primaryColor.opacity(0.5), lineWidth: 2)
-                        .scaleEffect(self.rippleScale)
-                        .opacity(2 - self.rippleScale)
+            // Drag stroke — thicker than the mouse trail because the button is held
+            self.dragPath
+                .trim(from: 0, to: self.progress)
+                .stroke(
+                    VisualizerTheme.accentGradient,
+                    style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                .opacity(self.pathOpacity)
 
-                    // Finger icon
-                    Image(systemName: "hand.point.up.fill")
-                        .font(.system(size: 30))
-                        .foregroundColor(self.primaryColor)
-                        .scaleEffect(self.fingerScale)
-                        .rotationEffect(self.angleForSwipe)
-                }
+            // Press ring at the start point
+            Circle()
+                .stroke(VisualizerTheme.accent, lineWidth: 2.5)
+                .frame(width: 40, height: 40)
+                .scaleEffect(self.pressScale)
+                .opacity(self.pressOpacity)
                 .position(self.fromPoint)
-            } else {
-                // Mouse drag start
-                Circle()
-                    .fill(self.primaryColor)
-                    .frame(width: 12, height: 12)
-                    .scaleEffect(self.fingerScale)
-                    .position(self.fromPoint)
-            }
 
-            // Direction arrow at end
-            Image(systemName: "arrow.right.circle.fill")
-                .font(.system(size: 24))
-                .foregroundColor(self.secondaryColor)
-                .rotationEffect(self.angleForSwipe)
-                .scaleEffect(self.arrowScale)
-                .position(self.toPoint)
-                .shadow(color: self.secondaryColor.opacity(0.5), radius: 8)
+            // Comet head while dragging
+            Circle()
+                .fill(.white)
+                .frame(width: 9, height: 9)
+                .shadow(color: VisualizerTheme.accent.opacity(0.9), radius: 8)
+                .position(self.headPosition)
+                .opacity(self.pathOpacity)
 
-            // Motion blur particles along path
-            ForEach(0..<8) { index in
+            // Release ring and direction chevron at the end point
+            ZStack {
                 Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [self.primaryColor, self.secondaryColor],
-                            startPoint: .leading,
-                            endPoint: .trailing))
-                    .frame(width: 6, height: 6)
-                    .position(self.particlePosition(for: index))
-                    .opacity(self.pathOpacity * 0.6)
-                    .blur(radius: 1)
+                    .stroke(VisualizerTheme.accentSecondary, lineWidth: 2.5)
+                    .frame(width: 44, height: 44)
+                    .scaleEffect(self.releaseScale)
+                    .opacity(self.releaseOpacity)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(VisualizerTheme.accentSecondary)
+                    .rotationEffect(self.travelAngle)
+                    .opacity(self.chevronOpacity)
             }
+            .position(self.toPoint)
         }
         .onAppear {
             self.animateSwipe()
         }
     }
 
-    private var angleForSwipe: Angle {
+    private var dragPath: Path {
+        Path { path in
+            path.move(to: self.fromPoint)
+            path.addLine(to: self.toPoint)
+        }
+    }
+
+    private var headPosition: CGPoint {
+        CGPoint(
+            x: self.fromPoint.x + (self.toPoint.x - self.fromPoint.x) * self.progress,
+            y: self.fromPoint.y + (self.toPoint.y - self.fromPoint.y) * self.progress)
+    }
+
+    private var travelAngle: Angle {
         let dx = self.toPoint.x - self.fromPoint.x
         let dy = self.toPoint.y - self.fromPoint.y
         return Angle(radians: atan2(dy, dx))
     }
 
-    private func particlePosition(for index: Int) -> CGPoint {
-        let progress = self.pathProgress * (CGFloat(index) / 8.0)
-        let t = progress
-
-        // Bezier curve calculation
-        let x = (1 - t) * (1 - t) * (1 - t) * self.fromPoint.x +
-            3 * (1 - t) * (1 - t) * t * (self.fromPoint.x + (self.toPoint.x - self.fromPoint.x) * 0.3) +
-            3 * (1 - t) * t * t * (self.fromPoint.x + (self.toPoint.x - self.fromPoint.x) * 0.7) +
-            t * t * t * self.toPoint.x
-
-        let y = (1 - t) * (1 - t) * (1 - t) * self.fromPoint.y +
-            3 * (1 - t) * (1 - t) * t * self.fromPoint.y +
-            3 * (1 - t) * t * t * self.toPoint.y +
-            t * t * t * self.toPoint.y
-
-        return CGPoint(x: x, y: y)
-    }
-
     private func animateSwipe() {
-        // Start point animation
-        withAnimation(.easeOut(duration: 0.2)) {
-            self.fingerScale = 1.0
+        let travel = max(self.duration * 0.7, 0.15)
+
+        // Touch-down
+        withAnimation(VisualizerMotion.pop(0.25)) {
+            self.pressScale = 1.0
+            self.pressOpacity = 0.9
+        }
+        withAnimation(VisualizerMotion.exit(0.3).delay(travel * 0.5)) {
+            self.pressOpacity = 0
         }
 
-        // Ripple animation for touch
-        if self.isTouch {
-            withAnimation(.easeOut(duration: self.duration)) {
-                self.rippleScale = 2.0
-            }
+        // Drag travel
+        withAnimation(VisualizerMotion.glide(travel).delay(0.08)) {
+            self.progress = 1.0
         }
 
-        // Path animation
-        withAnimation(.easeInOut(duration: self.duration * 0.8)) {
-            self.pathProgress = 1.0
+        // Touch-up
+        withAnimation(VisualizerMotion.pop(0.3).delay(travel)) {
+            self.releaseScale = 1.0
+            self.releaseOpacity = 0.9
+            self.chevronOpacity = 1
         }
 
-        // End arrow animation
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.6).delay(self.duration * 0.6)) {
-            self.arrowScale = 1.0
-        }
-
-        // Fade out
-        withAnimation(.easeOut(duration: 0.3).delay(self.duration)) {
+        // Dissolve
+        withAnimation(VisualizerMotion.exit(0.3).delay(travel + 0.25)) {
             self.pathOpacity = 0
+            self.releaseOpacity = 0
+            self.chevronOpacity = 0
         }
     }
 }
@@ -183,19 +142,10 @@ struct SwipePathView: View {
     VStack {
         SwipePathView(
             from: CGPoint(x: 50, y: 200),
-            to: CGPoint(x: 350, y: 200),
-            duration: 0.8,
-            isTouch: true)
-            .frame(width: 400, height: 400)
-            .background(Color.black.opacity(0.1))
-
-        SwipePathView(
-            from: CGPoint(x: 200, y: 50),
-            to: CGPoint(x: 200, y: 350),
-            duration: 0.8,
-            isTouch: false)
-            .frame(width: 400, height: 400)
-            .background(Color.black.opacity(0.1))
+            to: CGPoint(x: 350, y: 120),
+            duration: 0.9)
+            .frame(width: 400, height: 300)
+            .background(Color.gray.opacity(0.3))
     }
 }
 #endif

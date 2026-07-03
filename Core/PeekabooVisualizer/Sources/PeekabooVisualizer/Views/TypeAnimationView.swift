@@ -2,348 +2,171 @@
 //  TypeAnimationView.swift
 //  Peekaboo
 //
-//  Created by Peekaboo on 2025-01-30.
+//  A caption-style HUD pill that streams the typed text with a live caret.
 //
 
 import PeekabooFoundation
 import SwiftUI
 
-/// A view that displays a floating keyboard widget with typing animations
+/// Typing feedback: the actual keystrokes stream into a caption pill at the
+/// bottom of the screen, with non-printing keys rendered as accent glyphs and
+/// a blinking caret marking the insertion point.
 struct TypeAnimationView: View {
     // MARK: - Properties
 
     /// Keys being typed
     let keys: [String]
 
-    /// Visual theme for the keyboard
-    let theme: KeyboardTheme
-
     /// Typing cadence metadata
     let cadence: TypingCadence?
 
-    /// Animation speed multiplier (1.0 = normal, 0.5 = 2x slower, 2.0 = 2x faster)
-    var animationSpeed: Double
+    /// Multiplier applied to all baseline durations (larger = slower).
+    let durationScale: Double
 
-    /// Current key index being animated
-    @State private var currentKeyIndex = 0
+    /// How long the overlay window stays on screen; the key stream must finish within it.
+    let displayDuration: TimeInterval
 
-    /// Pressed keys for visual feedback
-    @State private var pressedKeys: Set<String> = []
+    /// Number of keys revealed so far
+    @State private var typedCount = 0
 
-    /// WPM counter
-    @State private var wordsPerMinute: Int
+    /// Caret blink state
+    @State private var caretVisible = true
 
-    /// Animation timer
-    @State private var animationTimer: Timer?
-
-    /// Opacity for fade out animation
-    @State private var opacity: Double = 1.0
-
-    /// Timer for fade out
-    @State private var fadeOutTimer: Timer?
-
-    // MARK: - Init
-
-    init(keys: [String], theme: KeyboardTheme, cadence: TypingCadence?, animationSpeed: Double = 1.0) {
-        self.keys = keys
-        self.theme = theme
-        self.cadence = cadence
-        let resolvedSpeed = TypeAnimationView.resolveAnimationSpeed(for: cadence, fallback: animationSpeed)
-        self.animationSpeed = resolvedSpeed
-        _wordsPerMinute = State(initialValue: TypeAnimationView.resolveWordsPerMinute(for: cadence))
-    }
-
-    // MARK: - Types
-
-    enum KeyboardTheme {
-        case classic
-        case modern
-        case ghostly
-
-        var backgroundColor: Color {
-            switch self {
-            case .classic:
-                Color.gray.opacity(0.7) // Semi-transparent
-            case .modern:
-                Color.black.opacity(0.6) // Semi-transparent
-            case .ghostly:
-                Color.purple.opacity(0.2) // Very transparent
-            }
-        }
-
-        var keyColor: Color {
-            switch self {
-            case .classic:
-                Color.white
-            case .modern:
-                Color.gray
-            case .ghostly:
-                Color.purple.opacity(0.5)
-            }
-        }
-
-        var pressedKeyColor: Color {
-            switch self {
-            case .classic:
-                Color.blue
-            case .modern:
-                Color.blue.opacity(0.8)
-            case .ghostly:
-                Color.purple
-            }
-        }
-    }
+    /// Chip entrance/exit state
+    @State private var chipScale: CGFloat = 0.92
+    @State private var chipOpacity: Double = 0
 
     // MARK: - Body
 
     var body: some View {
-        VStack(spacing: 8) {
-            // WPM Display
-            HStack {
-                Text("WPM: \(self.wordsPerMinute)")
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                Spacer()
+        HStack(spacing: 12) {
+            Image(systemName: "keyboard.fill")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(VisualizerTheme.hudTextSecondary)
+
+            HStack(spacing: 3) {
+                self.typedText
+                    .font(.system(size: 17, weight: .medium, design: .monospaced))
+                    .foregroundStyle(VisualizerTheme.hudText)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+
+                // Caret
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(VisualizerTheme.accent)
+                    .frame(width: 2.5, height: 21)
+                    .opacity(self.caretVisible ? 1 : 0.15)
             }
-            .padding(.horizontal, 12)
-
-            // Keyboard
-            VStack(spacing: 4) {
-                // Top row (numbers)
-                HStack(spacing: 4) {
-                    ForEach(["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"], id: \.self) { key in
-                        KeyView(
-                            key: key,
-                            isPressed: self.pressedKeys.contains(key),
-                            theme: self.theme)
-                    }
-                }
-
-                // QWERTY row
-                HStack(spacing: 4) {
-                    ForEach(["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"], id: \.self) { key in
-                        KeyView(
-                            key: key,
-                            isPressed: self.pressedKeys.contains(key.lowercased()),
-                            theme: self.theme)
-                    }
-                }
-
-                // ASDF row
-                HStack(spacing: 4) {
-                    ForEach(["A", "S", "D", "F", "G", "H", "J", "K", "L"], id: \.self) { key in
-                        KeyView(
-                            key: key,
-                            isPressed: self.pressedKeys.contains(key.lowercased()),
-                            theme: self.theme)
-                    }
-                }
-
-                // ZXCV row
-                HStack(spacing: 4) {
-                    ForEach(["Z", "X", "C", "V", "B", "N", "M"], id: \.self) { key in
-                        KeyView(
-                            key: key,
-                            isPressed: self.pressedKeys.contains(key.lowercased()),
-                            theme: self.theme)
-                    }
-                }
-
-                // Space bar and special keys
-                HStack(spacing: 4) {
-                    SpecialKeyView(
-                        symbol: "⇥",
-                        label: "Tab",
-                        isPressed: self.pressedKeys.contains("{tab}"),
-                        theme: self.theme,
-                        width: 60)
-
-                    SpecialKeyView(
-                        symbol: "Space",
-                        label: "",
-                        isPressed: self.pressedKeys.contains(" "),
-                        theme: self.theme,
-                        width: 200)
-
-                    SpecialKeyView(
-                        symbol: "⏎",
-                        label: "Return",
-                        isPressed: self.pressedKeys.contains("{return}"),
-                        theme: self.theme,
-                        width: 80)
-
-                    SpecialKeyView(
-                        symbol: "⌫",
-                        label: "Delete",
-                        isPressed: self.pressedKeys.contains("{delete}"),
-                        theme: self.theme,
-                        width: 60)
-                }
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(self.theme.backgroundColor))
         }
-        .opacity(self.opacity)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .frame(maxWidth: 620)
+        .fixedSize(horizontal: true, vertical: true)
+        .hudChip(cornerRadius: 24)
+        .scaleEffect(self.chipScale)
+        .opacity(self.chipOpacity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .onAppear {
-            self.startTypingAnimation()
+            withAnimation(VisualizerMotion.pop()) {
+                self.chipScale = 1.0
+                self.chipOpacity = 1
+            }
+            withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) {
+                self.caretVisible = false
+            }
         }
-        .onDisappear {
-            self.animationTimer?.invalidate()
-            self.fadeOutTimer?.invalidate()
+        .task {
+            await self.streamKeys()
+        }
+    }
+
+    /// The revealed keys as styled text; non-printing keys become accent glyphs.
+    private var typedText: Text {
+        self.keys.prefix(self.typedCount).reduce(Text(verbatim: "")) { text, key in
+            if let glyph = VisualizerKeyGlyphs.inlineSymbol(for: key) {
+                text + Text(glyph).foregroundStyle(VisualizerTheme.accent)
+            } else {
+                text + Text(verbatim: key)
+            }
         }
     }
 
     // MARK: - Methods
 
-    private func startTypingAnimation() {
-        guard !self.keys.isEmpty else { return }
+    /// Per-key reveal interval: the cadence-scaled pace, compressed if needed
+    /// so the full stream (plus hold and fade) fits inside the overlay window.
+    /// Callers pass fixed display durations, so long strings must speed up
+    /// rather than get cut off mid-stream.
+    static func keyInterval(
+        cadence: TypingCadence?,
+        durationScale: Double,
+        keyCount: Int,
+        displayDuration: TimeInterval) -> TimeInterval
+    {
+        let baseline: TimeInterval = switch cadence {
+        case let .human(wordsPerMinute) where wordsPerMinute > 0:
+            // 1 word ≈ 5 characters
+            60.0 / (Double(wordsPerMinute) * 5.0)
+        case let .fixed(milliseconds) where milliseconds > 0:
+            Double(milliseconds) / 1000.0
+        default:
+            0.045
+        }
+        let paced = min(max(baseline, 0.02), 0.3) * durationScale
 
-        // Animate typing at a realistic speed
-        let typingInterval = 0.1 / self.animationSpeed
-        self.animationTimer = Timer.scheduledTimer(withTimeInterval: typingInterval, repeats: true) { _ in
-            Task { @MainActor in
-                if self.currentKeyIndex < self.keys.count {
-                    let key = self.keys[self.currentKeyIndex]
+        // Reserve room for the trailing hold + fade, but never most of the window.
+        let reserve = min(0.65 * durationScale, displayDuration * 0.3)
+        let streamBudget = max(displayDuration - reserve, 0.5)
+        let fitted = streamBudget / Double(max(keyCount, 1))
 
-                    // Press the key
-                    let pressDuration = 0.05 / self.animationSpeed
-                    _ = withAnimation(.easeIn(duration: pressDuration)) {
-                        self.pressedKeys.insert(key.lowercased())
-                    }
+        return min(paced, fitted)
+    }
 
-                    // Release the key
-                    Task {
-                        let releaseDelay = UInt64(80_000_000 / self.animationSpeed)
-                        try? await Task.sleep(nanoseconds: releaseDelay)
-                        await MainActor.run {
-                            withAnimation(.easeOut(duration: pressDuration)) {
-                                _ = self.pressedKeys.remove(key.lowercased())
-                            }
-                        }
-                    }
-
-                    self.currentKeyIndex += 1
-                } else {
-                    // Animation complete, start fade out after 500ms
-                    self.animationTimer?.invalidate()
-                    self.animationTimer = nil
-
-                    Task {
-                        let fadeDelay = UInt64(500_000_000 / self.animationSpeed)
-                        try? await Task.sleep(nanoseconds: fadeDelay)
-                        await MainActor.run {
-                            let fadeDuration = 0.5 / self.animationSpeed
-                            withAnimation(.easeOut(duration: fadeDuration)) {
-                                self.opacity = 0.0
-                            }
-                        }
-                    }
-                }
+    private func streamKeys() async {
+        let interval = Self.keyInterval(
+            cadence: self.cadence,
+            durationScale: self.durationScale,
+            keyCount: self.keys.count,
+            displayDuration: self.displayDuration)
+        let nanoseconds = UInt64(interval * 1_000_000_000)
+        for index in self.keys.indices {
+            guard !Task.isCancelled else { return }
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            withAnimation(VisualizerMotion.enter(0.08)) {
+                self.typedCount = index + 1
             }
         }
-    }
 
-    private static func resolveAnimationSpeed(for cadence: TypingCadence?, fallback: Double) -> Double {
-        guard let cadence else { return fallback }
-        let baselineWPM = 140.0
-        switch cadence {
-        case let .human(wordsPerMinute):
-            return max(0.3, min(3.0, Double(wordsPerMinute) / baselineWPM))
-        case .fixed:
-            let wpm = self.resolveWordsPerMinute(for: cadence)
-            guard wpm > 0 else { return fallback }
-            return max(0.3, min(3.0, Double(wpm) / baselineWPM))
+        // Hold briefly, then hand the fade to the overlay window
+        try? await Task.sleep(nanoseconds: UInt64(0.4 * self.durationScale * 1_000_000_000))
+        guard !Task.isCancelled else { return }
+        withAnimation(VisualizerMotion.exit(0.25 * self.durationScale)) {
+            self.chipOpacity = 0
+            self.chipScale = 0.96
         }
-    }
-
-    private static func resolveWordsPerMinute(for cadence: TypingCadence?) -> Int {
-        guard let cadence else { return 0 }
-        switch cadence {
-        case let .human(wordsPerMinute):
-            return wordsPerMinute
-        case let .fixed(milliseconds):
-            let delay = max(milliseconds, 1)
-            let charsPerMinute = 60000 / delay
-            return max(0, charsPerMinute / 5)
-        }
-    }
-}
-
-// MARK: - Key Views
-
-struct KeyView: View {
-    let key: String
-    let isPressed: Bool
-    let theme: TypeAnimationView.KeyboardTheme
-
-    var body: some View {
-        Text(self.key)
-            .font(.system(size: 14, weight: .medium))
-            .foregroundColor(self.isPressed ? .white : .black)
-            .frame(width: 36, height: 36)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(self.isPressed ? self.theme.pressedKeyColor : self.theme.keyColor)
-                    .shadow(radius: self.isPressed ? 0 : 2, y: self.isPressed ? 0 : 2))
-            .scaleEffect(self.isPressed ? 0.9 : 1.0)
-    }
-}
-
-struct SpecialKeyView: View {
-    let symbol: String
-    let label: String
-    let isPressed: Bool
-    let theme: TypeAnimationView.KeyboardTheme
-    let width: CGFloat
-
-    var body: some View {
-        HStack(spacing: 2) {
-            Text(self.symbol)
-                .font(.system(size: 14, weight: .medium))
-            if !self.label.isEmpty {
-                Text(self.label)
-                    .font(.caption2)
-            }
-        }
-        .foregroundColor(self.isPressed ? .white : .black)
-        .frame(width: self.width, height: 36)
-        .background(
-            RoundedRectangle(cornerRadius: 4)
-                .fill(self.isPressed ? self.theme.pressedKeyColor : self.theme.keyColor)
-                .shadow(radius: self.isPressed ? 0 : 2, y: self.isPressed ? 0 : 2))
-        .scaleEffect(self.isPressed ? 0.9 : 1.0)
     }
 }
 
 // MARK: - Preview
 
 #if DEBUG && !SWIFT_PACKAGE
-#Preview("Modern Theme") {
+#Preview("Sentence") {
     TypeAnimationView(
-        keys: ["H", "e", "l", "l", "o", " ", "W", "o", "r", "l", "d"],
-        theme: .modern,
-        cadence: .human(wordsPerMinute: 140))
-        .frame(width: 600, height: 300)
-        .background(Color.gray.opacity(0.1))
+        keys: "Hello World".map(String.init),
+        cadence: .human(wordsPerMinute: 140),
+        durationScale: 1.0,
+        displayDuration: 3.0)
+        .frame(width: 680, height: 140)
+        .background(Color.gray.opacity(0.3))
 }
 
-#Preview("Classic Theme") {
+#Preview("Special Keys") {
     TypeAnimationView(
-        keys: ["T", "e", "s", "t", "{return}", "1", "2", "3"],
-        theme: .classic,
-        cadence: .fixed(milliseconds: 20))
-        .frame(width: 600, height: 300)
-        .background(Color.gray.opacity(0.1))
-}
-
-#Preview("Ghostly Theme") {
-    TypeAnimationView(
-        keys: ["G", "h", "o", "s", "t", "{tab}", "M", "o", "d", "e"],
-        theme: .ghostly,
-        cadence: nil)
-        .frame(width: 600, height: 300)
-        .background(Color.gray.opacity(0.1))
+        keys: ["T", "e", "s", "t", "{tab}", "4", "2", "{return}"],
+        cadence: .fixed(milliseconds: 60),
+        durationScale: 1.0,
+        displayDuration: 3.0)
+        .frame(width: 680, height: 140)
+        .background(Color.gray.opacity(0.3))
 }
 #endif

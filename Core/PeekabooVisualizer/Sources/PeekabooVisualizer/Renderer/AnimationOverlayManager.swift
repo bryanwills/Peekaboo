@@ -40,8 +40,12 @@ final class AnimationOverlayManager {
         window.hasShadow = false
         window.isReleasedWhenClosed = false
 
-        // Set content view
-        let hostingView = NSHostingView(rootView: content)
+        // Set content view. The root is wrapped in a flexible container so
+        // fixed-size animation views center on the window instead of pinning
+        // to its top-leading corner (which would offset them by the padding).
+        let centeredContent = ZStack { content }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        let hostingView = NSHostingView(rootView: centeredContent)
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         hostingView.layer?.masksToBounds = false
