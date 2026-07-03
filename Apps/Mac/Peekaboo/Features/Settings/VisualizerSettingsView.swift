@@ -8,8 +8,6 @@ struct VisualizerSettingsView: View {
     @Bindable var settings: PeekabooSettings
     @Environment(VisualizerCoordinator.self) private var visualizerCoordinator
 
-    private let keyboardThemes = ["classic", "modern", "ghostly"]
-
     var body: some View {
         Form {
             // Header section with master toggle
@@ -65,18 +63,6 @@ struct VisualizerSettingsView: View {
                         .toggleStyle(IOSToggleStyle())
                 }
                 .disabled(!self.settings.visualizerEnabled)
-
-                // Keyboard Theme
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Keyboard Theme", systemImage: "keyboard")
-                    Picker("", selection: self.$settings.visualizerKeyboardTheme) {
-                        ForEach(self.keyboardThemes, id: \.self) { theme in
-                            Text(theme.capitalized).tag(theme)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .disabled(!self.settings.visualizerEnabled)
-                }
             }
             .opacity(self.settings.visualizerEnabled ? 1 : 0.5)
 

@@ -238,13 +238,6 @@ final class PeekabooSettings {
         }
     }
 
-    var visualizerKeyboardTheme: String = "modern" {
-        didSet {
-            self.save()
-            self.updateConfigFile()
-        }
-    }
-
     /// Individual animation toggles
     var screenshotFlashEnabled: Bool = true {
         didSet {
@@ -534,9 +527,6 @@ extension PeekabooSettings {
             fallback: PeekabooSettings.defaultVisualizerAnimationSpeed)
         self.visualizerEffectIntensity = self.nonZeroDouble(forKey: "visualizerEffectIntensity", fallback: 1.0)
         self.visualizerSoundEnabled = self.valueOrDefault(key: "visualizerSoundEnabled", defaultValue: true)
-
-        let keyboardThemeKey = self.namespaced("visualizerKeyboardTheme")
-        self.visualizerKeyboardTheme = self.userDefaults.string(forKey: keyboardThemeKey) ?? "modern"
     }
 
     private func loadAnimationPreferences() {
@@ -602,7 +592,6 @@ extension PeekabooSettings {
         self.userDefaults.set(self.visualizerAnimationSpeed, forKey: "\(self.keyPrefix)visualizerAnimationSpeed")
         self.userDefaults.set(self.visualizerEffectIntensity, forKey: "\(self.keyPrefix)visualizerEffectIntensity")
         self.userDefaults.set(self.visualizerSoundEnabled, forKey: "\(self.keyPrefix)visualizerSoundEnabled")
-        self.userDefaults.set(self.visualizerKeyboardTheme, forKey: "\(self.keyPrefix)visualizerKeyboardTheme")
 
         // Save individual animation toggles
         self.userDefaults.set(self.screenshotFlashEnabled, forKey: "\(self.keyPrefix)screenshotFlashEnabled")

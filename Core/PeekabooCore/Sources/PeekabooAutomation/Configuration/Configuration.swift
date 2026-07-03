@@ -138,7 +138,6 @@ public struct Configuration: Codable {
         public var animationSpeed: Double?
         public var effectIntensity: Double?
         public var soundEnabled: Bool?
-        public var keyboardTheme: String?
 
         // Individual animation toggles
         public var screenshotFlashEnabled: Bool?
@@ -160,7 +159,6 @@ public struct Configuration: Codable {
             animationSpeed: Double? = nil,
             effectIntensity: Double? = nil,
             soundEnabled: Bool? = nil,
-            keyboardTheme: String? = nil,
             screenshotFlashEnabled: Bool? = nil,
             clickAnimationEnabled: Bool? = nil,
             typeAnimationEnabled: Bool? = nil,
@@ -179,7 +177,6 @@ public struct Configuration: Codable {
             self.animationSpeed = animationSpeed
             self.effectIntensity = effectIntensity
             self.soundEnabled = soundEnabled
-            self.keyboardTheme = keyboardTheme
             self.screenshotFlashEnabled = screenshotFlashEnabled
             self.clickAnimationEnabled = clickAnimationEnabled
             self.typeAnimationEnabled = typeAnimationEnabled
