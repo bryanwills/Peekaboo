@@ -45,6 +45,10 @@ Agents should also use `peekaboo learn`, `peekaboo tools`, and `peekaboo <comman
 - Permissions: `docs/permissions.md`
 - Subprocess/OpenClaw integration: `docs/integrations/subprocess.md`
 
+## Distribution Ownership
+
+Peekaboo owns product behavior, current command and workflow guidance, and validation documentation. Distributors such as OpenClaw may vendor a release-pinned snapshot so they work without a Peekaboo source checkout, but that snapshot is a distribution artifact rather than a second authority: it must declare its source release or commit, sync when Peekaboo releases, and keep host-specific installation or socket guidance as an overlay.
+
 ## Maintenance Rule
 
 Keep the skill compact and progressive. Its frontmatter should contain only `name` and `description`, and its body should explain observation strategy and validation flow without vendoring generated command catalogs. Update Commander metadata, `peekaboo learn`, or `docs/commands/*` when command behavior changes.
