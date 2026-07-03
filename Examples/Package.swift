@@ -28,9 +28,8 @@ let package = Package(
         // Local Tachikoma dependency
         .package(path: "../Tachikoma"),
 
-        // External dependencies for examples
+        // Local Commander dependency
         .package(path: "../Commander"),
-        .package(url: "https://github.com/jpsim/Yams.git", from: "5.0.0"),
     ],
     targets: [
         // Shared utilities used across examples
@@ -39,7 +38,6 @@ let package = Package(
             dependencies: [
                 .product(name: "Tachikoma", package: "Tachikoma"),
                 .product(name: "Commander", package: "Commander"),
-                .product(name: "Yams", package: "Yams"),
             ],
             swiftSettings: approachableConcurrencySettings),
 
