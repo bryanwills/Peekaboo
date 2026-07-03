@@ -12,7 +12,7 @@
 
 import Foundation
 
-// --- Unfixed pattern: poll loop ignores cancellation ---
+/// --- Unfixed pattern: poll loop ignores cancellation ---
 func unfixedDaemonPoll(timeoutSec: TimeInterval) async -> (loopCount: Int, elapsed: TimeInterval) {
     var count = 0
     let start = Date()
@@ -27,7 +27,7 @@ func unfixedDaemonPoll(timeoutSec: TimeInterval) async -> (loopCount: Int, elaps
     return (count, Date().timeIntervalSince(start))
 }
 
-// --- Fixed pattern: poll loop checks Task.isCancelled ---
+/// --- Fixed pattern: poll loop checks Task.isCancelled ---
 func fixedDaemonPoll(timeoutSec: TimeInterval) async -> (loopCount: Int, elapsed: TimeInterval) {
     var count = 0
     let start = Date()
@@ -61,7 +61,8 @@ struct Proof {
         unfixedTask.cancel()
         let unfixed = await unfixedTask.value
         print("  Loops executed: \(unfixed.loopCount)")
-        print("  Elapsed: \(String(format: "%.0f", unfixed.elapsed * 1000))ms (ran until \(String(format: "%.0f", timeout))s deadline)")
+        print(
+            "  Elapsed: \(String(format: "%.0f", unfixed.elapsed * 1000))ms (ran until \(String(format: "%.0f", timeout))s deadline)")
         print()
 
         // Test 2: Fixed — loop exits after first sleep post-cancellation
@@ -80,14 +81,16 @@ struct Proof {
         // Verdict
         let unfixedRanFull = unfixed.elapsed > 2.0
         let fixedExitedEarly = fixed.elapsed < 1.0 && fixed.loopCount <= 5
-        if unfixedRanFull && fixedExitedEarly {
+        if unfixedRanFull, fixedExitedEarly {
             print("✅ PASS: Unfixed loop ran \(String(format: "%.1f", unfixed.elapsed))s (full timeout, ignores cancel)")
             print("✅ PASS: Fixed loop ran \(String(format: "%.0f", fixed.elapsed * 1000))ms (exits on cancel)")
             print("✅ The Task.isCancelled guard prevents daemon poll loops from wasting")
-            print("   \(String(format: "%.0f", (unfixed.elapsed - fixed.elapsed) * 1000))ms of blocked time after cancellation.")
+            print(
+                "   \(String(format: "%.0f", (unfixed.elapsed - fixed.elapsed) * 1000))ms of blocked time after cancellation.")
         } else {
             print("❌ FAIL: unexpected behavior")
-            print("  unfixed: \(String(format: "%.1f", unfixed.elapsed))s, fixed: \(String(format: "%.0f", fixed.elapsed * 1000))ms")
+            print(
+                "  unfixed: \(String(format: "%.1f", unfixed.elapsed))s, fixed: \(String(format: "%.0f", fixed.elapsed * 1000))ms")
         }
     }
 }
