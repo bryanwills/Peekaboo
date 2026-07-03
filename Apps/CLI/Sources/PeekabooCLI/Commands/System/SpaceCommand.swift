@@ -65,7 +65,7 @@ enum SpaceCommandEnvironment {
 
     @MainActor
     private final class SpaceManagementActor {
-        private let inner = SpaceManagementService()
+        private let inner = SpaceManagementService(feedbackClient: VisualizerAutomationFeedbackClient())
 
         func getAllSpaces() -> [SpaceInfo] {
             self.inner.getAllSpaces()

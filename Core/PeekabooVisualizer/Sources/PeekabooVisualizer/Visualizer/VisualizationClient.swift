@@ -126,9 +126,25 @@ public final class VisualizationClient: @unchecked Sendable {
     public func showTypingFeedback(
         keys: [String],
         duration: TimeInterval,
-        cadence: TypingCadence? = nil) async -> Bool
+        cadence: TypingCadence? = nil,
+        revealsTypedText: Bool = false) async -> Bool
     {
-        self.dispatch(.typingFeedback(keys: keys, duration: duration, cadence: cadence))
+        // Typed content can be a password or token, and events are persisted
+        // to the shared store before display. Mask printable characters unless
+        // the caller vouches for the content (demo text) or the user opts in.
+        let revealTypedText = revealsTypedText || ProcessInfo.processInfo
+            .environment["PEEKABOO_VISUALIZER_SHOW_TYPED_TEXT"] == "true"
+        let safeKeys = Self.maskedTypingKeys(keys, reveal: revealTypedText)
+        return self.dispatch(.typingFeedback(keys: safeKeys, duration: duration, cadence: cadence))
+    }
+
+    /// Replaces printable characters with bullets while keeping control-key
+    /// glyphs (⏎, ⇥, ⌫…) intact, so the typing HUD shows rhythm without content.
+    static func maskedTypingKeys(_ keys: [String], reveal: Bool) -> [String] {
+        guard !reveal else { return keys }
+        return keys.map { key in
+            key.count == 1 ? "•" : key
+        }
     }
 
     public func showScrollFeedback(at point: CGPoint, direction: ScrollDirection, amount: Int) async -> Bool {

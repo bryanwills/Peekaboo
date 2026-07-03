@@ -140,7 +140,11 @@ public final class PeekabooServices {
         let snapshots = SnapshotManager()
         self.logger.debug("\(AgentDisplayTokens.Status.success) SnapshotManager initialized")
 
-        let screenCap = ScreenCaptureService(loggingService: logging)
+        // Route automation feedback to the visualizer by default so users see
+        // click/type/scroll/capture animations whenever Peekaboo.app is around.
+        let feedback = VisualizerAutomationFeedbackClient()
+
+        let screenCap = ScreenCaptureService(loggingService: logging, feedbackClient: feedback)
         self.logger.debug("\(AgentDisplayTokens.Status.success) ScreenCaptureService initialized")
 
         let configuration = ConfigurationManager.shared
@@ -150,16 +154,17 @@ public final class PeekabooServices {
             snapshotManager: snapshots,
             loggingService: logging,
             searchPolicy: .balanced,
-            inputPolicy: inputPolicy ?? configuration.getUIInputPolicy())
+            inputPolicy: inputPolicy ?? configuration.getUIInputPolicy(),
+            feedbackClient: feedback)
         self.logger.debug("\(AgentDisplayTokens.Status.success) UIAutomationService initialized")
 
-        let windows = WindowManagementService(applicationService: apps)
+        let windows = WindowManagementService(applicationService: apps, feedbackClient: feedback)
         self.logger.debug("\(AgentDisplayTokens.Status.success) WindowManagementService initialized")
 
-        let menuSvc = MenuService(applicationService: apps)
+        let menuSvc = MenuService(applicationService: apps, feedbackClient: feedback)
         self.logger.debug("\(AgentDisplayTokens.Status.success) MenuService initialized")
 
-        let dockSvc = DockService()
+        let dockSvc = DockService(feedbackClient: feedback)
         self.logger.debug("\(AgentDisplayTokens.Status.success) DockService initialized")
 
         let screenSvc = ScreenService()
@@ -181,7 +186,7 @@ public final class PeekabooServices {
         self.dock = dockSvc
         self.screens = screenSvc
 
-        self.dialogs = DialogService()
+        self.dialogs = DialogService(feedbackClient: feedback)
         self.logger.debug("\(AgentDisplayTokens.Status.success) DialogService initialized")
 
         self.snapshots = snapshots
@@ -241,7 +246,11 @@ public final class PeekabooServices {
         let snapshots = snapshotManager
         logger.debug("\(AgentDisplayTokens.Status.success) SnapshotManager initialized (custom)")
 
-        let screenCap = ScreenCaptureService(loggingService: logging)
+        // Route automation feedback to the visualizer by default so users see
+        // click/type/scroll/capture animations whenever Peekaboo.app is around.
+        let feedback = VisualizerAutomationFeedbackClient()
+
+        let screenCap = ScreenCaptureService(loggingService: logging, feedbackClient: feedback)
         logger.debug("\(AgentDisplayTokens.Status.success) ScreenCaptureService initialized")
 
         let configuration = ConfigurationManager.shared
@@ -251,19 +260,20 @@ public final class PeekabooServices {
             snapshotManager: snapshots,
             loggingService: logging,
             searchPolicy: .balanced,
-            inputPolicy: inputPolicy ?? configuration.getUIInputPolicy())
+            inputPolicy: inputPolicy ?? configuration.getUIInputPolicy(),
+            feedbackClient: feedback)
         logger.debug("\(AgentDisplayTokens.Status.success) UIAutomationService initialized")
 
-        let windows = WindowManagementService(applicationService: apps)
+        let windows = WindowManagementService(applicationService: apps, feedbackClient: feedback)
         logger.debug("\(AgentDisplayTokens.Status.success) WindowManagementService initialized")
 
-        let menuSvc = MenuService(applicationService: apps)
+        let menuSvc = MenuService(applicationService: apps, feedbackClient: feedback)
         logger.debug("\(AgentDisplayTokens.Status.success) MenuService initialized")
 
-        let dockSvc = DockService()
+        let dockSvc = DockService(feedbackClient: feedback)
         logger.debug("\(AgentDisplayTokens.Status.success) DockService initialized")
 
-        let dialogs = DialogService()
+        let dialogs = DialogService(feedbackClient: feedback)
         logger.debug("\(AgentDisplayTokens.Status.success) DialogService initialized")
 
         let files = FileService()

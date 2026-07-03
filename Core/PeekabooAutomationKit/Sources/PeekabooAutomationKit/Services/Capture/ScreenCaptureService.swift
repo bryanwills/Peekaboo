@@ -73,7 +73,8 @@ public final class ScreenCaptureService: ScreenCaptureServiceProtocol, EngineAwa
         static func live(
             environment: [String: String] = ProcessInfo.processInfo.environment,
             applicationResolver: (any ApplicationResolving)? = nil,
-            metricsObserver: (any ScreenCaptureMetricsObserving)? = nil) -> Dependencies
+            metricsObserver: (any ScreenCaptureMetricsObserving)? = nil,
+            feedbackClient: (any AutomationFeedbackClient)? = nil) -> Dependencies
         {
             let resolver = applicationResolver ?? PeekabooApplicationResolver()
             let captureObserver: (@Sendable (String, ScreenCaptureAPI, TimeInterval, Bool, (any Error)?) -> Void)? =
@@ -93,7 +94,7 @@ public final class ScreenCaptureService: ScreenCaptureServiceProtocol, EngineAwa
                 ScreenCaptureKitFrameSource(logger: logger)
             }
             return Dependencies(
-                feedbackClient: NoopAutomationFeedbackClient(),
+                feedbackClient: feedbackClient ?? NoopAutomationFeedbackClient(),
                 permissionEvaluator: ScreenRecordingPermissionChecker(),
                 fallbackRunner: ScreenCaptureFallbackRunner(
                     apis: ScreenCaptureAPIResolver.resolve(environment: environment),
@@ -121,8 +122,11 @@ public final class ScreenCaptureService: ScreenCaptureServiceProtocol, EngineAwa
     let legacyOperator: any LegacyScreenCaptureOperating
     @TaskLocal static var captureEnginePreference: CaptureEnginePreference = .auto
 
-    public convenience init(loggingService: any LoggingServiceProtocol) {
-        self.init(loggingService: loggingService, dependencies: .live())
+    public convenience init(
+        loggingService: any LoggingServiceProtocol,
+        feedbackClient: (any AutomationFeedbackClient)? = nil)
+    {
+        self.init(loggingService: loggingService, dependencies: .live(feedbackClient: feedbackClient))
     }
 
     @_spi(Testing) public init(
