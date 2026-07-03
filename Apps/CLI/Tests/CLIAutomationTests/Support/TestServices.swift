@@ -1032,6 +1032,8 @@ final class StubClipboardService: ClipboardServiceProtocol {
     var current: ClipboardReadResult?
     var slots: [String: ClipboardReadResult] = [:]
     var beforeMutation: (() -> Void)?
+    var restoreError: (any Error)?
+    private(set) var restoreCallCount = 0
 
     func get(prefer _: UTType?) throws -> ClipboardReadResult? {
         self.current
@@ -1065,6 +1067,10 @@ final class StubClipboardService: ClipboardServiceProtocol {
 
     func restore(slot: String) throws -> ClipboardReadResult {
         self.beforeMutation?()
+        self.restoreCallCount += 1
+        if let restoreError {
+            throw restoreError
+        }
         guard let saved = slots[slot] else {
             throw ClipboardServiceError.slotNotFound(slot)
         }

@@ -103,6 +103,12 @@ struct PasteCommandTests {
         )
         let automation = StubAutomationService()
         let clipboard = StubClipboardService()
+        let priorClipboard = ClipboardReadResult(
+            utiIdentifier: "public.utf8-plain-text",
+            data: Data("prior".utf8),
+            textPreview: "prior"
+        )
+        clipboard.current = priorClipboard
         let applications = StubApplicationService(applications: [app])
         let services = TestServicesFactory.makePeekabooServices(
             applications: applications,
@@ -128,6 +134,92 @@ struct PasteCommandTests {
         #expect(automation.targetedHotkeyCalls.map(\.keys) == ["cmd,v"])
         #expect(automation.targetedHotkeyCalls.first?.targetProcessIdentifier == 2468)
         #expect(applications.activateCalls.isEmpty)
+        #expect(clipboard.current?.utiIdentifier == priorClipboard.utiIdentifier)
+        #expect(clipboard.current?.data == priorClipboard.data)
+        #expect(clipboard.current?.textPreview == priorClipboard.textPreview)
+        #expect(clipboard.restoreCallCount == 1)
+        let payload = try ExternalCommandRunner.decodeJSONResponse(
+            from: result,
+            as: CodableJSONResponse<PasteResult>.self
+        )
+        #expect(payload.data.restoreSucceeded)
+        #expect(payload.data.restoreError == nil)
+        #expect(payload.data.restoredUti == priorClipboard.utiIdentifier)
+        #expect(payload.data.restoredSize == priorClipboard.data.count)
+    }
+
+    @Test
+    @MainActor
+    func `Paste warns without inviting retry when clipboard restoration fails`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 2468,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit"
+        )
+        let automation = StubAutomationService()
+        let clipboard = StubClipboardService()
+        clipboard.current = ClipboardReadResult(
+            utiIdentifier: "public.utf8-plain-text",
+            data: Data("prior".utf8),
+            textPreview: "prior"
+        )
+        clipboard.restoreError = ClipboardServiceError.writeFailed("simulated restore failure")
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: [app]),
+            clipboard: clipboard,
+            automation: automation
+        )
+
+        let jsonResult = try await InProcessCommandRunner.run(
+            [
+                "paste",
+                "--app", "TextEdit",
+                "--data-base64", "aGVsbG8=",
+                "--uti", "public.data",
+                "--restore-delay-ms", "0",
+                "--json",
+                "--no-remote",
+            ],
+            services: services
+        )
+
+        #expect(jsonResult.exitStatus == 0)
+        #expect(automation.targetedHotkeyCalls.map(\.keys) == ["cmd,v"])
+        #expect(clipboard.restoreCallCount == 1)
+        let payload = try ExternalCommandRunner.decodeJSONResponse(
+            from: jsonResult,
+            as: CodableJSONResponse<PasteResult>.self
+        )
+        #expect(payload.data.success)
+        #expect(!payload.data.restoreSucceeded)
+        #expect(payload.data.restoreError == "Failed to write to clipboard: simulated restore failure")
+
+        let plainClipboard = StubClipboardService()
+        plainClipboard.current = ClipboardReadResult(
+            utiIdentifier: "public.utf8-plain-text",
+            data: Data("prior".utf8),
+            textPreview: "prior"
+        )
+        plainClipboard.restoreError = ClipboardServiceError.writeFailed("simulated restore failure")
+        let plainResult = try await InProcessCommandRunner.run(
+            [
+                "paste",
+                "--app", "TextEdit",
+                "--data-base64", "aGVsbG8=",
+                "--uti", "public.data",
+                "--restore-delay-ms", "0",
+                "--no-remote",
+            ],
+            services: TestServicesFactory.makePeekabooServices(
+                applications: StubApplicationService(applications: [app]),
+                clipboard: plainClipboard,
+                automation: StubAutomationService()
+            )
+        )
+
+        #expect(plainResult.exitStatus == 0)
+        #expect(plainResult.stdout.contains("clipboard restoration failed"))
+        #expect(plainResult.stdout.contains("Do not retry the paste"))
     }
 
     @Test

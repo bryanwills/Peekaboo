@@ -114,6 +114,8 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                     previousClipboardPresent: false,
                     restoredUti: nil,
                     restoredSize: nil,
+                    restoreSucceeded: true,
+                    restoreError: nil,
                     restoreDelayMs: 0,
                     deliveryMode: KeyboardDeliveryMode.background.rawValue,
                     targetPID: Int(targetPID)
@@ -145,14 +147,21 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             }
 
             var restoreResult: ClipboardReadResult?
+            var restoreErrorDescription: String?
+            var restorePending = true
+
             defer {
-                if self.restoreDelayMs > 0 {
-                    usleep(useconds_t(self.restoreDelayMs) * 1000)
-                }
-                if priorClipboard != nil {
-                    restoreResult = try? self.services.clipboard.restore(slot: restoreSlot)
-                } else {
-                    self.services.clipboard.clear()
+                if restorePending {
+                    do {
+                        _ = try self.restoreClipboard(
+                            priorClipboardPresent: priorClipboard != nil,
+                            slot: restoreSlot
+                        )
+                    } catch {
+                        self.logger.error(
+                            "Failed to restore clipboard after paste error: \(error.localizedDescription)"
+                        )
+                    }
                 }
             }
 
@@ -178,6 +187,17 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 reason: "paste"
             )
 
+            do {
+                restoreResult = try self.restoreClipboard(
+                    priorClipboardPresent: priorClipboard != nil,
+                    slot: restoreSlot
+                )
+            } catch {
+                restoreErrorDescription = error.localizedDescription
+                self.logger.error("Failed to restore clipboard: \(error.localizedDescription)")
+            }
+            restorePending = false
+
             let result = PasteResult(
                 success: true,
                 pastedUti: setResult.utiIdentifier,
@@ -186,6 +206,8 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 previousClipboardPresent: priorClipboard != nil,
                 restoredUti: restoreResult?.utiIdentifier,
                 restoredSize: restoreResult?.data.count,
+                restoreSucceeded: restoreErrorDescription == nil,
+                restoreError: restoreErrorDescription,
                 restoreDelayMs: self.restoreDelayMs,
                 deliveryMode: targetPID == nil ? KeyboardDeliveryMode.foreground.rawValue :
                     KeyboardDeliveryMode.background.rawValue,
@@ -193,9 +215,16 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             )
 
             self.output(result) {
-                print("✅ Pasted and restored clipboard")
+                if restoreErrorDescription != nil {
+                    print("⚠️  Pasted, but clipboard restoration failed. Do not retry the paste; " +
+                        "the previous clipboard contents may be unavailable.")
+                } else {
+                    print("✅ Pasted and restored clipboard")
+                }
                 print("📋 Pasted: \(setResult.utiIdentifier) (\(setResult.data.count) bytes)")
-                if priorClipboard != nil {
+                if let restoreErrorDescription {
+                    print("♻️  Restore error: \(restoreErrorDescription)")
+                } else if priorClipboard != nil {
                     print("♻️  Restored: \(restoreResult?.utiIdentifier ?? "unknown")")
                 } else {
                     print("🧹 Restored: cleared (prior clipboard empty)")
@@ -208,6 +237,20 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             self.handleError(error)
             throw ExitCode.failure
         }
+    }
+
+    private func restoreClipboard(
+        priorClipboardPresent: Bool,
+        slot: String
+    ) throws -> ClipboardReadResult? {
+        if self.restoreDelayMs > 0 {
+            usleep(useconds_t(self.restoreDelayMs) * 1000)
+        }
+        guard priorClipboardPresent else {
+            self.services.clipboard.clear()
+            return nil
+        }
+        return try self.services.clipboard.restore(slot: slot)
     }
 
     private func makeWriteRequest() throws -> ClipboardWriteRequest {
@@ -301,6 +344,8 @@ struct PasteResult: Codable {
     let previousClipboardPresent: Bool
     let restoredUti: String?
     let restoredSize: Int?
+    let restoreSucceeded: Bool
+    let restoreError: String?
     let restoreDelayMs: Int
     let deliveryMode: String
     let targetPID: Int?
