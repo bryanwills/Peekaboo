@@ -223,3 +223,32 @@ public enum PeekabooBridgeResponse: Codable, Sendable {
     case int(Int)
     case error(PeekabooBridgeErrorEnvelope)
 }
+
+extension PeekabooBridgeResponse {
+    private static let fallbackErrorData = Data(
+        #"{"error":{"_0":{"code":"internalError","message":"Failed to encode bridge error response"}}}"#.utf8)
+
+    /// Encode an error envelope for the bridge wire format.
+    ///
+    /// Never returns empty `Data`. An empty payload cannot be decoded as
+    /// `PeekabooBridgeResponse` and leaves clients with a confusing decode
+    /// failure instead of the original error.
+    static func encodeError(
+        _ envelope: PeekabooBridgeErrorEnvelope,
+        using encoder: JSONEncoder = .peekabooBridgeEncoder()) -> Data
+    {
+        self.encodeError(envelope) { response in
+            try encoder.encode(response)
+        }
+    }
+
+    static func encodeError(
+        _ envelope: PeekabooBridgeErrorEnvelope,
+        encodeWith encode: (Self) throws -> Data) -> Data
+    {
+        guard let data = try? encode(.error(envelope)), !data.isEmpty else {
+            return self.fallbackErrorData
+        }
+        return data
+    }
+}
