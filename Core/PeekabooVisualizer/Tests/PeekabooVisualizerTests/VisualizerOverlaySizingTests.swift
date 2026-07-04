@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import PeekabooFoundation
 import Testing
 @testable import PeekabooVisualizer
@@ -6,14 +7,47 @@ import Testing
 @MainActor
 struct VisualizerOverlaySizingTests {
     @Test
-    func `Typing feedback masks printable keys unless revealed`() {
+    func `Typed text shows verbatim unless masking is requested`() {
         let keys = ["H", "i", " ", "{return}", "{tab}", "4"]
 
-        let masked = VisualizationClient.maskedTypingKeys(keys, reveal: false)
-        #expect(masked == ["•", "•", "•", "{return}", "{tab}", "•"])
+        // Default: the caption shows what is typed.
+        #expect(VisualizationClient.maskedTypingKeys(keys, mask: false) == keys)
 
-        let revealed = VisualizationClient.maskedTypingKeys(keys, reveal: true)
-        #expect(revealed == keys)
+        // Secure fields / env opt-in: printable characters become bullets,
+        // control glyphs stay readable.
+        let masked = VisualizationClient.maskedTypingKeys(keys, mask: true)
+        #expect(masked == ["•", "•", "•", "{return}", "{tab}", "•"])
+    }
+
+    @Test
+    func `Element overlays drop containers and cap the count`() {
+        var elements: [String: CGRect] = [
+            "window": CGRect(x: 0, y: 0, width: 1400, height: 860),
+            "tiny": CGRect(x: 10, y: 10, width: 2, height: 2),
+        ]
+        for index in 0..<150 {
+            elements["e\(index)"] = CGRect(x: Double(index), y: 0, width: 40, height: 20 + Double(index % 7))
+        }
+
+        let filtered = VisualizerCoordinator.filteredElementOverlays(
+            elements,
+            screenArea: 1440 * 900,
+            limit: 120)
+
+        #expect(filtered["window"] == nil)
+        #expect(filtered["tiny"] == nil)
+        #expect(filtered.count == 120)
+    }
+
+    @Test
+    func `Window-local rects flip AppKit coordinates`() {
+        let windowRect = CGRect(x: 100, y: 200, width: 400, height: 300)
+        let local = VisualizerCoordinator.windowLocalRect(
+            CGRect(x: 150, y: 400, width: 60, height: 40),
+            in: windowRect)
+
+        // AppKit rect top (y 440) sits 60pt below the window top (maxY 500).
+        #expect(local == CGRect(x: 50, y: 60, width: 60, height: 40))
     }
 
     @Test

@@ -101,6 +101,8 @@ public struct VisualizerEvent: Codable, Sendable {
         case menuNavigation(path: [String])
         case dialogInteraction(elementType: DialogElementType, rect: CGRect, action: DialogActionType)
         case spaceSwitch(from: Int, to: Int, direction: SpaceDirection)
+        // Rects are AppKit screen coordinates; senders convert from
+        // accessibility space before dispatch.
         case elementDetection(elements: [String: CGRect], duration: TimeInterval)
         case annotatedScreenshot(
             imageData: Data,
