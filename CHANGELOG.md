@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [3.6.0] - 2026-07-04
 
 ### Changed
 - Visualizer animations were redesigned around a single "Ghost HUD" design language: one violet accent with red reserved for destructive operations, dark translucent HUD chips, and a shared motion vocabulary. Clicks show a targeting reticle with impact pulses (dashed ring for right-click), typing streams the actual keystrokes into a caption pill instead of a fake QWERTY keyboard, hotkeys press real macOS-style keycaps in sequence, mouse moves and drags trace a glowing comet with press/release rings, scrolls show flowing chevrons with a count tag, screenshots snap viewfinder brackets, and app lifecycle, window operations, menu paths, dialogs, and Space switches render as matching HUD toasts, outlines, and breadcrumbs.
