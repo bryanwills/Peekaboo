@@ -8,6 +8,20 @@
     <description>Peekaboo macOS app updates (Sparkle)</description>
     <language>en</language>
     <item>
+      <title>Peekaboo 3.6.0</title>
+      <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.6.0</link>
+      <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.6.0</sparkle:releaseNotesLink>
+      <pubDate>Sat, 04 Jul 2026 04:26:47 +0000</pubDate>
+      <enclosure
+        url="https://github.com/openclaw/Peekaboo/releases/download/v3.6.0/Peekaboo-3.6.0.app.zip"
+        sparkle:version="3060099"
+        sparkle:shortVersionString="3.6.0"
+        sparkle:minimumSystemVersion="15.0"
+        length="14827187"
+        type="application/octet-stream"
+        sparkle:edSignature="5QgJcsbsZdEbgTiwUbwAvNjcba1FvI6V+xSyvTXM2xUINPaXVK1aWgR6V8wuNqKbht2ot6TTNkogvY+qul2CAA==" />
+    </item>
+    <item>
       <title>Peekaboo 3.5.4</title>
       <link>https://github.com/openclaw/Peekaboo/releases/tag/v3.5.4</link>
       <sparkle:releaseNotesLink>https://github.com/openclaw/Peekaboo/releases/tag/v3.5.4</sparkle:releaseNotesLink>
