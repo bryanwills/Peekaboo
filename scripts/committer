@@ -75,7 +75,26 @@ for file in "${files[@]}"; do
 done
 
 git restore --staged :/
-git add --force -- "${files[@]}"
+
+# Directories get a plain `git add` so gitignored contents (e.g. .build/ artifacts) are not
+# swept in; explicitly named files keep --force so an intentionally listed ignored file can
+# still be committed. Symlinks count as files (git stages the link itself, not the target).
+dir_args=()
+file_args=()
+for file in "${files[@]}"; do
+  if [ -d "$file" ] && [ ! -L "$file" ]; then
+    dir_args+=("$file")
+  else
+    file_args+=("$file")
+  fi
+done
+
+if [ "${#dir_args[@]}" -gt 0 ]; then
+  git add -- "${dir_args[@]}"
+fi
+if [ "${#file_args[@]}" -gt 0 ]; then
+  git add --force -- "${file_args[@]}"
+fi
 
 if git diff --staged --quiet; then
   printf 'Warning: no staged changes detected for: %s\n' "${files[*]}" >&2
