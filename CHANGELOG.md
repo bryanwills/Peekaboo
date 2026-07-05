@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [3.7.1] - 2026-07-05
 
 ### Changed
 - The Settings window was modernized around native macOS grouped forms: the AI tab collapses seven redundant provider sections into one clean API Keys list with environment-variable status footnotes, the model pickers now always display the selected model's name (they previously rendered blank or a raw model id when the selection came from `~/.peekaboo/config.json`), the Visualizer tab drops its hand-rolled iOS-style switches for native toggles with inline sliders, Shortcuts is three recorder rows plus a one-line hint instead of a wall of instructions, Permissions gets the standard grouped layout, and About uses native links (and the current year).
