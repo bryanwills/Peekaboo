@@ -5,7 +5,10 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [3.7.0] - 2026-07-05
+
+### Added
+- The MCP image tool now supports native `max_dimension` downscaling, with inline `format: "data"` captures capped at 1500 pixels by default to reduce payload and model-context overhead. Thanks @jacobjove for #219.
 
 ### Fixed
 - `peekaboo capture action` now returns within a bounded interval when a child survives termination attempts, preserves graceful TERM handling for timeouts and cancellation, and eventually reaps an abandoned child. Thanks @SebTardif for #215.

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [3.7.0] - 2026-07-05
 
 ### Added
 - The MCP image tool now supports native `max_dimension` downscaling, with inline `format: "data"` captures capped at 1500 pixels by default to reduce payload and model-context overhead. Thanks @jacobjove for #219.
