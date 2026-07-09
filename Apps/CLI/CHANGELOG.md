@@ -5,7 +5,10 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [3.8.0] - 2026-07-09
+
+### Added
+- The agent and CLI model catalogs now support Claude Fable 5, Claude Sonnet 5, and the GPT-5.6 Sol, Terra, and Luna preview models, including their current context, output, effort, pricing, and non-streaming safety behavior.
 
 ## [3.7.1] - 2026-07-05
 
