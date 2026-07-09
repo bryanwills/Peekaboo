@@ -128,10 +128,18 @@ struct AgentCommand: RuntimeOptionsConfigurable {
     /// Computed property for output mode with smart detection and progressive enhancement
     var outputMode: OutputMode {
         // Explicit user overrides first
-        if self.quiet { return .quiet }
-        if self.verbose || self.debugTerminal { return .verbose }
-        if self.simple { return .minimal }
-        if self.noColor { return .minimal }
+        if self.quiet {
+            return .quiet
+        }
+        if self.verbose || self.debugTerminal {
+            return .verbose
+        }
+        if self.simple {
+            return .minimal
+        }
+        if self.noColor {
+            return .minimal
+        }
 
         // Check for environment-based forced modes
         if let forcedMode = TerminalDetector.shouldForceOutputMode() {

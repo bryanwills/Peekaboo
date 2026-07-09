@@ -2840,9 +2840,16 @@ extension [AgentEvent] {
     }
 
     fileprivate func containsCompleted(summary expected: String) -> Bool {
-        self.contains { if case let .completed(
-            summary,
-            _) = $0 { summary == expected } else { false } }
+        self.contains {
+            if case let .completed(
+                summary,
+                _) = $0
+            {
+                summary == expected
+            } else {
+                false
+            }
+        }
     }
 }
 
