@@ -7,8 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.8.0] - 2026-07-09
 
-### Added
-- The agent and CLI model catalogs now support Claude Fable 5, Claude Sonnet 5, and the GPT-5.6 Sol, Terra, and Luna preview models, including their current context, output, effort, pricing, and non-streaming safety behavior.
+### Changed
+- The standalone CLI keeps its legacy Developer ID team for compatibility with pre-3.8 GUI bridge hosts, while 3.8 hosts accept both the legacy and OpenClaw Foundation release teams during the signing transition.
 
 ## [3.7.1] - 2026-07-05
 
