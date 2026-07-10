@@ -34,9 +34,22 @@ public struct MCPToolContext: @unchecked Sendable {
     private static var defaultContextFactory: (() -> MCPToolContext)?
 
     /// Default context backed by the configured factory closure.
+    ///
+    /// Task-local overrides can be read from any executor. Resolving the
+    /// process-wide default synchronously requires the main thread; the guard
+    /// provides an actionable diagnostic before `MainActor.assumeIsolated`
+    /// verifies the executor. Off-main callers must use `sharedOnMainActor()`
+    /// (an async actor hop) or pass an explicit `MCPToolContext`.
+    /// This deliberately does **not** use `DispatchQueue.main.sync`, which can
+    /// deadlock when the main actor is waiting on the calling task.
     public static var shared: MCPToolContext {
         if let override = self.taskOverride {
             return override
+        }
+        guard Thread.isMainThread else {
+            fatalError(
+                "MCPToolContext.shared must be accessed on the main thread. "
+                    + "Use await MCPToolContext.sharedOnMainActor() or pass an explicit context.")
         }
         return MainActor.assumeIsolated {
             guard let factory = self.defaultContextFactory else {
@@ -44,6 +57,12 @@ public struct MCPToolContext: @unchecked Sendable {
             }
             return factory()
         }
+    }
+
+    /// Resolve `shared` from any isolation without a synchronous main-queue hop.
+    @MainActor
+    public static func sharedOnMainActor() -> MCPToolContext {
+        self.shared
     }
 
     /// Temporarily override the shared context for the lifetime of `operation`.
