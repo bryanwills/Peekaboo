@@ -3,6 +3,7 @@
 ## [3.8.1] - Unreleased
 
 ### Changed
+- Clicks and mouse moves are now visualized by a small animated macOS-style cursor that glides to the target and presses (double-press for double-click, blue-tinted for right-click), replacing the targeting reticle and comet.
 - The accessibility element boxes drawn during `peekaboo see` are off by default now; they were visual clutter on every capture. Re-enable them in Peekaboo.app under Settings › Visualizer › Element Detection Boxes, by setting `visualizer.elementDetectionEnabled` in `~/.peekaboo/config.json`, or per-run with `PEEKABOO_VISUAL_ELEMENT_BOXES=true`. The app toggle and the config file now stay in sync, and a running MCP server picks up the change without a restart.
 
 ### Fixed
@@ -27,9 +28,6 @@
 ### Fixed
 - The macOS Sessions window and agent popover stay unavailable while Agent mode is disabled, including Dock reopens, global shortcuts, notifications, and windows already open when the setting is turned off.
 - The GUI bridge now enforces both signing Team ID and bundle ID on every request, preventing unrelated same-team processes from borrowing Peekaboo's protected macOS permissions.
-
-### Changed
-- Clicks and mouse moves are now visualized by a small animated macOS-style cursor that glides to the target and presses (double-press for double-click, blue-tinted for right-click), replacing the targeting reticle and comet.
 
 ## [3.7.1] - 2026-07-05
 
