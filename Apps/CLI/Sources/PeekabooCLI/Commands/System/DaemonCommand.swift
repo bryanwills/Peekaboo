@@ -466,7 +466,7 @@ enum DaemonControlResolver {
         )
     }
 
-    private static func isBuildScopedSocketName(_ name: String) -> Bool {
+    static func isBuildScopedSocketName(_ name: String) -> Bool {
         guard name.hasPrefix("daemon-"), name.hasSuffix(".sock") else { return false }
         let hash = name.dropFirst("daemon-".count).dropLast(".sock".count)
         return hash.count == 16 && hash.allSatisfy { ("0"..."9").contains($0) || ("a"..."f").contains($0) }
@@ -487,11 +487,27 @@ enum DaemonPaths {
         self.openFileForAppend(at: self.daemonLogURL())
     }
 
-    static func openDaemonStartupLock() -> FileHandle? {
-        let root = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".peekaboo")
-        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        return self.openFileForAppend(at: root.appendingPathComponent("daemon-start.lock"))
+    static func daemonStartupLockURL(socketPath: String? = nil) -> URL {
+        if let socketPath = socketPath?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !socketPath.isEmpty {
+            let socketURL = URL(
+                fileURLWithPath: (socketPath as NSString).expandingTildeInPath
+            ).standardizedFileURL
+            let defaultSocketURL = URL(
+                fileURLWithPath: PeekabooBridgeConstants.daemonSocketPath
+            ).standardizedFileURL
+            // Build-scoped fallback daemons share lifecycle promotion with the canonical daemon.
+            let isBuildScopedDefault = socketURL.deletingLastPathComponent() ==
+                defaultSocketURL.deletingLastPathComponent() &&
+                DaemonControlResolver.isBuildScopedSocketName(socketURL.lastPathComponent)
+            if socketURL != defaultSocketURL, !isBuildScopedDefault {
+                return URL(fileURLWithPath: "\(socketURL.path).start.lock")
+            }
+        }
+
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".peekaboo", isDirectory: true)
+            .appendingPathComponent("daemon-start.lock")
     }
 
     static func openFileForAppend(at fileURL: URL) -> FileHandle? {
