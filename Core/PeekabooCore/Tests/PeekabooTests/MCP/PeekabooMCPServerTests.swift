@@ -1,10 +1,15 @@
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAgentRuntime
 @testable import PeekabooAutomation
 @testable import PeekabooCore
 @testable import PeekabooVisualizer
 
+@Suite(.serialized)
 struct PeekabooMCPServerTests {
+    private static let missingFactoryMessage =
+        "MCPToolContext default factory not configured. Call configureDefaultContext(using:)."
+
     @Test
     func `server initializes with native MCP tool catalog`() async throws {
         let server = try await makeServer()
@@ -58,6 +63,36 @@ struct PeekabooMCPServerTests {
         #expect(firstFallbackContext.snapshotExecutionGate !== gate)
         #expect(defaultContext.snapshotExecutionGate === gate)
         #expect(await server.snapshotExecutionGateForTesting() === gate)
+    }
+
+    @Test
+    @MainActor
+    func `makeDefaultIfConfigured throws when factory is missing`() async {
+        await MCPToolContext.withDefaultContextFactoryForTesting(nil) {
+            let error = #expect(throws: PeekabooError.self) {
+                _ = try MCPToolContext.makeDefaultIfConfigured()
+            }
+            guard case let .operationError(message) = error else {
+                Issue.record("expected operationError, got \(String(describing: error))")
+                return
+            }
+            #expect(message == Self.missingFactoryMessage)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `server init throws when default factory is unconfigured`() async {
+        await MCPToolContext.withDefaultContextFactoryForTesting(nil) {
+            let error = await #expect(throws: PeekabooError.self) {
+                _ = try await PeekabooMCPServer()
+            }
+            guard case let .operationError(message) = error else {
+                Issue.record("expected operationError, got \(String(describing: error))")
+                return
+            }
+            #expect(message == Self.missingFactoryMessage)
+        }
     }
 }
 
