@@ -5,11 +5,13 @@ import Darwin
 import Foundation
 import PeekabooFoundation
 
-/// Synthetic input that targets a process directly instead of the global HID tap.
+/// Background input that targets a process directly without focusing it or moving the cursor.
 ///
-/// This keeps the user's frontmost app and cursor alone. It is best-effort:
-/// macOS delivers pid-routed CGEvents differently from hardware events, and
-/// some apps ignore background mouse events unless they also expose an AX path.
+/// Keyboard input is delivered as pid-routed CGEvents. Pointer clicks are delivered through
+/// accessibility actions instead: positioned pid-routed mouse events are broken on modern macOS —
+/// the `windowID` routing field (0x33) is required for the event to be delivered at all, and its
+/// presence makes the WindowServer discard the event location, landing every click at the target
+/// window's top-left corner. See `click(at:button:count:targetProcessIdentifier:targetWindowID:)`.
 enum BackgroundInputDriver {
     struct MouseWindowRouteCandidate: Equatable {
         let windowID: CGWindowID
@@ -25,65 +27,241 @@ enum BackgroundInputDriver {
         let modifierKeyUpEvents: [CGEvent]
     }
 
+    /// How a background positional click is delivered once the AX element chain is resolved.
+    enum PositionalClickAction: Equatable {
+        case press
+        case showMenu
+        case focus
+    }
+
+    static let doubleClickUnsupportedMessage = """
+    Background double-click is not supported: macOS delivers pid-targeted mouse events at the \
+    window origin instead of the requested point. Re-run with --foreground to focus the app and \
+    send a real double-click.
+    """
+
+    static let middleClickUnsupportedMessage = """
+    Background middle-click is not supported: accessibility has no middle-button action and \
+    pid-targeted mouse events cannot be positioned. Re-run with --foreground to send a real \
+    middle-click.
+    """
+
+    static func noActionableElementMessage(at point: CGPoint, targetProcessIdentifier: pid_t) -> String {
+        """
+        No pressable accessibility element was found at (\(Int(point.x)), \(Int(point.y))) in \
+        PID \(targetProcessIdentifier). Background clicks press the accessibility element at the \
+        target point, and nothing pressable was found there — the point may be empty, a \
+        custom-drawn view, or an element that exposes no press action. Re-run with --foreground to \
+        focus the app and send a real mouse click at these coordinates.
+        """
+    }
+
+    static func occludedWindowMessage(at point: CGPoint, targetWindowID: CGWindowID) -> String {
+        """
+        Point (\(Int(point.x)), \(Int(point.y))) is occluded for the pinned target window \
+        \(targetWindowID): accessibility hit-testing resolved an element in a different window of \
+        the same app. Background clicks press the frontmost element at the point and cannot reach \
+        an overlapped window. Move the overlapping window aside, or re-run with --foreground to \
+        raise and click the target window.
+        """
+    }
+
+    /// Deliver a positional click to a background process via accessibility.
+    ///
+    /// Synthetic positioned mouse events are intentionally not used: `SLEventPostToPid` /
+    /// `CGEvent.postToPid` require the `windowID` field for delivery, and stamping it makes macOS
+    /// ignore the event location entirely (every click lands at the window's top-left corner).
+    /// The element at `point` is hit-tested via `AXUIElementCopyElementAtPosition` and its press
+    /// (or show-menu) action is invoked instead, which is position-faithful and background-safe.
+    @MainActor
     static func click(
         at point: CGPoint,
         button: MouseButton,
         count: Int,
         targetProcessIdentifier: pid_t,
-        targetWindowID: CGWindowID? = nil) throws
+        targetWindowID: CGWindowID? = nil) async throws
     {
-        guard CGPreflightPostEventAccess() else {
-            throw PeekabooError.permissionDeniedEventSynthesizing
-        }
-
         guard targetProcessIdentifier > 0, self.isProcessAlive(targetProcessIdentifier) else {
             throw PeekabooError.invalidInput("Target process identifier is not running: \(targetProcessIdentifier)")
         }
 
-        let routedWindowID = try self.resolveTargetWindowID(
+        guard count == 1 else {
+            throw PeekabooError.serviceUnavailable(self.doubleClickUnsupportedMessage)
+        }
+        guard button != .middle else {
+            throw PeekabooError.serviceUnavailable(self.middleClickUnsupportedMessage)
+        }
+
+        // Exact-window pinning still guards against stale windows, PID reuse, and moved points.
+        _ = try self.resolveTargetWindowID(
             at: point,
             targetProcessIdentifier: targetProcessIdentifier,
             exactWindowID: targetWindowID,
             candidates: self.mouseWindowRouteCandidates(exactWindowID: targetWindowID))
 
-        let (downType, upType, cgButton) = Self.eventTypes(for: button)
-        let source = CGEventSource(stateID: .hidSystemState)
-        let clampedCount = max(1, min(3, count))
+        guard AXIsProcessTrusted() else {
+            throw PeekabooError.permissionDeniedAccessibility
+        }
 
-        for clickIndex in 1...clampedCount {
-            guard
-                let down = CGEvent(
-                    mouseEventSource: source,
-                    mouseType: downType,
-                    mouseCursorPosition: point,
-                    mouseButton: cgButton),
-                let up = CGEvent(
-                    mouseEventSource: source,
-                    mouseType: upType,
-                    mouseCursorPosition: point,
-                    mouseButton: cgButton)
-            else {
-                throw PeekabooError.operationError(message: "Failed to create background mouse events")
+        let candidates = self.hitTestCandidates(at: point, targetProcessIdentifier: targetProcessIdentifier)
+        guard let resolved = Self.positionalClickTarget(inCandidates: candidates, at: point, button: button) else {
+            throw PeekabooError.serviceUnavailable(
+                Self.noActionableElementMessage(at: point, targetProcessIdentifier: targetProcessIdentifier))
+        }
+
+        // AX hit-testing is only PID-scoped: if an exact window was pinned, verify the element we
+        // are about to press actually lives in that window. Another window of the same process can
+        // overlap the point, in which case the hit resolves to the frontmost window's element and
+        // pressing it would silently click the wrong window.
+        if let targetWindowID {
+            try self.assertBelongsToTargetWindow(resolved.element, targetWindowID: targetWindowID, at: point)
+        }
+
+        switch resolved.action {
+        case .press:
+            try await self.performDetachedAction(
+                AXActionNames.kAXPressAction,
+                on: resolved.element,
+                gracePeriod: DetachedAXActionRunner.pressGracePeriod)
+        case .showMenu:
+            try await self.performDetachedAction(
+                AXActionNames.kAXShowMenuAction,
+                on: resolved.element,
+                gracePeriod: DetachedAXActionRunner.showMenuGracePeriod)
+        case .focus:
+            try resolved.element.setAutomationFocused(true)
+        }
+    }
+
+    /// Picks the element that should receive a positional background click.
+    ///
+    /// `candidates` is ordered: the hit-tested element first, then its descendants, then its
+    /// ancestors (see `hitTestCandidates`). The hit-test element is authoritative — macOS returned
+    /// it for this exact point — so it is never rejected on frame grounds; every other candidate
+    /// must still contain the point. The first enabled candidate that supports the required action
+    /// wins. SwiftUI hit-tests can land on a non-pressable container whose pressable target is a
+    /// descendant, so descendants are searched before ancestors. Left clicks on text inputs (which
+    /// have no `AXPress`) fall back to focusing the element, mirroring `ActionInputDriver`.
+    @MainActor
+    static func positionalClickTarget(
+        inCandidates candidates: [any AutomationElementRepresenting],
+        at point: CGPoint,
+        button: MouseButton) -> (element: any AutomationElementRepresenting, action: PositionalClickAction)?
+    {
+        guard let hit = candidates.first else { return nil }
+        // Trust the hit-test element regardless of its reported frame (coordinate-space quirks must
+        // not veto the element macOS resolved for the point); spatially filter the rest.
+        let spatiallyValid = [hit] + candidates.dropFirst().filter { element in
+            guard let frame = element.frame else { return true }
+            return frame.contains(point)
+        }
+
+        let requiredAction = button == .right ? AXActionNames.kAXShowMenuAction : AXActionNames.kAXPressAction
+        if let actionable = spatiallyValid.first(where: { $0.isEnabled && $0.supportsAction(requiredAction) }) {
+            return (actionable, button == .right ? .showMenu : .press)
+        }
+
+        guard button == .left else { return nil }
+        let focusable = spatiallyValid.first { element in
+            ActionInputDriver.canFocusForClick(
+                role: element.role,
+                subrole: element.subrole,
+                isValueSettable: element.isValueSettable,
+                isFocusedSettable: element.isFocusedSettable)
+        }
+        return focusable.map { ($0, .focus) }
+    }
+
+    /// Gathers positional-click candidates for `point`, ordered hit → descendants → ancestors.
+    ///
+    /// The hit-test element is where macOS says the point lands. Descendants are searched next
+    /// because SwiftUI frequently hit-tests to a container whose pressable button is nested inside
+    /// it; ancestors are the last resort. All three sets are bounded so a deep tree cannot stall
+    /// the click.
+    /// Rejects a resolved element that does not belong to the pinned `targetWindowID`.
+    ///
+    /// `_AXUIElementGetWindow` (via `AXWindowResolver`) returns the element's containing window in
+    /// the same CGWindowID namespace as the pinning selector. A `nil` window id means the element
+    /// exposes no window (or the lookup failed); for a pinned exact-window click that is treated as
+    /// a mismatch so the click is never delivered to an unverified window.
+    @MainActor
+    private static func assertBelongsToTargetWindow(
+        _ element: any AutomationElementRepresenting,
+        targetWindowID: CGWindowID,
+        at point: CGPoint) throws
+    {
+        guard let axElement = element.underlyingAXElement else {
+            // In-memory elements (tests) carry no AX identity and cannot be window-verified.
+            return
+        }
+        guard AXWindowResolver().windowID(from: axElement) == targetWindowID else {
+            throw PeekabooError.serviceUnavailable(
+                Self.occludedWindowMessage(at: point, targetWindowID: targetWindowID))
+        }
+    }
+
+    @MainActor
+    private static func hitTestCandidates(
+        at point: CGPoint,
+        targetProcessIdentifier: pid_t) -> [any AutomationElementRepresenting]
+    {
+        guard let hit = Element.elementAtPoint(point, pid: targetProcessIdentifier) else {
+            return []
+        }
+
+        var candidates: [any AutomationElementRepresenting] = [AutomationElement(hit)]
+        candidates.append(contentsOf: self.descendantsBreadthFirst(of: hit, maxVisited: 256, maxDepth: 8))
+
+        var current = hit.parent()
+        var remainingAncestors = 8
+        while let element = current, remainingAncestors > 0 {
+            candidates.append(AutomationElement(element))
+            current = element.parent()
+            remainingAncestors -= 1
+        }
+        return candidates
+    }
+
+    @MainActor
+    private static func descendantsBreadthFirst(
+        of root: Element,
+        maxVisited: Int,
+        maxDepth: Int) -> [any AutomationElementRepresenting]
+    {
+        var result: [any AutomationElementRepresenting] = []
+        var queue: [(element: Element, depth: Int)] = (root.children() ?? []).map { ($0, 1) }
+        var visited = 0
+        while !queue.isEmpty, visited < maxVisited {
+            let (element, depth) = queue.removeFirst()
+            visited += 1
+            result.append(AutomationElement(element))
+            if depth < maxDepth {
+                queue.append(contentsOf: (element.children() ?? []).map { ($0, depth + 1) })
             }
+        }
+        return result
+    }
 
-            down.setIntegerValueField(.mouseEventClickState, value: Int64(clickIndex))
-            up.setIntegerValueField(.mouseEventClickState, value: Int64(clickIndex))
-            self.stampRoutingFields(
-                on: down,
-                targetProcessIdentifier: targetProcessIdentifier,
-                targetWindowID: routedWindowID)
-            self.stampRoutingFields(
-                on: up,
-                targetProcessIdentifier: targetProcessIdentifier,
-                targetWindowID: routedWindowID)
+    @MainActor
+    private static func performDetachedAction(
+        _ actionName: String,
+        on element: any AutomationElementRepresenting,
+        gracePeriod: TimeInterval) async throws
+    {
+        guard let axElement = element.underlyingAXElement else {
+            try element.performAutomationAction(actionName)
+            return
+        }
 
-            Self.post(down, to: targetProcessIdentifier)
-            usleep(30000)
-            Self.post(up, to: targetProcessIdentifier)
-
-            if clickIndex < clampedCount {
-                usleep(80000)
-            }
+        let outcome = await DetachedAXActionRunner.perform(
+            action: actionName,
+            on: axElement,
+            gracePeriod: gracePeriod)
+        switch outcome {
+        case .completed(.success), .stillRunning:
+            return
+        case let .completed(axError):
+            throw ActionInputDriver.classify(axError)
         }
     }
 
@@ -430,21 +608,6 @@ enum BackgroundInputDriver {
         return nil
     }
 
-    private static func stampRoutingFields(
-        on event: CGEvent,
-        targetProcessIdentifier: pid_t,
-        targetWindowID: CGWindowID?)
-    {
-        event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(targetProcessIdentifier))
-
-        guard let windowID = targetWindowID else { return }
-
-        let value = Int64(windowID)
-        event.setIntegerValueField(.windowID, value: value)
-        event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: value)
-        event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: value)
-    }
-
     static func stampKeyboardRoutingFields(on event: CGEvent, targetProcessIdentifier: pid_t) {
         event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(targetProcessIdentifier))
     }
@@ -766,17 +929,6 @@ enum BackgroundInputDriver {
             return Int(uint32)
         }
         return nil
-    }
-
-    private static func eventTypes(for button: MouseButton) -> (CGEventType, CGEventType, CGMouseButton) {
-        switch button {
-        case .left:
-            (.leftMouseDown, .leftMouseUp, .left)
-        case .right:
-            (.rightMouseDown, .rightMouseUp, .right)
-        case .middle:
-            (.otherMouseDown, .otherMouseUp, .center)
-        }
     }
 
     private static func isProcessAlive(_ processIdentifier: pid_t) -> Bool {
