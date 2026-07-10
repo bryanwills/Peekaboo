@@ -2,7 +2,13 @@
 
 ## [3.8.1] - Unreleased
 
+### Added
+- `peekaboo agent` supports GPT-5.6 (`gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`) and Claude Sonnet 5 (`claude-sonnet-5`, `sonnet`) alongside Fable 5, with matching display names in the Mac app's session view.
+- Bare `peekaboo paste` now pastes the current clipboard into the focused (or targeted background) app instead of erroring; payload flags without a payload still fail validation, and the current clipboard's contents are never echoed into structured output.
+- `peekaboo list apps` accepts `--include-hidden`/`--include-background` for parity with `app list`, and `list apps`, `list menubar`, and `dock list` JSON now emit snake_case keys (`apps`, `menu_bar_items`, `dock_items`) alongside the legacy keys.
+
 ### Changed
+- `peekaboo clean --snapshot` now says when the snapshot was not found on disk (daemon-held snapshots are pruned automatically) instead of reporting a bare success with zero removals, and `list windows`/`window list` help now explains how the two views differ.
 - Clicks and mouse moves are now visualized by a small animated macOS-style cursor that glides to the target and presses (double-press for double-click, blue-tinted for right-click), replacing the targeting reticle and comet.
 - The accessibility element boxes drawn during `peekaboo see` are off by default now; they were visual clutter on every capture. Re-enable them in Peekaboo.app under Settings › Visualizer › Element Detection Boxes, by setting `visualizer.elementDetectionEnabled` in `~/.peekaboo/config.json`, or per-run with `PEEKABOO_VISUAL_ELEMENT_BOXES=true`. The app toggle and the config file now stay in sync, and a running MCP server picks up the change without a restart.
 
