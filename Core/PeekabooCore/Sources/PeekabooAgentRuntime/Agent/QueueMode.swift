@@ -7,7 +7,8 @@ public enum QueueMode: String, Sendable {
     case all
 }
 
-final class AgentTurnBoundary: @unchecked Sendable {
+@MainActor
+final class AgentTurnBoundary {
     enum Decision: Equatable {
         case continueTurn
         case stopAfterCurrentStep(reason: String)

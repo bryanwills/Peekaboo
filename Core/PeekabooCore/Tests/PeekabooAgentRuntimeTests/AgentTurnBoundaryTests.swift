@@ -2,6 +2,7 @@ import Tachikoma
 import Testing
 @testable import PeekabooAgentRuntime
 
+@MainActor
 struct AgentTurnBoundaryTests {
     @Test
     func `perceive followed by action stops after current step`() {
