@@ -16,6 +16,9 @@
 - The macOS Sessions window and agent popover stay unavailable while Agent mode is disabled, including Dock reopens, global shortcuts, notifications, and windows already open when the setting is turned off.
 - The GUI bridge now enforces both signing Team ID and bundle ID on every request, preventing unrelated same-team processes from borrowing Peekaboo's protected macOS permissions.
 
+### Changed
+- Clicks and mouse moves are now visualized by a small animated macOS-style cursor that glides to the target and presses (double-press for double-click, blue-tinted for right-click), replacing the targeting reticle and comet.
+
 ## [3.7.1] - 2026-07-05
 
 ### Changed
