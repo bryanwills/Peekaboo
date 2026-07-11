@@ -3,6 +3,7 @@
 //  PeekabooCLI
 //
 
+import Commander
 import Foundation
 import PeekabooAgentRuntime
 import PeekabooCore
@@ -55,7 +56,9 @@ extension AgentCommand {
         capabilities: TerminalCapabilities,
         queueMode: QueueMode
     ) async throws {
-        guard self.ensureChatModePreconditions() else { return }
+        guard self.ensureChatModePreconditions() else {
+            throw ExitCode.failure
+        }
 
         if capabilities.isInteractive && !capabilities.isPiped {
             do {
@@ -67,6 +70,8 @@ extension AgentCommand {
                     queueMode: queueMode
                 )
                 return
+            } catch is ExitCode {
+                throw ExitCode.failure
             } catch {
                 self.printAgentExecutionError(
                     "Failed to launch TauTUI chat: \(error.localizedDescription). Falling back to basic chat."
@@ -101,7 +106,7 @@ extension AgentCommand {
             turnContext.sessionId = try await self.initialChatSessionId(agentService)
         } catch {
             self.printAgentExecutionError(error.localizedDescription)
-            return
+            throw ExitCode.failure
         }
 
         self.printChatWelcome(
@@ -157,7 +162,7 @@ extension AgentCommand {
             activeSessionId = try await self.initialChatSessionId(agentService)
         } catch {
             self.printAgentExecutionError(error.localizedDescription)
-            return
+            throw ExitCode.failure
         }
 
         let chatUI = AgentChatUI(
@@ -236,7 +241,13 @@ extension AgentCommand {
             } catch is CancellationError {
                 chatUI.showCancelled()
             } catch {
-                chatUI.showError(error.localizedDescription)
+                if let sessionId = self.stepLimitSessionId(from: error) {
+                    activeSessionId = sessionId
+                    chatUI.updateSessionId(sessionId)
+                }
+                if !tuiDelegate.hasReceivedError {
+                    chatUI.showError(error.localizedDescription)
+                }
             }
 
             currentRun = nil
@@ -359,7 +370,8 @@ extension AgentCommand {
                     task: batchedInput,
                     requestedModel: requestedModel,
                     maxSteps: self.resolvedMaxSteps,
-                    queueMode: queueMode
+                    queueMode: queueMode,
+                    preserveStepLimitError: true
                 )
             }
         }
@@ -381,6 +393,13 @@ extension AgentCommand {
         } catch is CancellationError {
             cancelMonitor.stop()
             return
+        } catch {
+            cancelMonitor.stop()
+            if let sessionId = self.stepLimitSessionId(from: error) {
+                context.sessionId = sessionId
+                return
+            }
+            throw error
         }
 
         if let updatedSessionId = result.sessionId {
@@ -388,6 +407,10 @@ extension AgentCommand {
         }
 
         self.printChatTurnSummary(result)
+    }
+
+    func stepLimitSessionId(from error: any Error) -> String? {
+        (error as? PeekabooAgentService.AgentStepLimitExceededError)?.sessionId
     }
 
     private func printChatTurnSummary(_ result: AgentExecutionResult) {

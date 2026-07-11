@@ -97,4 +97,20 @@ struct AgentChatLaunchPolicyTests {
 
         #expect(ci == .helpOnly)
     }
+
+    @Test
+    func `Taskless session resume enters chat even without an interactive terminal`() {
+        let strategy = self.policy.strategy(
+            for: AgentChatLaunchContext(
+                chatFlag: false,
+                hasTaskInput: false,
+                listSessions: false,
+                normalizedTaskInput: nil,
+                capabilities: self.makeCaps(interactive: false, piped: true),
+                hasSessionResumption: true
+            )
+        )
+
+        #expect(strategy == .interactive(initialPrompt: nil))
+    }
 }
