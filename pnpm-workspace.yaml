@@ -1,5 +1,6 @@
 packages:
   - '.'
+minimumReleaseAge: 2880
 minimumReleaseAgeExclude:
   - chrome-devtools-mcp@1.5.0
 overrides:
