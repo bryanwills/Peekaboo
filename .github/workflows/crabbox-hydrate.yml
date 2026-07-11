@@ -31,7 +31,6 @@ permissions:
 
 env:
   NODE_VERSION: "24"
-  PNPM_VERSION: "11.1.2"
 
 jobs:
   hydrate:
@@ -39,13 +38,11 @@ jobs:
     runs-on: [self-hosted, crabbox, openclaw, peekaboo, "${{ inputs.crabbox_runner_label }}"]
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.ref }}
 
-      - uses: pnpm/action-setup@v6.0.8
-        with:
-          version: ${{ env.PNPM_VERSION }}
+      - uses: pnpm/action-setup@v6.0.9
 
       - uses: actions/setup-node@v6
         with:
