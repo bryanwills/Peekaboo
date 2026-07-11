@@ -113,7 +113,8 @@ extension AgentCommand {
         requestedModel: LanguageModel?,
         maxSteps: Int,
         queueMode: QueueMode,
-        preserveStepLimitError: Bool = false
+        preserveStepLimitError: Bool = false,
+        wrapReportedFailure: Bool = false
     ) async throws -> AgentExecutionResult {
         let outputDelegate = self.makeDisplayDelegate(for: task)
         let streamingDelegate = self.makeStreamingDelegate(using: outputDelegate)
@@ -145,8 +146,14 @@ extension AgentCommand {
                 self.printAgentExecutionError("Agent execution failed: \(error.localizedDescription)")
             }
             throw error
+        } catch let error as CancellationError {
+            throw error
         } catch {
-            if outputDelegate?.hasReceivedError != true {
+            if outputDelegate?.hasReceivedError == true {
+                if wrapReportedFailure {
+                    throw ReportedChatTurnError(underlyingError: error)
+                }
+            } else {
                 self.printAgentExecutionError("Agent execution failed: \(error.localizedDescription)")
             }
             throw ExitCode.failure
