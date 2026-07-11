@@ -5,7 +5,7 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.8.1] - Unreleased
+## [3.9.0] - 2026-07-11
 
 ### Added
 - `peekaboo agent --model` now accepts GPT-5.6 Sol, Terra, and Luna (`gpt-5.6` selects Sol) plus Claude Sonnet 5.

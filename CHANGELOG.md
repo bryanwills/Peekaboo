@@ -1,6 +1,6 @@
 # Changelog
 
-## [3.8.1] - Unreleased
+## [3.9.0] - 2026-07-11
 
 ### Added
 - `peekaboo click --long-press` performs a stationary 1.2-second mouse down/hold/up gesture for controls such as SwiftUI `LongPressGesture`; it uses foreground delivery so the press cannot be misrouted to a background window.
