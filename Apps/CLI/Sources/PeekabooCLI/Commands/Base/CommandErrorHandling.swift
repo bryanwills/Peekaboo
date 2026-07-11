@@ -273,7 +273,11 @@ func errorCode(for focusError: FocusError) -> ErrorCode {
 }
 
 func errorCode(for bridgeError: PeekabooBridgeErrorEnvelope) -> ErrorCode {
-    switch bridgeError.code {
+    if let kind = bridgeError.kind {
+        return errorCode(for: kind)
+    }
+
+    return switch bridgeError.code {
     case .permissionDenied:
         switch bridgeError.permission {
         case .screenRecording:
@@ -297,6 +301,33 @@ func errorCode(for bridgeError: PeekabooBridgeErrorEnvelope) -> ErrorCode {
         .UNKNOWN_ERROR
     case .versionMismatch, .unauthorizedClient, .decodingFailed, .internalError, .serverBusy:
         .UNKNOWN_ERROR
+    }
+}
+
+private func errorCode(for bridgeErrorKind: PeekabooBridgeErrorKind) -> ErrorCode {
+    switch bridgeErrorKind {
+    case .appNotFound:
+        .APP_NOT_FOUND
+    case .windowNotFound:
+        .WINDOW_NOT_FOUND
+    case .elementNotFound:
+        .ELEMENT_NOT_FOUND
+    case .menuNotFound:
+        .MENU_BAR_NOT_FOUND
+    case .menuItemNotFound:
+        .MENU_ITEM_NOT_FOUND
+    case .dockNotFound:
+        .DOCK_NOT_FOUND
+    case .dockListNotFound:
+        .DOCK_LIST_NOT_FOUND
+    case .dockItemNotFound:
+        .DOCK_ITEM_NOT_FOUND
+    case .positionNotFound:
+        .POSITION_NOT_FOUND
+    case .snapshotNotFound:
+        .SNAPSHOT_NOT_FOUND
+    case .snapshotStale:
+        .SNAPSHOT_STALE
     }
 }
 

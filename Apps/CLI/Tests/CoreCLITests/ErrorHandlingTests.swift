@@ -107,4 +107,64 @@ struct FocusErrorMappingTests {
     func `captureFailed maps to CAPTURE_FAILED`() {
         #expect(peekabooAutomationErrorCode(for: .captureFailed("cam")) == .CAPTURE_FAILED)
     }
+
+    @Test
+    func `bridge elementNotFound kind maps to ELEMENT_NOT_FOUND`() {
+        let envelope = PeekabooBridgeErrorEnvelope(
+            code: .notFound,
+            message: "No element",
+            kind: .elementNotFound,
+            context: "btn-1"
+        )
+        #expect(errorCode(for: envelope) == .ELEMENT_NOT_FOUND)
+    }
+
+    @Test
+    func `bridge typed notFound kinds map to specific errors`() {
+        let cases: [(PeekabooBridgeErrorKind, ErrorCode)] = [
+            (.appNotFound, .APP_NOT_FOUND),
+            (.windowNotFound, .WINDOW_NOT_FOUND),
+            (.elementNotFound, .ELEMENT_NOT_FOUND),
+            (.menuNotFound, .MENU_BAR_NOT_FOUND),
+            (.menuItemNotFound, .MENU_ITEM_NOT_FOUND),
+            (.dockNotFound, .DOCK_NOT_FOUND),
+            (.dockListNotFound, .DOCK_LIST_NOT_FOUND),
+            (.dockItemNotFound, .DOCK_ITEM_NOT_FOUND),
+            (.positionNotFound, .POSITION_NOT_FOUND),
+            (.snapshotNotFound, .SNAPSHOT_NOT_FOUND),
+        ]
+        for (kind, expectedCode) in cases {
+            let envelope = PeekabooBridgeErrorEnvelope(code: .notFound, message: "Missing", kind: kind)
+            #expect(errorCode(for: envelope) == expectedCode)
+        }
+    }
+
+    @Test
+    func `bridge stale kind wins over invalidRequest transport code`() {
+        let envelope = PeekabooBridgeErrorEnvelope(
+            code: .invalidRequest,
+            message: "Snapshot stale",
+            kind: .snapshotStale,
+            context: "snap-1"
+        )
+        #expect(errorCode(for: envelope) == .SNAPSHOT_STALE)
+    }
+
+    @Test
+    func `bridge unkinded notFound maps to UNKNOWN_ERROR`() {
+        let envelope = PeekabooBridgeErrorEnvelope(code: .notFound, message: "Dock item not found")
+        #expect(errorCode(for: envelope) == .UNKNOWN_ERROR)
+    }
+
+    @Test
+    func `generic command errors preserve bridge lookup kinds`() {
+        let envelope = PeekabooBridgeErrorEnvelope(
+            code: .notFound,
+            message: "Dock item not found",
+            kind: .dockItemNotFound
+        )
+
+        #expect(genericErrorCode(for: envelope) == .DOCK_ITEM_NOT_FOUND)
+        #expect(genericErrorCode(for: POSIXError(.ENOENT)) == .UNKNOWN_ERROR)
+    }
 }

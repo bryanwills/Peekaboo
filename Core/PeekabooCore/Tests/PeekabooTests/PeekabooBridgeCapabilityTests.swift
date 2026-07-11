@@ -6,6 +6,71 @@ import Testing
 
 struct PeekabooBridgeCapabilityTests {
     @Test
+    @MainActor
+    func `production bridge classifier preserves lookup identity`() {
+        let cases: [(PeekabooError, PeekabooBridgeErrorKind, String?)] = [
+            (.appNotFound("Safari"), .appNotFound, "Safari"),
+            (.windowNotFound(criteria: "Settings"), .windowNotFound, "Settings"),
+            (.menuNotFound("Finder"), .menuNotFound, "Finder"),
+            (.menuItemNotFound("New Window"), .menuItemNotFound, "New Window"),
+            (.snapshotStale("window moved"), .snapshotStale, "window moved"),
+        ]
+
+        for (error, expectedKind, expectedContext) in cases {
+            let envelope = PeekabooBridgeServer.bridgeErrorEnvelope(for: error, operation: .targetedClick)
+            #expect(envelope.kind == expectedKind)
+            #expect(envelope.context == expectedContext)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `production bridge classifier preserves Dock identity and messages`() {
+        let cases: [(DockError, PeekabooBridgeOperation, PeekabooBridgeErrorKind, String)] = [
+            (.itemNotFound("Safari"), .findDockItem, .dockItemNotFound, "Dock item not found: Safari"),
+            (
+                .menuItemNotFound("New Window"),
+                .rightClickDockItem,
+                .menuItemNotFound,
+                "Dock menu item not found: New Window"),
+        ]
+        for (error, operation, expectedKind, expectedMessage) in cases {
+            let envelope = PeekabooBridgeServer.bridgeErrorEnvelope(for: error, operation: operation)
+            #expect(envelope.code == .notFound)
+            #expect(envelope.kind == expectedKind)
+            #expect(envelope.message == expectedMessage)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `production bridge classifier converts legacy lookup errors`() {
+        let cases: [(NotFoundError, PeekabooBridgeErrorKind, String?)] = [
+            (
+                NotFoundError(
+                    code: .menuNotFound,
+                    userMessage: "Menu not found",
+                    context: ["application": "Finder"]),
+                .menuNotFound,
+                "Finder"),
+            (
+                NotFoundError(
+                    code: .menuNotFound,
+                    userMessage: "Menu item not found",
+                    context: ["application": "Finder", "menuItem": "New Window"]),
+                .menuItemNotFound,
+                "New Window"),
+        ]
+
+        for (error, expectedKind, expectedContext) in cases {
+            let envelope = PeekabooBridgeServer.bridgeErrorEnvelope(for: error, operation: .listMenus)
+            #expect(envelope.code == .notFound)
+            #expect(envelope.kind == expectedKind)
+            #expect(envelope.context == expectedContext)
+        }
+    }
+
+    @Test
     func `unknown bridge error kinds decode as untyped errors`() throws {
         let data = Data(
             #"{"code":"invalidRequest","message":"Future error","kind":"futureErrorKind","context":"S1"}"#.utf8)
