@@ -91,6 +91,46 @@ struct WindowMaximizeSettleTests {
         #expect(result.info?.bounds == self.maxFrame)
     }
 
+    @Test func `settle stops before another read when sleep is cancelled`() async {
+        var reads = 0
+        let settleTask = Task { @MainActor in
+            await settleWindowFrame(maxAttempts: 80, pollInterval: .seconds(30)) {
+                reads += 1
+                return ServiceWindowInfo(
+                    windowID: 1,
+                    title: "W",
+                    bounds: CGRect(x: CGFloat(reads) * 10, y: 0, width: 800, height: 600)
+                )
+            }
+        }
+
+        while reads == 0 {
+            await Task.yield()
+        }
+        #expect(reads == 1)
+
+        settleTask.cancel()
+        let result = await settleTask.value
+
+        #expect(!result.stabilized)
+        #expect(reads == 1)
+    }
+
+    @Test func `pre-cancelled settle performs no reads`() async {
+        var reads = 0
+        let result = await Task { @MainActor in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await settleWindowFrame(pollInterval: .zero) {
+                reads += 1
+                return ServiceWindowInfo(windowID: 1, title: "W", bounds: .zero)
+            }
+        }.value
+
+        #expect(!result.stabilized)
+        #expect(result.info == nil)
+        #expect(reads == 0)
+    }
+
     @Test func `settle reports not stabilized when the frame never settles`() async {
         var counter = 0
         let result = await settleWindowFrame(maxAttempts: 5, pollInterval: .zero) {
