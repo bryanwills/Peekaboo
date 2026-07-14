@@ -1,7 +1,7 @@
 ---
 name: release-peekaboo
 description: "Peekaboo release: notarization, npm/GitHub release, appcast, verify, closeout."
-metadata: {"clawdbot":{"emoji":"👁️","requires":{"bins":["pnpm","op","tmux","gh","xcrun","jq","node","npm"]}}}
+metadata: {"clawdbot":{"emoji":"👁️","requires":{"bins":["pnpm","op","tmux","gh","xcrun","jq","node","npm","create-dmg"]}}}
 ---
 
 # Peekaboo Release
@@ -102,7 +102,7 @@ op run --env-file "$ENVFILE" -- \
   bash -c 'printf "y\n" | ./scripts/release-binaries.sh --create-github-release --publish-npm'
 ```
 
-The script builds universal CLI, npm package, signed/notarized app zip, appcast, checksums, draft GitHub release, and npm publish.
+The script builds universal CLI, npm package, signed/notarized app zip and branded DMG, appcast, checksums, draft GitHub release, and npm publish.
 Use a non-login shell: profile exports can replace current 1Password ASC IDs with stale values while leaving the current `.p8`, producing a misleading `401`.
 
 Notarized app releases must sign with `Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)`, not a personal or development identity. The tracked release manifest resolves the shared passwordless signing keychain from the `OpenClaw-Core` vault; never copy the keychain path or signing material into the repository. The standalone CLI deliberately keeps `Developer ID Application: Peter Steinberger (Y5PE65HELJ)` for compatibility with pre-3.8 GUI bridge hosts, and the release driver verifies that exact split. Do not migrate the CLI signer without a separate bridge-compatibility plan.
@@ -126,7 +126,7 @@ Confirm:
 - npm version exists and `latest` points to it.
 - npm-downloaded CLI reports the release version from a neutral cwd.
 - GitHub release/tag/assets exist; release body is from changelog.
-- app zip asset exists and appcast points at `v<version>`.
+- app zip and DMG assets exist; appcast points at the zip under `v<version>`.
 - `appcast.xml` changes are committed and pushed.
 - Publish draft release if the script leaves it draft.
 

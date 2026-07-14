@@ -165,6 +165,8 @@ verify_checksums_file() {
     if [ "$INCLUDE_MAC_APP" = true ]; then
         grep -Fq "  $(basename "$MAC_APP_ZIP_PATH")" "$checksum_path" ||
             fail "checksums.txt missing $(basename "$MAC_APP_ZIP_PATH")"
+        grep -Fq "  $(basename "$MAC_APP_DMG_PATH")" "$checksum_path" ||
+            fail "checksums.txt missing $(basename "$MAC_APP_DMG_PATH")"
     fi
 }
 
@@ -185,6 +187,11 @@ verify_release_artifacts() {
             MAC_VERIFY_ARGS+=(--no-notarize)
         fi
         "$PROJECT_ROOT/scripts/release-macos-app.sh" "${MAC_VERIFY_ARGS[@]}"
+        DMG_VERIFY_ARGS=(--version "$VERSION" --verify-only "$MAC_APP_DMG_PATH")
+        if [ "$MAC_APP_NOTARIZE" = false ]; then
+            DMG_VERIFY_ARGS+=(--no-notarize)
+        fi
+        "$PROJECT_ROOT/scripts/create-release-dmg.sh" "${DMG_VERIFY_ARGS[@]}"
         verify_appcast_entry
     fi
 
@@ -204,6 +211,7 @@ verify_github_release_assets() {
     )
     if [ -n "$MAC_APP_ZIP_PATH" ]; then
         expected_assets+=("$(basename "$MAC_APP_ZIP_PATH")=$(stat -f%z "$MAC_APP_ZIP_PATH")")
+        expected_assets+=("$(basename "$MAC_APP_DMG_PATH")=$(stat -f%z "$MAC_APP_DMG_PATH")")
     fi
     expected_assets_json=$(node -e '
 const assets = Object.fromEntries(process.argv.slice(1).map((entry) => {
@@ -287,7 +295,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --publish-npm          Publish to npm after building"
             echo "  --arm64-only           Build arm64-only binary"
             echo "  --universal            Build universal (arm64+x86_64) binary (default)"
-            echo "  --skip-mac-app         Skip Peekaboo.app zip, Sparkle appcast, and app checksum"
+            echo "  --skip-mac-app         Skip Peekaboo.app zip/DMG, Sparkle appcast, and app checksums"
             echo "  --no-notarize-mac-app  Build/sign app zip without Apple notarization"
             echo "  --no-appcast           Do not update appcast.xml"
             echo "  --help                 Show this help message"
@@ -437,6 +445,7 @@ fi
 
 # Step 7: Build/sign/notarize macOS app zip and append checksum
 MAC_APP_ZIP_PATH=""
+MAC_APP_DMG_PATH=""
 if [ "$INCLUDE_MAC_APP" = true ]; then
     echo -e "\n${BLUE}Building Peekaboo.app release zip...${NC}"
     MAC_APP_ARGS=()
@@ -458,8 +467,13 @@ if [ "$INCLUDE_MAC_APP" = true ]; then
         fi
     fi
     MAC_APP_ZIP_PATH="$RELEASE_DIR/Peekaboo-${VERSION}.app.zip"
+    MAC_APP_DMG_PATH="$RELEASE_DIR/Peekaboo-${VERSION}.dmg"
     if [ ! -f "$MAC_APP_ZIP_PATH" ]; then
         echo -e "${RED}❌ Expected macOS app artifact missing: $MAC_APP_ZIP_PATH${NC}"
+        exit 1
+    fi
+    if [ ! -f "$MAC_APP_DMG_PATH" ]; then
+        echo -e "${RED}❌ Expected macOS DMG artifact missing: $MAC_APP_DMG_PATH${NC}"
         exit 1
     fi
 fi
@@ -514,6 +528,7 @@ if [ "$CREATE_GITHUB_RELEASE" = true ]; then
     )
     if [ -n "$MAC_APP_ZIP_PATH" ]; then
         RELEASE_ASSETS+=("$MAC_APP_ZIP_PATH")
+        RELEASE_ASSETS+=("$MAC_APP_DMG_PATH")
     fi
     RELEASE_ASSETS+=("$RELEASE_DIR/checksums.txt")
 

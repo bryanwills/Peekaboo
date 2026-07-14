@@ -2,6 +2,9 @@
 
 ## [3.9.2] - Unreleased
 
+### Added
+- GitHub releases now include a signed, notarized Peekaboo DMG with a branded drag-to-Applications layout; release automation builds, verifies, checksums, and uploads it alongside the app zip.
+
 ## [3.9.1] - 2026-07-14
 
 ### Changed

@@ -1,13 +1,13 @@
 ---
-summary: 'Release Peekaboo CLI, npm package, signed macOS app, and Sparkle appcast.'
+summary: 'Release Peekaboo CLI, npm package, signed macOS app/DMG, and Sparkle appcast.'
 read_when:
   - 'preparing, publishing, or verifying a Peekaboo release'
 ---
 
 # Peekaboo release checklist
 
-Run from the repository root. Releases publish `@steipete/peekaboo`, universal CLI archives, checksums, and a
-OpenClaw Foundation Developer ID signed/notarized `Peekaboo.app` with a Sparkle appcast entry.
+Run from the repository root. Releases publish `@steipete/peekaboo`, universal CLI archives, checksums, and an
+OpenClaw Foundation Developer ID signed/notarized `Peekaboo.app`, branded drag-to-Applications DMG, and Sparkle appcast entry.
 
 The standalone CLI intentionally remains signed by the legacy `Y5PE65HELJ` release team so current CLI releases can still authenticate to pre-3.8 GUI bridge hosts. Peekaboo 3.8 and later trust both the legacy and Foundation team IDs. The release driver uses Apple's system `codesign` only for that compatibility binary because the managed helper scopes all normal signing to the Foundation-only keychain; it then verifies the CLI's exact authority and Team ID in both archives. Treat changing the CLI team as a separate compatibility migration.
 
@@ -50,8 +50,9 @@ Load release credentials through the maintainer 1Password workflow, then run int
   --publish-npm
 ```
 
-The script runs release preparation, builds the universal CLI and npm package, signs/notarizes/staples the macOS app,
-generates checksums and Sparkle metadata, and uploads a draft GitHub release. When it pauses at the npm confirmation,
+The script runs release preparation, builds the universal CLI and npm package, signs/notarizes/staples the macOS app
+and branded DMG, generates checksums and Sparkle metadata, and uploads a draft GitHub release. Install `create-dmg`
+with Homebrew before running it. When it pauses at the npm confirmation,
 leave the process waiting, inspect the draft assets and notes, then answer `y` to publish npm. The signing identity must
 be:
 
@@ -78,9 +79,9 @@ also run `npm dist-tag add @steipete/peekaboo@<version> latest` before publishin
   the new version for stable and beta releases.
 - Git tag and non-draft GitHub Release `v<version>` exist.
 - Release body contains the complete changelog section plus npm metadata and exact CI/test proof.
-- GitHub assets include the CLI archive, npm tarball, app zip, and checksums expected by the script.
+- GitHub assets include the CLI archive, npm tarball, app zip, branded DMG, and checksums expected by the script.
 - `appcast.xml` is valid and its newest item points to the new GitHub app zip with matching length and signature.
-- Extracted CLI and app report the new version; codesign, stapler, and Gatekeeper verification pass.
+- Extracted CLI, app, and mounted DMG report the new version; codesign, stapler, Gatekeeper, layout, background, and Applications-link verification pass.
 - A fresh temporary `npx @steipete/peekaboo@<version> --help` succeeds.
 - Release and Homebrew workflows complete successfully.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build, sign, notarize, staple, zip, Sparkle-sign, and optionally upload Peekaboo.app.
+# Build, sign, notarize, staple, package, Sparkle-sign, and optionally upload Peekaboo.app.
 
 set -euo pipefail
 
@@ -101,6 +101,7 @@ APPCAST_PATH="${APPCAST_PATH:-$ROOT_DIR/$APPCAST}"
 MINIMUM_SYSTEM_VERSION="${MINIMUM_SYSTEM_VERSION:-15.0}"
 REPOSITORY_SLUG="${REPOSITORY_SLUG:-${MAC_RELEASE_REPO:-openclaw/Peekaboo}}"
 ENTITLEMENTS_PATH="${ENTITLEMENTS_PATH:-$ROOT_DIR/Apps/Mac/Peekaboo/Peekaboo.entitlements}"
+DMG_BACKGROUND="${DMG_BACKGROUND:-$ROOT_DIR/assets/dmg-background.png}"
 
 VERSION="${VERSION:-$MARKETING_VERSION}"
 TAG="v${VERSION}"
@@ -112,6 +113,7 @@ KEEP_DERIVED_DATA=false
 DRY_RUN=false
 SKIP_BUILD=false
 VERIFY_ONLY_ZIP=""
+INCLUDE_DMG=true
 
 usage() {
   cat <<EOF
@@ -123,12 +125,13 @@ Options:
   --sparkle-key <path>           Sparkle EdDSA private key file.
   --sign-identity <identity>     Developer ID signing identity.
   --notary-profile <profile>     notarytool keychain profile.
-  --dry-run                      Build/sign/zip/verify in /tmp; no notarization, appcast, or upload.
+  --dry-run                      Build/sign/package/verify in /tmp; no notarization, appcast, or upload.
   --skip-build                   Reuse the app already in DerivedData.
   --verify-only <zip>            Verify an existing zip's extracted app, then exit.
   --no-notarize                  Build/sign/zip without Apple notarization.
   --no-appcast                   Do not update appcast.xml.
-  --upload                       Upload the app zip to the GitHub release.
+  --skip-dmg                     Do not create the branded DMG.
+  --upload                       Upload the app zip and DMG to the GitHub release.
   --upload-checksums             Also upload checksums.txt; requires an existing checksum file.
   --keep-derived-data            Keep Xcode DerivedData after completion.
   --help                         Show this help.
@@ -191,6 +194,10 @@ while [[ $# -gt 0 ]]; do
       UPDATE_APPCAST=false
       shift
       ;;
+    --skip-dmg)
+      INCLUDE_DMG=false
+      shift
+      ;;
     --upload)
       UPLOAD=true
       shift
@@ -231,6 +238,8 @@ fi
 APP_BUNDLE="$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/$APP_NAME.app"
 ZIP_NAME="$APP_NAME-${VERSION}.app.zip"
 ZIP_PATH="$RELEASE_DIR/$ZIP_NAME"
+DMG_NAME="$APP_NAME-${VERSION}.dmg"
+DMG_PATH="$RELEASE_DIR/$DMG_NAME"
 RELEASE_URL="https://github.com/$REPOSITORY_SLUG/releases/tag/$TAG"
 ASSET_URL="https://github.com/$REPOSITORY_SLUG/releases/download/$TAG/$ZIP_NAME"
 NOTARY_DIR="$(mktemp -d /tmp/peekaboo-notary.XXXXXX)"
@@ -261,6 +270,9 @@ if [[ -z "$VERIFY_ONLY_ZIP" ]]; then
   require_command xcodebuild
   require_command shasum
   require_command sign_update
+  if [[ "$INCLUDE_DMG" == true ]]; then
+    require_command create-dmg
+  fi
 fi
 if [[ "$NOTARIZE" == true ]]; then
   require_command xcrun
@@ -473,14 +485,42 @@ ED_SIGNATURE="$(printf '%s\n' "$SIGN_OUTPUT" | sed -n 's/.*sparkle:edSignature="
 log "Verifying zipped app"
 verify_zip "$ZIP_PATH" "$VERIFY_DIR"
 
+if [[ "$INCLUDE_DMG" == true ]]; then
+  log "Creating branded DMG"
+  DMG_ARGS=(
+    --version "$VERSION"
+    --app-zip "$ZIP_PATH"
+    --output "$DMG_PATH"
+    --background "$DMG_BACKGROUND"
+    --sign-identity "$SIGN_IDENTITY"
+  )
+  if [[ "$NOTARIZE" != true ]]; then
+    DMG_ARGS+=(--no-notarize)
+  fi
+  if [[ -n "${NOTARYTOOL_PROFILE:-}" ]]; then
+    DMG_ARGS+=(--notary-profile "$NOTARYTOOL_PROFILE")
+  fi
+  "$ROOT_DIR/scripts/create-release-dmg.sh" "${DMG_ARGS[@]}"
+fi
+
 CHECKSUMS_PATH="$RELEASE_DIR/checksums.txt"
 HAD_CHECKSUMS=false
 if [[ -f "$CHECKSUMS_PATH" ]]; then
   HAD_CHECKSUMS=true
-  grep -F -v "  $ZIP_NAME" "$CHECKSUMS_PATH" > "$CHECKSUMS_PATH.tmp" || true
-  mv "$CHECKSUMS_PATH.tmp" "$CHECKSUMS_PATH"
+  checksum_artifacts=("$ZIP_NAME")
+  if [[ "$INCLUDE_DMG" == true ]]; then
+    checksum_artifacts+=("$DMG_NAME")
+  fi
+  for artifact_name in "${checksum_artifacts[@]}"; do
+    grep -F -v "  $artifact_name" "$CHECKSUMS_PATH" > "$CHECKSUMS_PATH.tmp" || true
+    mv "$CHECKSUMS_PATH.tmp" "$CHECKSUMS_PATH"
+  done
 fi
 printf '%s  %s\n' "$ZIP_SHA256" "$ZIP_NAME" >> "$CHECKSUMS_PATH"
+if [[ "$INCLUDE_DMG" == true ]]; then
+  DMG_SHA256="$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')"
+  printf '%s  %s\n' "$DMG_SHA256" "$DMG_NAME" >> "$CHECKSUMS_PATH"
+fi
 
 if [[ "$UPDATE_APPCAST" == true ]]; then
   log "Updating appcast.xml"
@@ -535,7 +575,11 @@ fi
 if [[ "$UPLOAD" == true ]]; then
   require_command gh
   log "Uploading release assets"
-  gh release upload "$TAG" "$ZIP_PATH" --clobber
+  UPLOAD_ASSETS=("$ZIP_PATH")
+  if [[ "$INCLUDE_DMG" == true ]]; then
+    UPLOAD_ASSETS+=("$DMG_PATH")
+  fi
+  gh release upload "$TAG" "${UPLOAD_ASSETS[@]}" --clobber
   if [[ "$UPLOAD_CHECKSUMS" == true ]]; then
     [[ "$HAD_CHECKSUMS" == true ]] || fail "--upload-checksums requires an existing $CHECKSUMS_PATH from release-binaries.sh"
     gh release upload "$TAG" "$CHECKSUMS_PATH" --clobber
@@ -550,3 +594,6 @@ printf 'Zip: %s\n' "$ZIP_PATH"
 printf 'SHA256: %s\n' "$ZIP_SHA256"
 printf 'Length: %s\n' "$ZIP_LENGTH"
 printf 'Appcast asset URL: %s\n' "$ASSET_URL"
+if [[ "$INCLUDE_DMG" == true ]]; then
+  printf 'DMG: %s\n' "$DMG_PATH"
+fi
