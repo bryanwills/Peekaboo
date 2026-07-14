@@ -1,6 +1,6 @@
 # Changelog
 
-## [3.9.1] - Unreleased
+## [3.9.1] - 2026-07-14
 
 ### Changed
 - `peekaboo inspect-ui` now accepts the standard `--app` target option used by other desktop commands; `--app-target` remains available as a legacy alias.
