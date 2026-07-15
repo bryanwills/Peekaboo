@@ -6,6 +6,27 @@
         <description>Peekaboo macOS app updates (Sparkle)</description>
         <language>en</language>
         <item>
+            <title>3.9.4</title>
+            <pubDate>Wed, 15 Jul 2026 11:23:59 -0700</pubDate>
+            <link>https://raw.githubusercontent.com/openclaw/Peekaboo/main/appcast.xml</link>
+            <sparkle:version>3090499</sparkle:version>
+            <sparkle:shortVersionString>3.9.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2>Peekaboo 3.9.4</h2>
+<h3>Changed</h3>
+<ul>
+<li>Refresh AXorcist, Commander, Swiftdansi, Tachikoma, and TauTUI, including stricter SwiftPM checkout handling for Tachikoma&#x27;s Commander dependency plus corrected AXorcist app resolution, attribute serialization, and descendant filtering.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>Resolve applications by executable name, so <code>--app &lt;name&gt;</code> finds an app by the process/binary name shown in <code>ps</code>, <code>pgrep</code>, and Activity Monitor even when it differs from the app&#x27;s localized name (e.g. an <code>openclaw-desktop</code> binary whose bundle name is &quot;OpenClaw Desktop Test&quot;).</li>
+<li>Keep bridge acceptance and request handling responsive, and retry timed-out snapshot invalidation handshakes once so busy local endpoints are not mistaken for stale sockets.</li>
+</ul>
+<p><a href="https://github.com/openclaw/Peekaboo/blob/main/CHANGELOG.md">View full changelog</a></p>
+]]></description>
+            <enclosure url="https://github.com/openclaw/Peekaboo/releases/download/v3.9.4/Peekaboo-3.9.4.app.zip" length="16913778" type="application/octet-stream" sparkle:edSignature="Hw7C/jQj9SPamlkYTb7aImXQN0Pnt0xsZeqG4Wo+l+6Qs4x1Pqwq0nWV6k2gP0EX/ao7Y+Uyi74VJkFZMH4ECg=="/>
+        </item>
+        <item>
             <title>3.9.3</title>
             <pubDate>Wed, 15 Jul 2026 03:04:24 +0100</pubDate>
             <link>https://raw.githubusercontent.com/openclaw/Peekaboo/main/appcast.xml</link>
