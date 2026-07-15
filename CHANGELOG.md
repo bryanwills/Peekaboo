@@ -1,11 +1,12 @@
 # Changelog
 
-## [3.9.4] - Unreleased
+## [3.9.4] - 2026-07-15
 
 ### Changed
 - Refresh AXorcist, Commander, Swiftdansi, Tachikoma, and TauTUI, including stricter SwiftPM checkout handling for Tachikoma's Commander dependency plus corrected AXorcist app resolution, attribute serialization, and descendant filtering.
 
 ### Fixed
+- Resolve applications by executable name, so `--app <name>` finds an app by the process/binary name shown in `ps`, `pgrep`, and Activity Monitor even when it differs from the app's localized name (e.g. an `openclaw-desktop` binary whose bundle name is "OpenClaw Desktop Test").
 - Keep bridge acceptance and request handling responsive, and retry timed-out snapshot invalidation handshakes once so busy local endpoints are not mistaken for stale sockets.
 
 ## [3.9.3] - 2026-07-14
