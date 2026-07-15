@@ -2,6 +2,9 @@
 
 ## [3.9.4] - Unreleased
 
+### Changed
+- Refresh AXorcist, Commander, Swiftdansi, Tachikoma, and TauTUI to their latest patch releases, including stricter SwiftPM checkout handling for Tachikoma's Commander dependency.
+
 ## [3.9.3] - 2026-07-14
 
 ### Fixed

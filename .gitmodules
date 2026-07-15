@@ -1,10 +1,10 @@
 [submodule "AXorcist"]
 	path = AXorcist
-	url = https://github.com/steipete/AXorcist.git
+	url = https://github.com/openclaw/AXorcist.git
 	branch = main
 [submodule "Tachikoma"]
 	path = Tachikoma
-	url = https://github.com/steipete/Tachikoma.git
+	url = https://github.com/openclaw/Tachikoma.git
 	branch = main
 [submodule "Commander"]
 	path = Commander
