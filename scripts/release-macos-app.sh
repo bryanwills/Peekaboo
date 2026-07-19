@@ -532,41 +532,7 @@ if [[ "$UPDATE_APPCAST" == true ]]; then
   ED_SIGNATURE="$ED_SIGNATURE" \
   MINIMUM_SYSTEM_VERSION="$MINIMUM_SYSTEM_VERSION" \
   APPCAST_PATH="$APPCAST_PATH" \
-  node <<'EOF'
-const fs = require("node:fs");
-
-const appcastPath = process.env.APPCAST_PATH;
-const version = process.env.VERSION;
-const item = `    <item>
-      <title>Peekaboo ${version}</title>
-      <link>${process.env.RELEASE_URL}</link>
-      <sparkle:releaseNotesLink>${process.env.RELEASE_URL}</sparkle:releaseNotesLink>
-      <pubDate>${new Date().toUTCString().replace("GMT", "+0000")}</pubDate>
-      <enclosure
-        url="${process.env.ASSET_URL}"
-        sparkle:version="${process.env.BUILD_NUMBER}"
-        sparkle:shortVersionString="${version}"
-        sparkle:minimumSystemVersion="${process.env.MINIMUM_SYSTEM_VERSION}"
-        length="${process.env.ZIP_LENGTH}"
-        type="application/octet-stream"
-        sparkle:edSignature="${process.env.ED_SIGNATURE}" />
-    </item>`;
-
-let xml = fs.readFileSync(appcastPath, "utf8");
-const existingItems = xml.match(/    <item>[\s\S]*?    <\/item>/g) ?? [];
-const nextItems = [
-  item,
-  ...existingItems.filter((entry) => !entry.includes(`sparkle:shortVersionString="${version}"`)),
-];
-
-if (existingItems.length > 0) {
-  xml = xml.replace(existingItems.join("\n"), nextItems.join("\n"));
-} else {
-  xml = xml.replace(/(\s*<language>en<\/language>\n)/, `$1\n${item}\n`);
-}
-
-fs.writeFileSync(appcastPath, xml);
-EOF
+  node "$ROOT_DIR/scripts/update-appcast-entry.mjs"
   if command -v xmllint >/dev/null 2>&1; then
     xmllint --noout "$APPCAST_PATH"
   fi
