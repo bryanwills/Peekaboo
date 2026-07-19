@@ -143,6 +143,24 @@ verify_app() {
   fi
 }
 
+detach_mount() {
+  local mount_dir="$1"
+  local max_attempts=5
+  local attempt
+
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    if hdiutil detach "$mount_dir" -quiet; then
+      return 0
+    fi
+    if ((attempt < max_attempts)); then
+      log "DMG mount is busy; retrying detach ($attempt/$max_attempts)"
+      sleep 1
+    fi
+  done
+
+  fail "Could not detach DMG mount after $max_attempts attempts: $mount_dir"
+}
+
 verify_dmg() {
   local dmg_path="$1"
   local applications_link background_name
@@ -169,7 +187,7 @@ verify_dmg() {
   [[ -f "$MOUNT_DIR/.DS_Store" ]] || fail "DMG Finder layout missing"
   [[ -f "$MOUNT_DIR/.VolumeIcon.icns" ]] || fail "DMG volume icon missing"
 
-  hdiutil detach "$MOUNT_DIR" -quiet
+  detach_mount "$MOUNT_DIR"
   rmdir "$MOUNT_DIR"
   MOUNT_DIR=""
 }
