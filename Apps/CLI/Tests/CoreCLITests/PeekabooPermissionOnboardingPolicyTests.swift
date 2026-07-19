@@ -9,26 +9,36 @@ struct PeekabooPermissionOnboardingPolicyTests {
             PeekabooPermissionOnboardingPolicy.decision(
                 seenVersion: 1,
                 hasSeen: true,
-                hasRequiredPermissions: false) == .show)
+                hasRequiredPermissions: false
+            ) == .show
+        )
         #expect(
             PeekabooPermissionOnboardingPolicy.decision(
                 seenVersion: 1,
                 hasSeen: true,
-                hasRequiredPermissions: true) == .show)
+                hasRequiredPermissions: true
+            ) == .show
+        )
         #expect(
             PeekabooPermissionOnboardingPolicy.decision(
                 seenVersion: 0,
                 hasSeen: false,
-                hasRequiredPermissions: true) == .markComplete)
+                hasRequiredPermissions: true
+            ) == .markComplete
+        )
         #expect(
             PeekabooPermissionOnboardingPolicy.decision(
                 seenVersion: 2,
                 hasSeen: true,
-                hasRequiredPermissions: false) == .skip)
+                hasRequiredPermissions: false
+            ) == .skip
+        )
         #expect(
             PeekabooPermissionOnboardingPolicy.decision(
                 seenVersion: 2,
                 hasSeen: false,
-                hasRequiredPermissions: false) == .show)
+                hasRequiredPermissions: false
+            ) == .show
+        )
     }
 }
