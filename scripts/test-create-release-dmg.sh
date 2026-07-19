@@ -48,7 +48,7 @@ case "${1:-}" in
     plutil -insert CFBundleShortVersionString -string 3.9.5 \
       "$mount_dir/Peekaboo.app/Contents/Info.plist"
     touch "$mount_dir/Peekaboo.app/Contents/MacOS/Peekaboo"
-    chmod +x "$mount_dir/Peekaboo.app/Contents/MacOS/Peekaboo"
+    chmod 755 "$mount_dir/Peekaboo.app/Contents/MacOS/Peekaboo"
     ln -s /Applications "$mount_dir/Applications"
     touch \
       "$mount_dir/.background/dmg-background.png" \
