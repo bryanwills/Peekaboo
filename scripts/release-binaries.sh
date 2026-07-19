@@ -38,6 +38,26 @@ require_command() {
     command -v "$1" >/dev/null 2>&1 || fail "$1 not found"
 }
 
+verify_release_binary_entitlements() {
+    local binary_path="$1"
+    local label="$2"
+    local entitlements
+
+    if ! entitlements=$(codesign -d --entitlements :- "$binary_path" 2>/dev/null); then
+        fail "Could not read $label entitlements"
+    fi
+    if ! printf '%s' "$entitlements" | python3 -c '
+import plistlib
+import sys
+
+raw = sys.stdin.buffer.read().strip()
+if raw and plistlib.loads(raw).get("com.apple.security.get-task-allow") is True:
+    raise SystemExit(1)
+'; then
+        fail "$label requests com.apple.security.get-task-allow; release binaries must not use debug entitlements"
+    fi
+}
+
 verify_binary_artifact() {
     local binary_path="$1"
     local label="$2"
@@ -53,6 +73,7 @@ verify_binary_artifact() {
     file "$binary_path" | grep -q 'Mach-O' || fail "$label binary is not Mach-O: $binary_path"
     codesign --verify --strict --verbose=2 "$binary_path"
     codesign --verify --strict -R="$CLI_SIGN_REQUIREMENT" "$binary_path"
+    verify_release_binary_entitlements "$binary_path" "$label"
     authority=$(codesign -dv --verbose=4 "$binary_path" 2>&1 | sed -n 's/^Authority=//p' | head -1)
     team_id=$(codesign -dv --verbose=4 "$binary_path" 2>&1 | sed -n 's/^TeamIdentifier=//p' | head -1)
     [ "$authority" = "$CLI_SIGN_IDENTITY" ] ||
@@ -435,6 +456,7 @@ if ! MAC_RELEASE_CODESIGN_IDENTITY="$CLI_SIGN_IDENTITY" "${BUILD_COMMAND[@]}"; t
     echo -e "${RED}❌ Swift build failed!${NC}"
     exit 1
 fi
+verify_release_binary_entitlements "$PROJECT_ROOT/peekaboo" "Built CLI"
 if [ "$MAC_APP_NOTARIZE" = true ]; then
     echo -e "\n${BLUE}Submitting standalone CLI to Apple notarization...${NC}"
     notarize_cli_binary "$PROJECT_ROOT/peekaboo"

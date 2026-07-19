@@ -38,6 +38,17 @@ rg -Fq 'NOTARYTOOL_KEYCHAIN_PROFILE' "$ROOT_DIR/scripts/create-release-dmg.sh"
 rg -Fq -- '--check-notarization -R=notarized' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq -- '--check-notarization -R=notarized' "$ROOT_DIR/scripts/release-macos-app.sh"
 rg -Fq -- '--check-notarization -R=notarized' "$ROOT_DIR/scripts/create-release-dmg.sh"
+rg -Fq 'com.apple.security.get-task-allow' "$ROOT_DIR/scripts/release-binaries.sh"
+
+for release_build in \
+  "$ROOT_DIR/scripts/build-swift-arm.sh" \
+  "$ROOT_DIR/scripts/build-swift-universal.sh"; do
+  if rg -Fq -- '--entitlements' "$release_build"; then
+    printf 'Release CLI build must not reuse debug entitlements: %s\n' "$release_build" >&2
+    exit 1
+  fi
+done
+rg -Fq -- '--entitlements "$ENTITLEMENTS_PATH"' "$ROOT_DIR/scripts/build-swift-debug.sh"
 
 for project in \
   "$ROOT_DIR/Apps/Mac/Peekaboo.xcodeproj/project.pbxproj" \

@@ -142,14 +142,12 @@ echo "🤏 Stripping symbols for further size reduction..."
 strip -Sxu "$FINAL_BINARY_PATH.tmp"
 
 echo "🔏 Code signing the binary..."
-ENTITLEMENTS_PATH="$SWIFT_PROJECT_PATH/Sources/Resources/peekaboo.entitlements"
 resolve_signing_identity
 resolve_timestamp_arg
 "$CODESIGN_BIN" --force --sign "$SIGN_IDENTITY" \
     --options runtime \
     $TIMESTAMP_ARG \
     --identifier "boo.peekaboo.peekaboo" \
-    --entitlements "$ENTITLEMENTS_PATH" \
     "$FINAL_BINARY_PATH.tmp"
 echo "✅ Signed with identity: $SIGN_IDENTITY"
 
