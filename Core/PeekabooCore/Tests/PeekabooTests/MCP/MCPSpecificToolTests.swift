@@ -429,6 +429,26 @@ struct MCPSpecificToolTests {
             try MCPAgentTool.validatedMaxSteps(101)
         }
     }
+
+    // MARK: - Shell Tool Tests
+
+    @Test(.timeLimit(.minutes(1)))
+    func `Shell tool does not deadlock on large output`() async throws {
+        let tool = makeTestTool(ShellTool.init)
+
+        // Generate output larger than the macOS pipe buffer (~64 KB)
+        // to trigger a deadlock if waitUntilExit() precedes pipe reads.
+        let result = try await tool.execute(arguments: ToolArguments(raw: [
+            "command": "head -c 131072 /dev/zero | base64",
+        ]))
+
+        #expect(result.isError == false)
+        if case let .text(text, _, _) = result.content.first {
+            #expect(text.count > 100_000)
+        } else {
+            Issue.record("Expected text content from shell output")
+        }
+    }
 }
 
 @MainActor
