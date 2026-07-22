@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [3.9.8] - Unreleased
 
 ## [3.9.7] - 2026-07-21
 
