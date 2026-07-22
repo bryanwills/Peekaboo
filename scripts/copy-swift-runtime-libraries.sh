@@ -56,18 +56,20 @@ if [ -n "$SIGN_IDENTITY" ]; then
             ;;
     esac
 
-    CODESIGN_KEYCHAIN_ARGS=()
-    if [ -n "$CODESIGN_KEYCHAIN" ]; then
-        CODESIGN_KEYCHAIN_ARGS=(--keychain "$CODESIGN_KEYCHAIN")
-    fi
-
     for runtime_library in "$DESTINATION_DIR"/libswiftCompatibility*.dylib; do
         [ -e "$runtime_library" ] || continue
-        "$CODESIGN_BIN" --force --sign "$SIGN_IDENTITY" \
-            "${CODESIGN_KEYCHAIN_ARGS[@]}" \
-            --options runtime \
-            $TIMESTAMP_ARG \
-            "$runtime_library"
+        if [ -n "$CODESIGN_KEYCHAIN" ]; then
+            "$CODESIGN_BIN" --force --sign "$SIGN_IDENTITY" \
+                --keychain "$CODESIGN_KEYCHAIN" \
+                --options runtime \
+                $TIMESTAMP_ARG \
+                "$runtime_library"
+        else
+            "$CODESIGN_BIN" --force --sign "$SIGN_IDENTITY" \
+                --options runtime \
+                $TIMESTAMP_ARG \
+                "$runtime_library"
+        fi
     done
 fi
 
