@@ -70,8 +70,15 @@ while IFS= read -r dependency; do
         }
     fi
 
+    library_architectures=$(lipo -archs "$library_path")
     for architecture in $binary_architectures; do
-        lipo -verify_arch "$architecture" "$library_path" >/dev/null
+        case " $library_architectures " in
+            *" $architecture "*) ;;
+            *)
+                echo "Swift compatibility library is missing $architecture: $library_path" >&2
+                exit 1
+                ;;
+        esac
     done
 
     echo "Resolved Swift compatibility dependency: $dependency -> $library_path"
