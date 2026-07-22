@@ -1,10 +1,6 @@
-## [3.9.6] - 2026-07-19
-
-### Highlights
-- Peekaboo 3.9.6 completes the signing migration: the app, CLI, nested helpers, zip payload, and DMG now use the OpenClaw Foundation Developer ID. macOS treats the changed CLI signer as a new TCC identity, so re-grant Screen Recording, Accessibility, and any Automation access you use after updating.
-
-### Changed
-- Sign and notarize every shipped macOS code object with `Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)` while preserving bundle identifiers and the existing Sparkle EdDSA update key; 3.8+ bridge hosts continue accepting transition-era personal-team clients, while the 3.9.6 CLI requires a 3.8+ host.
+## [3.9.7] - 2026-07-21
 
 ### Fixed
-- Reopen permission onboarding once for users whose required grants are missing after the signing migration, with direct guidance to re-grant Screen Recording, Accessibility, and Automation access.
+- Restore standalone and npm CLI launches on macOS 15 by bundling every Swift back-deployment compatibility library required by the release binary and rejecting dangling compatibility dependencies during release verification. Thanks @gyfis for #291.
+- Canceling during a ScreenCaptureKit transient-denial retry sleep now stops before a second capture attempt or permission probe. Thanks @SebTardif for #289.
+- Prevent dialog discovery and element traversal from recursing indefinitely when an app reports cyclic accessibility relationships.

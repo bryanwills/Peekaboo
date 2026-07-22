@@ -92,6 +92,7 @@ _site/
 ## Build binaries
 # Peekaboo CLI binary only (not directories)
 /peekaboo
+/libswiftCompatibility*.dylib
 /Apps/CLI/peekaboo
 
 ## Various Xcode settings

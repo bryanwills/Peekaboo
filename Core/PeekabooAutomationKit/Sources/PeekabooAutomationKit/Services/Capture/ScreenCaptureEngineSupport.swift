@@ -179,7 +179,8 @@ struct NullScreenCaptureMetricsObserver: ScreenCaptureMetricsObserving {
                         "\(api.description) capture hit transient ScreenCaptureKit denial; retrying once",
                         metadata: ["error": String(describing: error)],
                         correlationId: correlationId)
-                    try? await Task.sleep(nanoseconds: delay)
+                    try await Task.sleep(nanoseconds: delay)
+                    try Task.checkCancellation()
                     do {
                         let start = Date()
                         let result = try await attempt(api)
@@ -254,7 +255,8 @@ struct NullScreenCaptureMetricsObserver: ScreenCaptureMetricsObserving {
                         "\(api.description) capture hit transient ScreenCaptureKit denial; retrying once",
                         metadata: ["error": String(describing: error)],
                         correlationId: correlationId)
-                    try? await Task.sleep(nanoseconds: delay)
+                    try await Task.sleep(nanoseconds: delay)
+                    try Task.checkCancellation()
                     do {
                         let start = Date()
                         let result = try await attempt(api)

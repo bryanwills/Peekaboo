@@ -150,4 +150,69 @@ struct ScreenCaptureFallbackRunnerTests {
         #expect(value == "ok_modern")
         #expect(calls == [.modern, .modern])
     }
+
+    @MainActor
+    @Test
+    func `cancel during transient denial sleep skips second generic attempt`() async {
+        let logger = LoggingService(subsystem: "test.logger").logger(category: "test")
+        let runner = ScreenCaptureFallbackRunner(apis: [.modern])
+        var attempts = 0
+
+        let task = Task { @MainActor in
+            try await runner.run(
+                operationName: "test",
+                logger: logger,
+                correlationId: "cancel-run")
+            { _ -> String in
+                attempts += 1
+                throw Self.transientDenial
+            }
+        }
+
+        while attempts == 0 {
+            await Task.yield()
+        }
+        task.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+        #expect(attempts == 1)
+    }
+
+    @MainActor
+    @Test
+    func `cancel during transient denial sleep skips second capture attempt`() async {
+        let logger = LoggingService(subsystem: "test.logger").logger(category: "test")
+        let runner = ScreenCaptureFallbackRunner(apis: [.modern])
+        var attempts = 0
+
+        let task = Task { @MainActor in
+            try await runner.runCapture(
+                operationName: "captureScreen",
+                logger: logger,
+                correlationId: "cancel-capture")
+            { _ in
+                attempts += 1
+                throw Self.transientDenial
+            }
+        }
+
+        while attempts == 0 {
+            await Task.yield()
+        }
+        task.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+        #expect(attempts == 1)
+    }
+
+    private static let transientDenial = NSError(
+        domain: "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+        code: -3801,
+        userInfo: [
+            NSLocalizedDescriptionKey: "The user declined TCCs for application, window, display capture",
+        ])
 }

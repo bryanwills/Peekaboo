@@ -39,6 +39,11 @@ rg -Fq -- '--check-notarization -R=notarized' "$ROOT_DIR/scripts/release-binarie
 rg -Fq -- '--check-notarization -R=notarized' "$ROOT_DIR/scripts/release-macos-app.sh"
 rg -Fq -- '--check-notarization -R=notarized' "$ROOT_DIR/scripts/create-release-dmg.sh"
 rg -Fq 'com.apple.security.get-task-allow' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'verify-swift-runtime-libraries.sh' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'libswiftCompatibility*.dylib' "$ROOT_DIR/package.json"
+rg -Fq 'libswiftCompatibility*.dylib' "$ROOT_DIR/homebrew/peekaboo.rb"
+rg -Fq -- '--options runtime' "$ROOT_DIR/scripts/copy-swift-runtime-libraries.sh"
+rg -Fq 'MAC_RELEASE_CODESIGN_TEAM_ID' "$ROOT_DIR/scripts/verify-swift-runtime-libraries.sh"
 
 for release_build in \
   "$ROOT_DIR/scripts/build-swift-arm.sh" \

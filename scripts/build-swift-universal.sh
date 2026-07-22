@@ -9,6 +9,7 @@ FINAL_BINARY_PATH="$PROJECT_ROOT/$FINAL_BINARY_NAME"
 SIGN_IDENTITY="${MAC_RELEASE_CODESIGN_IDENTITY:-${SIGN_IDENTITY:-}}"
 CODESIGN_BIN="${MAC_RELEASE_CODESIGN_BIN:-codesign}"
 CODESIGN_TIMESTAMP="${CODESIGN_TIMESTAMP:-auto}"
+CODESIGN_KEYCHAIN="${MAC_RELEASE_CODESIGN_KEYCHAIN:-${CODESIGN_KEYCHAIN:-}}"
 
 ARM64_BINARY_TEMP="$PROJECT_ROOT/${FINAL_BINARY_NAME}-arm64"
 X86_64_BINARY_TEMP="$PROJECT_ROOT/${FINAL_BINARY_NAME}-x86_64"
@@ -81,6 +82,13 @@ resolve_timestamp_arg() {
     esac
 }
 
+resolve_keychain_args() {
+    CODESIGN_KEYCHAIN_ARGS=()
+    if [ -n "$CODESIGN_KEYCHAIN" ]; then
+        CODESIGN_KEYCHAIN_ARGS=(--keychain "$CODESIGN_KEYCHAIN")
+    fi
+}
+
 set_plist_value() {
     local plist="$1"
     local key="$2"
@@ -112,6 +120,10 @@ echo "🧹 Cleaning previous build artifacts..."
 (cd "$SWIFT_PROJECT_PATH" && swift package reset) || echo "'swift package reset' encountered an issue, attempting rm -rf..."
 rm -rf "$SWIFT_PROJECT_PATH/.build"
 rm -f "$ARM64_BINARY_TEMP" "$X86_64_BINARY_TEMP" "$FINAL_BINARY_PATH.tmp"
+for existing_library in "$PROJECT_ROOT"/libswiftCompatibility*.dylib; do
+    [ -e "$existing_library" ] || continue
+    rm -f -- "$existing_library"
+done
 
 echo "📦 Reading version from version.json..."
 VERSION=$(node -p "require('$PROJECT_ROOT/version.json').version")
@@ -160,7 +172,9 @@ strip -Sxu "$FINAL_BINARY_PATH.tmp"
 echo "🔏 Code signing the universal binary..."
 resolve_signing_identity
 resolve_timestamp_arg
+resolve_keychain_args
 "$CODESIGN_BIN" --force --sign "$SIGN_IDENTITY" \
+    "${CODESIGN_KEYCHAIN_ARGS[@]}" \
     --options runtime \
     $TIMESTAMP_ARG \
     --identifier "boo.peekaboo.peekaboo" \
@@ -173,6 +187,9 @@ echo "🔍 Verifying code signature..."
 
 # Replace the old binary with the new one
 mv "$FINAL_BINARY_PATH.tmp" "$FINAL_BINARY_PATH"
+
+echo "📚 Packaging Swift back-deployment libraries..."
+"$PROJECT_ROOT/scripts/copy-swift-runtime-libraries.sh" "$FINAL_BINARY_PATH" "$PROJECT_ROOT"
 
 echo "🗑️ Cleaning up temporary architecture-specific binaries..."
 rm -f "$ARM64_BINARY_TEMP" "$X86_64_BINARY_TEMP"

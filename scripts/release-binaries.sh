@@ -74,6 +74,9 @@ verify_binary_artifact() {
     codesign --verify --strict --verbose=2 "$binary_path"
     codesign --verify --strict -R="$CLI_SIGN_REQUIREMENT" "$binary_path"
     verify_release_binary_entitlements "$binary_path" "$label"
+    MAC_RELEASE_CODESIGN_IDENTITY="$CLI_SIGN_IDENTITY" \
+        MAC_RELEASE_CODESIGN_TEAM_ID="$CLI_SIGN_TEAM_ID" \
+        "$PROJECT_ROOT/scripts/verify-swift-runtime-libraries.sh" "$binary_path" "$(dirname "$binary_path")"
     authority=$(codesign -dv --verbose=4 "$binary_path" 2>&1 | sed -n 's/^Authority=//p' | head -1)
     team_id=$(codesign -dv --verbose=4 "$binary_path" 2>&1 | sed -n 's/^TeamIdentifier=//p' | head -1)
     [ "$authority" = "$CLI_SIGN_IDENTITY" ] ||
@@ -474,6 +477,10 @@ mkdir -p "$CLI_RELEASE_DIR"
 
 # Copy files for CLI release
 cp "$PROJECT_ROOT/peekaboo" "$CLI_RELEASE_DIR/"
+for runtime_library in "$PROJECT_ROOT"/libswiftCompatibility*.dylib; do
+    [ -e "$runtime_library" ] || continue
+    cp "$runtime_library" "$CLI_RELEASE_DIR/"
+done
 cp "$PROJECT_ROOT/LICENSE" "$CLI_RELEASE_DIR/"
 echo "$VERSION" > "$CLI_RELEASE_DIR/VERSION"
 
