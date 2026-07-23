@@ -2,6 +2,9 @@
 
 ## [3.9.8] - Unreleased
 
+### Fixed
+- Prevent MCP shell commands from deadlocking when either stdout or stderr exceeds its pipe buffer by draining both streams concurrently. Thanks @SebTardif for #292.
+
 ## [3.9.7] - 2026-07-21
 
 ### Fixed
