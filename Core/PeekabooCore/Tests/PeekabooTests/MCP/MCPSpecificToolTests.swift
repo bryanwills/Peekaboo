@@ -449,6 +449,22 @@ struct MCPSpecificToolTests {
             Issue.record("Expected text content from shell output")
         }
     }
+
+    @Test(.timeLimit(.minutes(1)))
+    func `Shell tool does not deadlock when both pipes exceed their buffers`() async throws {
+        let tool = makeTestTool(ShellTool.init)
+
+        let result = try await tool.execute(arguments: ToolArguments(raw: [
+            "command": "head -c 131072 /dev/zero >&2; head -c 131072 /dev/zero",
+        ]))
+
+        #expect(result.isError == false)
+        if case let .text(text, _, _) = result.content.first {
+            #expect(text.count == 131_072)
+        } else {
+            Issue.record("Expected text content from shell output")
+        }
+    }
 }
 
 @MainActor

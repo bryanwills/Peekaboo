@@ -66,13 +66,10 @@ public struct ShellTool: MCPTool {
         do {
             try process.run()
 
-            // Read pipe data BEFORE waitUntilExit to avoid deadlock.
-            // If the child writes more than the pipe buffer (~64 KB),
-            // the kernel blocks the child's write() until the pipe is
-            // drained.  Calling waitUntilExit() first means nobody is
-            // draining, so both parent and child block indefinitely.
-            let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            // Either pipe can fill while the other waits for EOF, so drain both concurrently.
+            async let outputRead = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            async let errorRead = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let (outputData, errorData) = await (outputRead, errorRead)
             process.waitUntilExit()
 
             let output = String(data: outputData, encoding: .utf8) ?? ""
