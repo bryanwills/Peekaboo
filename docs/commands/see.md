@@ -172,6 +172,10 @@ oversized or replaced artifacts fail before their content is published.
 - Rapid repeated `see` calls for the same window reuse a short-lived AX cache (~1.5s); wait a beat if you need a fully fresh traversal.
 
 ## Smart label placement (`--annotate`)
+
+Before publication, saved images are read through one retained descriptor with a byte limit and checked against
+their verified content. Changed or oversized artifacts fail closed. Independently encoded annotations use the
+256 MiB capture-image limit; their size is not restricted to that of the raw screenshot.
 - The `SmartLabelPlacer` generates external label candidates (above/below/sides/corners) for each element, filters out overlaps/out-of-bounds positions, then scores remaining spots via `AcceleratedTextDetector.scoreRegionForLabelPlacement` to prefer calm regions. Internal placements are a last-resort fallback.
 - Edge-aware scoring samples a padded rectangle (6 px halo, clamped to the image) so the chosen region stays clean once text is drawn; above/below placements get slight bonuses to reduce sideways clutter.
 - Preferred orientations nudge horizontally tight elements toward vertical labels when scores tie.
