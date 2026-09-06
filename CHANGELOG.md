@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## 4.3.1 - 2026-09-05
 
 **Highlights:** Exact popup and sheet screenshots, bounded image reads, and updater security fixes.
