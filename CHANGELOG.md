@@ -25,6 +25,9 @@
 - Limit ambiguous application suggestions to tied matching names and PIDs instead of exposing the entire running-app inventory, while keeping selector ambiguity fail-closed.
 - Let Agent and MCP automatic observations use proven classic capture on an explicitly selected ready Bridge while another process owns ScreenCaptureKit; keep explicit modern and raw SCK-only requests refused before transport. #778.
 - Restore reliable background scrolling by preferring owned numeric scrollbars, while keeping page fallback after definite value rejection and stopping after ambiguous input; eligible targets now use scrollbar increments instead of page distances.
+- Preserve existing background Cmd+A selection receipts as one unverified Accessibility value mutation through exact-window CLI/MCP checks; stop on ambiguous AX errors without replay. Input-strategy and hold behavior are unchanged.
+- Bind background Cmd+A selection to its retained exact-window receiver, refusing changed or unreadable receiver identities before writing or replaying input.
+- Preserve known typing prefixes and zero-input refusal receipts when shared Accessibility setters fail, without replaying input or changing typing strategy.
 
 ## 4.5.0 - 2026-09-22
 
