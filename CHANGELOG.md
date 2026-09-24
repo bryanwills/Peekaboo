@@ -15,6 +15,7 @@
 - Preserve typed desktop-action timeout, snapshot, and element error codes consistently across CLI JSON renderers without changing prior-effect or retry-safety metadata. #793.
 - Restore default MCP startup on explicitly selected GUI Bridge hosts that support isolated browser sessions, preserving capability checks and caller-owned session cleanup. Thanks @smhanov! #744.
 - Refuse ordinary CLI typing and MCP clicks, actions, value changes, snapshot-backed scrolling, typing, and key presses from consumed or pending snapshots before focus or input; centralize mutation-lease handling while preserving historical reads and existing modifier-click/pixel-focus ownership.
+- Bound desktop operation lane admission to a shared 15-second deadline across turnstiles and scoped locks; refuse late acquisition before dispatch while preserving earlier effects and admitted operation lifetimes. Thanks @SebTardif! #794.
 - Avoid reading geometry for unrelated Accessibility roles during exact-window keyboard focus checks, preserving per-character receiver validation.
 - Bound targeted dialog hierarchy discovery off the main actor using the caller's timeout, preserving large/deep trees and exact receipts; reject late candidates and report timeout or incomplete Accessibility evidence with specific error codes.
 - Exclude twice-confirmed absent processes from read-only application inventory while keeping denied, unavailable, and changing identities partial. Thanks @SkidCentrel! #784.
