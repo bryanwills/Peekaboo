@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep fresh local `see` snapshots eligible for subsequent background input by excluding read-only observation timeouts from mutation barriers; preserve barriers for web-focus/menu-opening observations and caller-owned mutations.
 - Add `agent --no-desktop-context` to skip new automatic desktop-context collection for run, chat, and resume invocations while preserving saved history, tool access, and background authority.
 - Skip capture-owner startup probes for Agent invocations with an explicit provably non-capturing tool allow-list and no visual enhancements, reusing MCP catalog policy while preserving host routing and snapshot safety.
 - Preserve returned process and exact-window target identities and receipts in successful MCP typing metadata, including pixel-focus typing.
