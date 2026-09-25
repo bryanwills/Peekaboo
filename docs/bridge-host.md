@@ -389,6 +389,15 @@ generation-bound mutations and canonical outcomes. It removes `setValue` and `pe
 receiptless handshakes and rejects direct requests without the negotiated capability before invoking the provider. A
 claimed success without its process-generation target is treated as indeterminate and retry-unsafe.
 
+The optional raw client offer `setValueVerification` carries native-produced value verification in the existing
+`ElementActionResult`: the resolved comparison kind, selected/value attribute route, and tagged actual readback.
+Signed result binding reuses native coercion and numeric tolerance without interpreting literal text as a number.
+The offer is bound to one authenticated operation session at protocol 1.37 or later. Hosts remove the optional
+evidence before hashing or encoding responses for non-offering or receiptless clients, so old decoders reconstruct
+the same signed bytes. The witness also captures the baseline presentation from that same raw observation; after
+validating its exact native rendering and original typed request binding, legacy projection restores that presentation.
+Absent evidence retains exact-string result binding; malformed evidence is rejected before it can be projected away.
+
 Protocol `1.34` introduced three independent capabilities:
 
 - `nativeBrowserConnectionBinding` authenticates native Chrome channel ownership.
