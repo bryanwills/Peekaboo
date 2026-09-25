@@ -136,11 +136,12 @@ test("hosted CI runs exact hotkey receipt Core guards", () => {
   assert.ok(body, "Missing exact hotkey receipt CI step");
   const step = body.split("\n      - name:")[0];
   assert.match(step, /working-directory: Core\/PeekabooCore/);
-  assert.ok(step.includes("--filter '^PeekabooTests[.](HotkeySelectAllReceiptTests|MCPExactWindowKeyboardToolTests|TypeServiceAXFailureReceiptTests|TypingFinalReceiverBindingTests)/'"));
+  assert.ok(step.includes("--filter '^PeekabooTests[.](HotkeySelectAllReceiptTests|MCPExactWindowKeyboardToolTests|TypeServiceAXFailureReceiptTests|TypingFinalReceiverBindingTests|MCPTypeTargetMetadataTests)/'"));
   assert.ok(step.includes("Suite HotkeySelectAllReceiptTests passed after "));
   assert.ok(step.includes("Suite MCPExactWindowKeyboardToolTests passed after "));
   assert.ok(step.includes("Suite TypeServiceAXFailureReceiptTests passed after "));
   assert.ok(step.includes("Suite TypingFinalReceiverBindingTests passed after "));
+  assert.ok(step.includes("Suite MCPTypeTargetMetadataTests passed after "));
   assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
   assert.equal(step.match(/\bswift test\b/g)?.length, 1);
   assert.doesNotMatch(step, /RUN_(?:AUTOMATION_TESTS|AUTOMATION_ACTIONS|LOCAL_TESTS): "true"/);
@@ -201,10 +202,10 @@ test("hosted foreground keyboard release CI selects only its isolated suites", (
   assert.match(pairTests, /interEventDelay: \{/);
 });
 
-test("hosted focus raise accounting uses exact non-native suites with nonempty guards", () => {
+test("hosted focus observation and accounting use exact non-native suites with nonempty guards", () => {
   const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
-  const body = workflow.split("      - name: Run focus raise accounting contracts\n")[1];
-  assert.ok(body, "Missing focus raise accounting CI step");
+  const body = workflow.split("      - name: Run focus observation and accounting contracts\n")[1];
+  assert.ok(body, "Missing focus observation and accounting CI step");
   const step = body.split("\n      - name:")[0];
   assert.match(step, /working-directory: Core\/PeekabooAutomationKit/);
   for (const name of [
@@ -213,14 +214,41 @@ test("hosted focus raise accounting uses exact non-native suites with nonempty g
   ]) {
     assert.ok(step.includes(`${name}: "false"`));
   }
-  assert.ok(step.includes("--filter '^PeekabooAutomationKitTests[.](FocusDispatchAccountingTests|FocusRaiseDispatchAccountingTests)/'"));
+  assert.ok(step.includes("--filter '^PeekabooAutomationKitTests[.](FocusDispatchAccountingTests|FocusRaiseDispatchAccountingTests|FocusedElementReceiptResolverTests|ObservedFocusCorroborationTests)/'"));
   assert.ok(step.includes("--disable-xctest --enable-swift-testing --no-parallel"));
-  for (const suite of ["FocusDispatchAccountingTests", "FocusRaiseDispatchAccountingTests"]) {
+  for (const suite of [
+    "FocusDispatchAccountingTests", "FocusRaiseDispatchAccountingTests",
+    "FocusedElementReceiptResolverTests", "ObservedFocusCorroborationTests",
+  ]) {
     assert.ok(step.includes(`Suite ${suite} passed after `));
   }
   assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
   assert.equal(step.match(/\bswift test\b/g)?.length, 1);
   assert.doesNotMatch(step, /--skip-build|: "true"/);
+});
+
+test("initial observed focus probe reserves the existing traversal deadline through its pure read seam", () => {
+  const worker = readFileSync(
+    `${repositoryRoot}/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift`, "utf8",
+  );
+  const initialProbe = worker.split("        let initialFocus: AXUIElement? = ")[1]?.split("        var state = TraversalState()")[0];
+  assert.ok(initialProbe, "Missing initial observed focus probe");
+  assert.match(initialProbe, /self\.initialFocusedReference\(deadline: deadline\) \{\s*self\.focusedReference\(application: application, timeout: \$0\)/);
+  assert.equal(initialProbe.match(/self\.initialFocusedReference\(/g)?.length, 1);
+  assert.doesNotMatch(initialProbe, /advanced\(by:|\.now|focusedReference\(application: application, deadline:/);
+  assert.match(worker, /var state = TraversalState\(\)\s*self\.process\(\s*window,\s*request: TraversalRequest\(\s*depth: 0,\s*deadline: deadline,/);
+  assert.match(worker, /readCurrentReference: \{ self\.focusedReference\(application: application, deadline: deadline\) \}/);
+  assert.match(worker, /if request\.includeMenuBarElements, request\.appIsActive,\s*let menuBar = self\.readApplicationReference\(\s*deadline: deadline,\s*applyTimeout: \{ AXUIElementSetMessagingTimeout\(application, \$0\) == \.success \},\s*read: \{ self\.elementAttribute\(kAXMenuBarAttribute, of: application\) \}\)/);
+  assert.match(worker, /private static func focusedReference\(\s*application: AXUIElement,\s*deadline: ContinuousClock\.Instant\) -> AXUIElement\?\s*\{\s*self\.readApplicationReference\(/);
+  const proof = readFileSync(
+    `${repositoryRoot}/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ObservedFocusCorroborationTests.swift`, "utf8",
+  );
+  assert.match(proof, /stalled optional focus read leaves short deadline available for ordinary traversal/);
+  assert.match(proof, /hardTimeoutSeconds: 0\.05/);
+  assert.match(proof, /initialFocusedReference\(deadline: deadline, now: now\)/);
+  assert.match(proof, /menu read replaces initial focus timeout with current remaining budget/);
+  assert.match(proof, /menu read skips expired deadline without reusing initial focus timeout/);
+  assert.doesNotMatch(proof, /DetachedAXObservationWorker\.inspect\(|AXUIElement|Task\.sleep|Thread\.sleep|NSWorkspace|NSApplication|executePeekabooCLI/);
 });
 
 test("hosted mocked Press CI enables only its exact injected-service suite", () => {
