@@ -106,16 +106,35 @@ for (const name of [
   });
 }
 
+test("hosted SDK text route proof runs isolated eligibility and default-policy suites with nonempty guards", () => {
+  const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
+  const body = workflow.split("      - name: Run SDK text route eligibility regressions\n")[1];
+  assert.ok(body, "Missing SDK text route eligibility CI step");
+  const step = body.split("\n      - name:")[0];
+  assert.match(step, /working-directory: Core\/PeekabooAutomationKit/);
+  assert.ok(step.includes("PEEKABOO_INCLUDE_AUTOMATION_TESTS: \"false\""));
+  assert.ok(step.includes("PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS: \"false\""));
+  assert.ok(step.includes("set -euo pipefail"));
+  assert.ok(step.includes("--filter '^PeekabooAutomationKitTests[.](TextInputRouteTests|TypeServiceForegroundPolicyTests|UIInputPolicyDefaultTests)/'"));
+  assert.ok(step.includes("--disable-xctest --enable-swift-testing --no-parallel"));
+  assert.ok(step.includes("Suite TextInputRouteTests passed after "));
+  assert.ok(step.includes("Suite TypeServiceForegroundPolicyTests passed after "));
+  assert.ok(step.includes("Suite UIInputPolicyDefaultTests passed after "));
+  assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
+  assert.equal(step.match(/\bswift test\b/g)?.length, 1);
+});
+
 test("hosted CI runs exact hotkey receipt Core guards", () => {
   const workflow = readFileSync(`${repositoryRoot}/.github/workflows/macos-ci.yml`, "utf8");
   const body = workflow.split("      - name: Run exact hotkey receipt regressions\n")[1];
   assert.ok(body, "Missing exact hotkey receipt CI step");
   const step = body.split("\n      - name:")[0];
   assert.match(step, /working-directory: Core\/PeekabooCore/);
-  assert.ok(step.includes("--filter '^PeekabooTests[.](HotkeySelectAllReceiptTests|MCPExactWindowKeyboardToolTests|TypeServiceAXFailureReceiptTests)/'"));
+  assert.ok(step.includes("--filter '^PeekabooTests[.](HotkeySelectAllReceiptTests|MCPExactWindowKeyboardToolTests|TypeServiceAXFailureReceiptTests|TypingFinalReceiverBindingTests)/'"));
   assert.ok(step.includes("Suite HotkeySelectAllReceiptTests passed after "));
   assert.ok(step.includes("Suite MCPExactWindowKeyboardToolTests passed after "));
   assert.ok(step.includes("Suite TypeServiceAXFailureReceiptTests passed after "));
+  assert.ok(step.includes("Suite TypingFinalReceiverBindingTests passed after "));
   assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
   assert.equal(step.match(/\bswift test\b/g)?.length, 1);
   assert.doesNotMatch(step, /RUN_(?:AUTOMATION_TESTS|AUTOMATION_ACTIONS|LOCAL_TESTS): "true"/);
