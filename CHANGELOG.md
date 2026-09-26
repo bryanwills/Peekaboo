@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Stop inventing local `see --json` UI-map paths for in-memory and Bridge-hosted snapshots; report an empty map path when no persisted artifact is available while preserving snapshot reuse and inline elements.
+
 ## 4.6.0 - 2026-09-25
 
 **Highlights:** Safer typing and bounded clipboard/desktop waits, restored Codex MCP and GUI Bridge connections, explicit background typing strategies, and optional Agent desktop context.
