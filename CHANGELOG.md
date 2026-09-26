@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep help, version, shell completions, and Agent dry-run output independent of configuration parsing, avoiding unnecessary startup reads and malformed-config warnings that corrupt JSON previews.
 - Preserve Bridge request deadlines while socket work waits in its execution queue, refusing expired work before connecting without changing cancellation or dispatched-result semantics.
 - Wait for native Accessibility text, value, and selection writes before dependent input; revalidate the exact receiver and edit state at dispatch, preserve accepted prefixes, and report cancelled pre-service Bridge operations without inventing input.
 - Refuse conflicting explicit Bridge sockets and caller-local input-policy overrides before constructing local services or sending input; preserve explicit local opt-in, implicit policy-local routing, and concrete snapshot producer affinity.
