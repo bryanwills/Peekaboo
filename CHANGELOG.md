@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Stop inventing local `see --json` UI-map paths for in-memory and Bridge-hosted snapshots; report an empty map path when no persisted artifact is available while preserving snapshot reuse and inline elements.
+- Refuse unsupported live/action capture-engine overrides combined with an explicit Bridge socket before capture or child execution, instead of silently moving capture into the caller process; preserve explicit local opt-in and normal host-policy capture.
 
 ## 4.6.0 - 2026-09-25
 

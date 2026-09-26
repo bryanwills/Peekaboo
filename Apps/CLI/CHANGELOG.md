@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - Stop inventing local `see --json` UI-map paths for in-memory and Bridge-hosted snapshots; keep reusable snapshot references and inline elements available without a disk artifact.
+- Refuse live/action capture-engine and explicit-host conflicts before runtime setup; explain how to retain the selected host or explicitly opt into caller-local capture.
 
 ## 4.6.0 - 2026-09-25
 
